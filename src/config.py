@@ -1,11 +1,17 @@
-# src/config/handler.py
+# src/config.py
 
-from typing import Dict, Any, List, Optional
-from pydantic import BaseModel, Field
 from pathlib import Path
+from typing import Dict, Any, List, Optional
+from enum import Enum
 import yaml
+from pydantic import BaseModel, Field
 from dotenv import load_dotenv
 import os
+
+class LLMProvider(str, Enum):
+    OPENAI = "openai"
+    ANTHROPIC = "anthropic"
+    GEMINI = "gemini"
 
 class LLMConfig(BaseModel):
     seed: int = 42
@@ -30,7 +36,8 @@ class ProviderConfig(BaseModel):
     temperature: float = 0
     additional_params: Dict[str, Any] = Field(default_factory=dict)
 
-class SystemConfig(BaseModel):
+class Config(BaseModel):
+    """Application configuration"""
     default_llm: str
     providers: Dict[str, ProviderConfig]
     master_prompt_overlay: str
@@ -38,10 +45,10 @@ class SystemConfig(BaseModel):
     agents: Dict[str, AgentConfig]
 
     @classmethod
-    def from_yaml(cls, path: str) -> 'SystemConfig':
+    def from_yaml(cls, path: Path) -> 'Config':
         """Load config from YAML and environment variables"""
         # Load .env file from project root
-        project_root = Path(path).parent.parent
+        project_root = path.parent.parent
         env_path = project_root / '.env'
         
         if env_path.exists():
@@ -51,14 +58,12 @@ class SystemConfig(BaseModel):
             print("No .env file found, using existing environment variables")
             
         # Load and parse YAML config
-        with open(path, 'r') as f:
-            config_dict = yaml.safe_load(f)
+        with path.open() as f:
+            data = yaml.safe_load(f)
+            data['asset_base_path'] = Path(data['asset_base_path'])
             
-        # Convert string path to Path object
-        config_dict['asset_base_path'] = Path(config_dict['asset_base_path'])
-        
         # Create config instance
-        config = cls(**config_dict)
+        config = cls(**data)
         
         # Validate required environment variables
         missing_vars = []
@@ -83,3 +88,28 @@ class SystemConfig(BaseModel):
         if provider not in self.providers:
             raise ValueError(f"Provider not configured: {provider}")
         return self.providers[provider]
+
+DEFAULT_PROVIDER_CONFIGS = {
+    LLMProvider.OPENAI: {
+        "model": "gpt-4",
+        "api_key_env": "OPENAI_API_KEY",
+        "timeout": 120,
+        "temperature": 0
+    },
+    LLMProvider.ANTHROPIC: {
+        "model": "claude-3-opus-20240229",
+        "api_key_env": "ANTHROPIC_API_KEY",
+        "timeout": 120,
+        "temperature": 0
+    },
+    LLMProvider.GEMINI: {
+        "model": "gemini-pro",
+        "api_key_env": "GEMINI_API_KEY",
+        "timeout": 120,
+        "temperature": 0
+    }
+}
+
+def load_config(path: Path) -> Config:
+    """Load and validate configuration"""
+    return Config.from_yaml(path)

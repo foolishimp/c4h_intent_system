@@ -1,97 +1,146 @@
 # src/agents/base.py
+"""
+Base Agent Implementation for Intent-Based Architecture
+Follows Microsoft AutoGen patterns for agent interactions
+
+Key features:
+- Async intent processing
+- Structured logging
+- Error handling with lineage preservation
+- Configuration validation
+- Resource lifecycle management
+"""
+
 from abc import ABC, abstractmethod
-from typing import Optional, Dict, Any, List
-from autogen import AssistantAgent, UserProxyAgent
-from ..models.intent import Intent
-from ..config.providers import LLMProvider, ProviderConfig
-import os
+from typing import Dict, Any, Optional, List
+from dataclasses import dataclass, field
+from contextlib import asynccontextmanager
+from enum import Enum
+import structlog
+import asyncio
+from datetime import datetime
+
+from src.models.intent import Intent, IntentStatus, ResolutionState
+from src.config import Config
+
+class AgentState(str, Enum):
+    """Agent lifecycle states"""
+    INITIALIZED = "initialized"
+    READY = "ready"
+    PROCESSING = "processing"
+    ERROR = "error"
+    SHUTDOWN = "shutdown"
+
+@dataclass
+class AgentContext:
+    """Shared context for agent operations"""
+    agent_id: str
+    start_time: datetime = field(default_factory=datetime.utcnow)
+    processed_intents: List[str] = field(default_factory=list)
+    state: AgentState = AgentState.INITIALIZED
+    metrics: Dict[str, Any] = field(default_factory=dict)
 
 class BaseAgent(ABC):
-    def __init__(self, config: Dict[str, Any]):
+    """Base class for all agents in the intent system
+    
+    Implements core agent functionality following Microsoft AutoGen patterns:
+    - Async intent processing
+    - Resource lifecycle management
+    - Error handling with recovery
+    - Metrics tracking
+    - Configuration validation
+    """
+    
+    def __init__(self, config: Config):
+        """Initialize the agent with configuration"""
         self.config = config
-        self.name = config["name"]
-        self.providers = self._setup_providers()
-        self._initialize_agent()
+        self.logger = structlog.get_logger()
+        self.context = AgentContext(agent_id=self.__class__.__name__)
+        self._validate_config()
 
-    def _setup_providers(self) -> Dict[LLMProvider, ProviderConfig]:
-        """Setup all configured LLM providers"""
-        providers = {}
-        llm_config = self.config["llm_config"]
-        
-        # Setup primary provider
-        primary = llm_config["primary_provider"]
-        providers[primary] = self._get_provider_config(primary)
-        
-        # Setup fallback providers
-        for provider in llm_config.get("fallback_providers", []):
-            providers[provider] = self._get_provider_config(provider)
-            
-        return providers
-
-    def _get_provider_config(self, provider: str) -> ProviderConfig:
-        """Get configuration for specific provider"""
-        provider_config = self.config.get("providers", {}).get(provider, {})
-        
-        # Ensure API key is available
-        api_key_env = provider_config.get("api_key_env")
-        if not api_key_env or not os.getenv(api_key_env):
-            raise ValueError(f"API key not found for provider {provider}")
-            
-        return ProviderConfig(**provider_config)
-
-    def _initialize_agent(self):
-        """Initialize the AutoGen agent with primary provider"""
-        primary_provider = self.config["llm_config"]["primary_provider"]
-        provider_config = self.providers[primary_provider]
-        
-        self.agent = AssistantAgent(
-            name=self.name,
-            system_message=self.config["base_prompt"],
-            llm_config={
-                "config_list": [{
-                    "model": provider_config.model,
-                    "api_key": os.getenv(provider_config.api_key_env)
-                }],
-                "temperature": provider_config.temperature,
-                "request_timeout": provider_config.timeout,
-                **provider_config.additional_params
-            }
-        )
-        
-        # Initialize fallback agents
-        self.fallback_agents = {}
-        for provider in self.config["llm_config"].get("fallback_providers", []):
-            provider_config = self.providers[provider]
-            self.fallback_agents[provider] = AssistantAgent(
-                name=f"{self.name}_{provider}",
-                system_message=self.config["base_prompt"],
-                llm_config={
-                    "config_list": [{
-                        "model": provider_config.model,
-                        "api_key": os.getenv(provider_config.api_key_env)
-                    }],
-                    "temperature": provider_config.temperature,
-                    "request_timeout": provider_config.timeout,
-                    **provider_config.additional_params
-                }
-            )
-
-    async def try_with_fallbacks(self, func, *args, **kwargs):
-        """Try operation with primary agent, fall back to others if needed"""
+    @asynccontextmanager
+    async def lifecycle(self):
+        """Manage agent lifecycle with proper resource cleanup"""
         try:
-            return await func(self.agent, *args, **kwargs)
-        except Exception as e:
-            for provider, fallback_agent in self.fallback_agents.items():
-                try:
-                    return await func(fallback_agent, *args, **kwargs)
-                except Exception as fallback_e:
-                    continue
-            raise Exception("All providers failed")
+            await self.initialize()
+            self.context.state = AgentState.READY
+            yield self
+        finally:
+            await self.cleanup()
+            self.context.state = AgentState.SHUTDOWN
+
+    async def initialize(self) -> None:
+        """Initialize agent resources and validate configuration"""
+        self.logger.info("agent.initializing", 
+                        agent_id=self.context.agent_id,
+                        config=self.config.dict())
+        await self._setup_resources()
+        self.context.state = AgentState.INITIALIZED
+        self.logger.info("agent.initialized")
+
+    async def cleanup(self) -> None:
+        """Cleanup agent resources"""
+        self.logger.info("agent.cleanup", 
+                        agent_id=self.context.agent_id,
+                        metrics=self.context.metrics)
 
     @abstractmethod
     async def process_intent(self, intent: Intent) -> Intent:
+        """Process an intent and return transformed result
+        
+        Must be implemented by concrete agent classes.
+        """
         pass
 
-    @abstractmethod
     async def handle_error(self, error: Exception, intent: Intent) -> Intent:
+        """Create error intent for debugging and recovery
+        
+        Maintains complete lineage for debugging and recovery flows.
+        """
+        self.context.state = AgentState.ERROR
+        self.logger.exception("agent.error",
+                            agent_id=self.context.agent_id,
+                            intent_id=str(intent.id),
+                            error=str(error))
+
+        # Create debug intent while maintaining lineage
+        debug_intent = intent.transformTo("debug")
+        debug_intent.description = f"Error in {self.context.agent_id}: {str(error)}"
+        debug_intent.context.update({
+            "original_intent": intent.dict(),
+            "error": str(error),
+            "error_type": type(error).__name__,
+            "agent_context": self.context.__dict__
+        })
+        debug_intent.criteria = {"resolve_error": True}
+        debug_intent.status = IntentStatus.ERROR
+        debug_intent.resolution_state = ResolutionState.SKILL_FAILURE
+
+        # Track error in metrics
+        self._update_metrics("errors", error)
+
+        return debug_intent
+
+    def _validate_config(self) -> None:
+        """Validate agent configuration requirements"""
+        if not self.config:
+            raise ValueError(f"{self.context.agent_id} requires configuration")
+        
+        required_fields = ["agents", "providers", "master_prompt_overlay"]
+        missing = [field for field in required_fields if not hasattr(self.config, field)]
+        if missing:
+            raise ValueError(f"Missing required config fields: {missing}")
+
+    async def _setup_resources(self) -> None:
+        """Setup agent resources and connections"""
+        # Implement resource setup (e.g., LLM clients, caches, etc.)
         pass
+
+    def _update_metrics(self, metric_name: str, value: Any) -> None:
+        """Update agent metrics"""
+        if metric_name not in self.context.metrics:
+            self.context.metrics[metric_name] = []
+        self.context.metrics[metric_name].append({
+            "timestamp": datetime.utcnow().isoformat(),
+            "value": str(value)
+        })
