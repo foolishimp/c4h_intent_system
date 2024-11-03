@@ -35,60 +35,16 @@ master_prompt_overlay: |
 asset_base_path: ./data/assets
 
 agents:
-  orchestrator:
-    name: IntentOrchestrator
+  orchestration_agent:
+    name: OrchestrationAgent
     type: orchestrator
-    description: Coordinates intent processing and decomposition
-    base_prompt: You are the primary orchestrator for intent processing.
-    providers:
-      - openai
-      - anthropic
-    llm_config:
-      seed: 42
-      primary_provider: openai
-      fallback_providers: [anthropic, gemini]
-      functions:
-        - name: process_intent
-          description: Process and analyze an intent
-          parameters:
-            type: object
-            properties:
-              intent_type:
-                type: string
-              needs_decomposition:
-                type: boolean
-              next_steps:
-                type: array
-                items:
-                  type: string
-            required: [intent_type, needs_decomposition]
-
-  skill_executor:
-    name: SkillExecutor
-    type: skill_executor
-    description: Executes specific skills based on intents
-    base_prompt: You are responsible for executing specific skills.
-    providers:
-      - gemini
-      - openai
-    llm_config:
-      seed: 42
-      primary_provider: gemini
-      fallback_providers: [openai]
-      temperature: 0
-      request_timeout: 60
-
-  scoping_agent:  # Add this new configuration
-    name: ScopingAgent
-    type: scoping  # This matches what the code looks for
-    description: Analyzes project structure and determines scope
+    description: "Coordinates intent processing and skill execution"
     base_prompt: |
-      You are a scoping agent responsible for analyzing project structure and determining scope.
-      Your primary tasks are:
-      1. Analyze project files and structure
-      2. Identify key components and relationships
-      3. Generate comprehensive scope analysis
-      Use the tartxt skill to gather project information and create structured analysis.
+      You are an orchestration agent responsible for:
+      1. Analyzing intents and determining required skills
+      2. Coordinating processing flows
+      3. Managing intent transformations
+      4. Handling errors and creating debug intents
     providers:
       - openai
       - anthropic
@@ -98,3 +54,23 @@ agents:
       fallback_providers: [anthropic]
       temperature: 0
       request_timeout: 120
+
+  assurance_agent:
+    name: AssuranceAgent 
+    type: assurance
+    description: "Verifies execution and validates results"
+    base_prompt: |
+      You are an assurance agent responsible for:
+      1. Verifying skill execution results
+      2. Validating transformations
+      3. Ensuring quality of outputs
+      4. Creating verification intents
+    providers:
+      - openai
+    llm_config:
+      seed: 42
+      primary_provider: openai
+      temperature: 0
+      request_timeout: 120
+
+  
