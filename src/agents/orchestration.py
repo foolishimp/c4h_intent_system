@@ -45,30 +45,35 @@ class OrchestrationAgent(BaseAgent):
     def __init__(self, config: Config):
         super().__init__(config)
         self.intent_factory = IntentFactory(config)
+        self.discovery_agent = DiscoveryAgent(config)  # Add discovery agent
         self.logger = structlog.get_logger()
 
     async def process_scope_request(self, project_path: str) -> Dict[str, Any]:
         """Process a scoping request and generate an action plan"""
-        self.logger.info("scope_request.starting", project_path=project_path)
+        self.logger.info("orchestration.scope_request.starting", 
+                        project_path=project_path)
         
         try:
             # Create initial intent from config
+            self.logger.info("orchestration.creating_intent")
             intent = self.intent_factory.create_initial_intent(
                 'project_discovery',
                 project_path=project_path
             )
             
-            self.logger.info("scope_request.intent_created", intent_id=str(intent.id))
+            self.logger.info("orchestration.processing_intent",
+                            intent_id=str(intent.id))
             
             # Process the intent
             result = await self.process_intent(intent)
             
             if result.status == IntentStatus.ERROR:
                 error_msg = result.context.get('error', 'Unknown error')
-                self.logger.error("scope_request.failed", error=error_msg)
+                self.logger.error("orchestration.intent_failed", error=error_msg)
                 raise Exception(error_msg)
             
             # Save and display results
+            self.logger.info("orchestration.saving_results")
             output_path = await self._save_results(result)
             await self._display_action_plan(result)
             
@@ -78,11 +83,11 @@ class OrchestrationAgent(BaseAgent):
                 "results_path": str(output_path)
             }
             
-            self.logger.info("scope_request.completed", **response)
+            self.logger.info("orchestration.complete", **response)
             return response
-            
+        
         except Exception as e:
-            self.logger.exception("scope_request.failed")
+            self.logger.exception("orchestration.failed")
             raise
 
     async def process_intent(self, intent: Intent) -> Intent:

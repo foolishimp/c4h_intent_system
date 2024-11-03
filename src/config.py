@@ -211,4 +211,14 @@ DEFAULT_PROVIDER_CONFIGS = {
 
 def load_config(path: Path) -> Config:
     """Load and validate configuration"""
-    return Config.from_yaml(path)
+    logger = structlog.get_logger()
+    
+    try:
+        logger.info("config.loading", path=str(path))
+        config = Config.from_yaml(path)
+        logger.info("config.loaded")
+        return config
+        
+    except Exception as e:
+        logger.exception("config.load_failed", error=str(e))
+        raise

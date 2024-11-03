@@ -50,6 +50,8 @@ def setup_logging(verbose: bool = False) -> None:
         handlers=[RichHandler(rich_tracebacks=True)]
     )
 
+# src/cli.py
+
 @cli.command()
 def analyze(
     project_path: Path = typer.Argument(
@@ -76,19 +78,26 @@ def analyze(
         setup_logging(verbose)
         logger = structlog.get_logger()
         
+        logger.info("cli.starting", 
+                   project_path=str(project_path),
+                   verbose=verbose)
+        
         # Load config
         if not config_path:
             config_path = Path("config/system_config.yml")
+            
+        if not config_path.exists():
+            logger.error("cli.config_not_found", path=str(config_path))
+            raise FileNotFoundError(f"Config file not found: {config_path}")
         
-        logger.info("starting_analysis", 
-                   project_path=str(project_path),
-                   config_path=str(config_path))
+        logger.info("cli.config_loaded", config_path=str(config_path))
         
         # Run the analysis
         asyncio.run(run_analysis(project_path, config_path))
         
     except Exception as e:
-        logger.exception("analysis_failed")
+        logger.exception("cli.failed", error=str(e))
+        console.print(f"\n[bold red]Error:[/] {str(e)}")
         raise typer.Exit(1)
 
 async def run_analysis(project_path: Path, config_path: Path) -> None:
@@ -96,35 +105,29 @@ async def run_analysis(project_path: Path, config_path: Path) -> None:
     logger = structlog.get_logger()
     
     try:
-        # Load config and create app
+        logger.info("analysis.loading_config")
         config = load_config(config_path)
+        
+        logger.info("analysis.creating_app")
         app = create_app(config)
         
-        # Initialize the app
+        logger.info("analysis.initializing")
         await app.initialize()
         
-        # Run analysis with status display
         with console.status("[bold blue]Analyzing project...") as status:
-            status.update(f"Processing {project_path}")
+            logger.info("analysis.processing", project_path=str(project_path))
             result = await app.analyze_project(project_path)
             
             if not result:
+                logger.error("analysis.no_results")
                 raise ValueError("Analysis completed but no results were returned")
             
+            logger.info("analysis.complete", result=result)
             status.update("Analysis complete!")
         
-        # Display results
         console.print("\n[bold green]Analysis Complete![/]")
-        if "results_path" in result:
-            console.print(f"\nResults saved to: {result['results_path']}")
-        else:
-            console.print("\n[yellow]Warning:[/] No results path returned")
-            
-        # Add more detailed output
-        if "intent_id" in result:
-            console.print(f"Intent ID: {result['intent_id']}")
+        console.print(f"\nResults saved to: {result.get('results_path', 'No path returned')}")
         
     except Exception as e:
-        logger.exception("analysis_process_failed")
-        console.print(f"\n[bold red]Error:[/] {str(e)}")
+        logger.exception("analysis.failed", error=str(e))
         raise

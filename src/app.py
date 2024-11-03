@@ -1,12 +1,14 @@
 # src/app.py
-# These should be the imports at top:
+
 from typing import Dict, Any
 from pathlib import Path
 import structlog
+import asyncio  # Added for async support
 
 from src.config import Config
 from src.agents.orchestration import OrchestrationAgent
 from src.agents.assurance import AssuranceAgent
+from src.agents.discovery import DiscoveryAgent
 
 class IntentApp:
     """Main application class for the Intent System"""
@@ -14,38 +16,29 @@ class IntentApp:
     def __init__(self, config: Config):
         self.config = config
         self.logger = structlog.get_logger()
+        
+        # Initialize agents
+        self.logger.info("app.initializing_agents")
         self.orchestrator = OrchestrationAgent(config)
         self.assurance = AssuranceAgent(config)
+        
+        self.logger.info("app.initialized")
 
     async def initialize(self) -> None:
         """Initialize the application and its components"""
-        await self.orchestrator.initialize()
-        await self.assurance.initialize()
-        
-        # Ensure asset directory exists
-        self.config.asset_base_path.mkdir(parents=True, exist_ok=True)
-        
-        self.logger.info("app.initialized")
-    
-    async def analyze_project(self, project_path: Path) -> Dict[str, Any]:
-        """Analyze a project and generate action plan"""
-        self.logger.info("analyze_project.started", project_path=str(project_path))
+        self.logger.info("app.initialize.starting")
         
         try:
-            result = await self.orchestrator.process_scope_request(str(project_path))
+            await self.orchestrator.initialize()
+            await self.assurance.initialize()
             
-            if not result:
-                self.logger.error("analyze_project.no_results")
-                raise ValueError("No results returned from analysis")
-                
-            self.logger.info("analyze_project.completed", 
-                            intent_id=result.get("intent_id"),
-                            results_path=result.get("results_path"))
+            # Ensure asset directory exists
+            self.config.asset_base_path.mkdir(parents=True, exist_ok=True)
             
-            return result
+            self.logger.info("app.initialize.complete")
             
         except Exception as e:
-            self.logger.exception("analyze_project.failed", error=str(e))
+            self.logger.exception("app.initialize.failed", error=str(e))
             raise
 
 def create_app(config: Config) -> IntentApp:

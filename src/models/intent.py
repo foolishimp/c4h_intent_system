@@ -1,6 +1,6 @@
 # src/models/intent.py
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field  # Added Field import
 from uuid import UUID, uuid4
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
