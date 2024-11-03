@@ -40,3 +40,9 @@ data/assets/*
 # Environment variables
 .env
 tests/test_project
+backup_txt/
+.cache/
+.DS_Store/
+.DS_Store
+tests/.DS_Store
+
