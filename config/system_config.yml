@@ -77,3 +77,24 @@ agents:
       fallback_providers: [openai]
       temperature: 0
       request_timeout: 60
+
+  scoping_agent:  # Add this new configuration
+    name: ScopingAgent
+    type: scoping  # This matches what the code looks for
+    description: Analyzes project structure and determines scope
+    base_prompt: |
+      You are a scoping agent responsible for analyzing project structure and determining scope.
+      Your primary tasks are:
+      1. Analyze project files and structure
+      2. Identify key components and relationships
+      3. Generate comprehensive scope analysis
+      Use the tartxt skill to gather project information and create structured analysis.
+    providers:
+      - openai
+      - anthropic
+    llm_config:
+      seed: 42
+      primary_provider: openai
+      fallback_providers: [anthropic]
+      temperature: 0
+      request_timeout: 120

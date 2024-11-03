@@ -4,6 +4,8 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel, Field
 from pathlib import Path
 import yaml
+from dotenv import load_dotenv
+import os
 
 class LLMConfig(BaseModel):
     seed: int = 42
@@ -37,11 +39,37 @@ class SystemConfig(BaseModel):
 
     @classmethod
     def from_yaml(cls, path: str) -> 'SystemConfig':
+        """Load config from YAML and environment variables"""
+        # Load .env file from project root
+        project_root = Path(path).parent.parent
+        env_path = project_root / '.env'
+        
+        if env_path.exists():
+            load_dotenv(env_path)
+            print(f"Loaded environment from {env_path}")
+        else:
+            print("No .env file found, using existing environment variables")
+            
+        # Load and parse YAML config
         with open(path, 'r') as f:
             config_dict = yaml.safe_load(f)
-            # Convert string path to Path object
-            config_dict['asset_base_path'] = Path(config_dict['asset_base_path'])
-            return cls(**config_dict)
+            
+        # Convert string path to Path object
+        config_dict['asset_base_path'] = Path(config_dict['asset_base_path'])
+        
+        # Create config instance
+        config = cls(**config_dict)
+        
+        # Validate required environment variables
+        missing_vars = []
+        for provider in config.providers.values():
+            if not os.getenv(provider.api_key_env):
+                missing_vars.append(provider.api_key_env)
+                
+        if missing_vars:
+            raise ValueError(f"Missing required environment variables: {', '.join(missing_vars)}")
+            
+        return config
 
     def get_agent_config(self, agent_type: str) -> AgentConfig:
         """Get configuration for a specific agent type"""
