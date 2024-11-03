@@ -103,14 +103,28 @@ async def run_analysis(project_path: Path, config_path: Path) -> None:
         # Initialize the app
         await app.initialize()
         
-        # Run analysis
-        with console.status("Analyzing project..."):
+        # Run analysis with status display
+        with console.status("[bold blue]Analyzing project...") as status:
+            status.update(f"Processing {project_path}")
             result = await app.analyze_project(project_path)
             
+            if not result:
+                raise ValueError("Analysis completed but no results were returned")
+            
+            status.update("Analysis complete!")
+        
         # Display results
         console.print("\n[bold green]Analysis Complete![/]")
-        console.print(f"\nResults saved to: {result['results_path']}")
+        if "results_path" in result:
+            console.print(f"\nResults saved to: {result['results_path']}")
+        else:
+            console.print("\n[yellow]Warning:[/] No results path returned")
+            
+        # Add more detailed output
+        if "intent_id" in result:
+            console.print(f"Intent ID: {result['intent_id']}")
         
     except Exception as e:
         logger.exception("analysis_process_failed")
+        console.print(f"\n[bold red]Error:[/] {str(e)}")
         raise

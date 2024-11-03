@@ -12,7 +12,10 @@ from dataclasses import dataclass, field
 import structlog
 import yaml
 
-from .base import BaseAgent
+# src/agents/orchestration.py
+# First line after module docstring should be:
+from typing import Dict, Any, Optional, List
+from .base import BaseAgent  # This is the critical import
 from ..models.intent import Intent, IntentStatus, ResolutionState
 from ..models.intent_factory import IntentFactory
 from ..config import Config
@@ -46,30 +49,37 @@ class OrchestrationAgent(BaseAgent):
 
     async def process_scope_request(self, project_path: str) -> Dict[str, Any]:
         """Process a scoping request and generate an action plan"""
+        self.logger.info("scope_request.starting", project_path=project_path)
+        
         try:
             # Create initial intent from config
             intent = self.intent_factory.create_initial_intent(
-                'project_discovery',  # Updated from scope_analysis
+                'project_discovery',
                 project_path=project_path
             )
             
-            self.logger.info("scope_request.created", intent_id=str(intent.id))
+            self.logger.info("scope_request.intent_created", intent_id=str(intent.id))
             
             # Process the intent
             result = await self.process_intent(intent)
             
             if result.status == IntentStatus.ERROR:
-                raise Exception(result.context.get('error'))
+                error_msg = result.context.get('error', 'Unknown error')
+                self.logger.error("scope_request.failed", error=error_msg)
+                raise Exception(error_msg)
             
             # Save and display results
-            results_path = await self._save_results(result)
+            output_path = await self._save_results(result)
             await self._display_action_plan(result)
             
-            return {
+            response = {
                 "intent_id": str(intent.id),
                 "result": result.dict(),
-                "results_path": str(results_path)
+                "results_path": str(output_path)
             }
+            
+            self.logger.info("scope_request.completed", **response)
+            return response
             
         except Exception as e:
             self.logger.exception("scope_request.failed")

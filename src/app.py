@@ -1,12 +1,11 @@
 # src/app.py
-
+# These should be the imports at top:
 from typing import Dict, Any
 from pathlib import Path
 import structlog
 
 from src.config import Config
 from src.agents.orchestration import OrchestrationAgent
-from src.agents.discovery import DiscoveryAgent 
 from src.agents.assurance import AssuranceAgent
 
 class IntentApp:
@@ -30,7 +29,24 @@ class IntentApp:
     
     async def analyze_project(self, project_path: Path) -> Dict[str, Any]:
         """Analyze a project and generate action plan"""
-        return await self.orchestrator.process_scope_request(str(project_path))
+        self.logger.info("analyze_project.started", project_path=str(project_path))
+        
+        try:
+            result = await self.orchestrator.process_scope_request(str(project_path))
+            
+            if not result:
+                self.logger.error("analyze_project.no_results")
+                raise ValueError("No results returned from analysis")
+                
+            self.logger.info("analyze_project.completed", 
+                            intent_id=result.get("intent_id"),
+                            results_path=result.get("results_path"))
+            
+            return result
+            
+        except Exception as e:
+            self.logger.exception("analyze_project.failed", error=str(e))
+            raise
 
 def create_app(config: Config) -> IntentApp:
     """Application factory function"""
