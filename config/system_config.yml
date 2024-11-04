@@ -1,127 +1,40 @@
-# config/system_config.yml
+# Minimal configuration for MVP
 
-# LLM Configuration for AutoGen 0.3.1
-llm_config:
-  default_model: gpt-4
-  config_list:
-    - model: gpt-4
-      api_key_env: OPENAI_API_KEY
-      base_url: null  # Use default OpenAI URL
-      api_type: open_ai
-  default_temperature: 0
-  request_timeout: 120
-  cache_seed: 42
+# OpenAI Configuration
+openai:
+  api_key_env: OPENAI_API_KEY
+  model: gpt-4
+  temperature: 0
+  timeout: 120
 
-# Agents Configuration
+# Agent Configuration
 agents:
-  orchestrator:
-    name: orchestration_agent
-    type: assistant
-    description: "Orchestrates intent processing and skill execution"
-    llm_config:
-      temperature: 0
-      max_tokens: 4096
-    system_message: |
-      You are an orchestration agent in an intent-based system.
-      Your primary responsibilities are:
-      1. Analyze Python project structure through intents
-      2. Coordinate with skill execution agents
-      3. Manage analysis results and reporting
-      4. Track all transformations and maintain lineage
+  discovery:
+    name: discovery_agent
+    model: gpt-4
+    temperature: 0
+  
+  analysis:
+    name: analysis_agent
+    model: gpt-4
+    temperature: 0
+  
+  refactor:
+    name: refactor_agent
+    model: gpt-4
+    temperature: 0
+  
+  assurance:
+    name: assurance_agent
+    model: gpt-4
+    temperature: 0
 
-  skill_executor:
-    name: skill_agent
-    type: user_proxy
-    description: "Executes skills and handles file operations"
-    code_execution_config:
-      work_dir: "./data/assets"
-      use_docker: false
-      timeout: 60
-
-  verification:
-    name: verification_agent
-    type: assistant
-    description: "Verifies execution results and validates transformations"
-    llm_config:
-      temperature: 0
-      max_tokens: 2048
-    system_message: |
-      You are a verification agent responsible for:
-      1. Validating skill execution results
-      2. Ensuring data quality and completeness
-      3. Verifying transformations maintain proper lineage
-
-# Intent Configuration
-intents:
-  initial:
-    project_discovery:
-      description_template: "Discover project structure and scope for {project_path}"
-      resolution: skill
-      skill: tartxt
-      criteria:
-        include_file_analysis: true
-      environment:
-        analysis_depth: full
-        include_hidden: false
-      validation_rules:
-        project_path: must_exist
-      actions:
-        - analyze_structure
-
-  actions:  
-    analyze_structure:
-      description_template: "Analyze code structure for {project_path}"
-      resolution: skill
-      skill: tartxt  # Using tartxt for MVP
-      criteria:
-        parse_imports: true
-        analyze_dependencies: true
-      environment:
-        exclude_patterns:
-          - "*.pyc"
-          - "__pycache__"
-          - "*.DS_Store"
-        max_file_size: 10485760
-      validation_rules:
-        output_format: structured
-
-# Skills Configuration
+# Skill Configuration
 skills:
   tartxt:
-    type: project_analyzer
     path: src/skills/tartxt.py
-    config:
-      max_file_size: 10485760
-      default_excludes:
-        - "*.pyc"
-        - "__pycache__"
-        - "*.DS_Store"
-      output_format: structured
-      description: "Analyzes Python project structure and dependencies"
-
-# Group Chat Configuration
-group_chat:
-  max_rounds: 10
-  speaker_selection_method: auto
-  allow_repeat_speaker: false
-  termination_conditions:
-    - type: max_rounds
-    - type: completion
-      criteria:
-        - has_valid_result
-        - all_actions_completed
-
-# Asset Management
-asset_base_path: ./data/assets
-
-# Validation Rules
-validation:
-  rules:
-    must_exist:
-      type: file_check
-      validator: path_exists
-      additional_params: {}
-    structured_output:
-      type: output_check
-      validator: is_valid_structure
-      additional_params: {}
+    exclude_patterns:
+      - "*.pyc"
+      - "__pycache__"
+      - "*.DS_Store"
+    max_file_size: 10485760
