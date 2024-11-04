@@ -3,180 +3,113 @@
 import typer
 import asyncio
 from pathlib import Path
-import os
-from typing import Optional
-from rich.console import Console
-from rich.logging import RichHandler
-import logging
 import structlog
-import sys
+from typing import Optional
+import yaml
+from pydantic import BaseModel, Field
 
-from .app import create_app
-from .config import load_config
+from .agents.orchestrator import ProjectAnalysisSystem
 
-# Initialize CLI components
-app = typer.Typer(name="intent-system", help="Intent System CLI")
-console = Console()
+# Config Models
+class LLMConfig(BaseModel):
+    """LLM Configuration"""
+    api_key_env: str = "OPENAI_API_KEY"
+    model: str = "gpt-4"
+    temperature: float = 0
+    timeout: int = 120
 
-def setup_logging(verbose: bool = False) -> None:
-    """Setup structured logging with rich output"""
-    level = logging.DEBUG if verbose else logging.INFO
-    
-    # Create a standard logger first
-    logger = logging.getLogger("intent_system")
-    logger.setLevel(level)
-    
-    # Setup Rich handler
-    rich_handler = RichHandler(
-        rich_tracebacks=True,
-        markup=True,
-        show_path=verbose
-    )
-    rich_handler.setLevel(level)
-    logger.addHandler(rich_handler)
-    
-    # Configure structlog to use standard logging
-    structlog.configure(
-        processors=[
-            structlog.stdlib.filter_by_level,
-            structlog.processors.TimeStamper(fmt="iso"),
-            structlog.processors.StackInfoRenderer(),
-            structlog.processors.format_exc_info,
-            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
-        ],
-        context_class=dict,
-        logger_factory=structlog.stdlib.LoggerFactory(),
-        wrapper_class=structlog.stdlib.BoundLogger,
-        cache_logger_on_first_use=True,
-    )
-    
-    # Create our logger instance
-    logger = structlog.get_logger("intent_system")
-    logger.debug("logging.initialized", level=level, verbose=verbose)
-    return logger
+class SkillConfig(BaseModel):
+    """Skill Configuration"""
+    path: Path
+    exclude_patterns: list[str] = Field(default_factory=lambda: ["*.pyc", "__pycache__", "*.DS_Store"])
+    max_file_size: int = 10_485_760  # 10MB
 
-def verify_environment() -> None:
-    """Verify required environment setup"""
-    logger = structlog.get_logger("intent_system")
-    
-    # Check Python version
-    logger.debug("environment.python_version", version=sys.version)
-    
-    # Check current directory
-    cwd = os.getcwd()
-    logger.debug("environment.cwd", path=cwd)
-    
-    # Verify critical paths
-    config_dir = Path("config")
-    if not config_dir.exists():
-        logger.error("environment.missing_config_dir")
-        raise typer.Exit(code=1)
+class SystemConfig(BaseModel):
+    """Simplified system configuration"""
+    llm: LLMConfig = Field(default_factory=LLMConfig)
+    skills: dict[str, SkillConfig]
+    output_dir: Path = Path("output")
+    max_rounds: int = 10
 
-    logger.info("environment.verified", status="ok")
+    class Config:
+        arbitrary_types_allowed = True
 
-@app.callback()
-def callback():
-    """Intent System CLI - Project Analysis Tool"""
-    pass
+def load_config(config_path: Path) -> SystemConfig:
+    """Load system configuration"""
+    with open(config_path) as f:
+        raw_config = yaml.safe_load(f)
+    
+    # Convert skill paths to Path objects
+    if 'skills' in raw_config:
+        for skill in raw_config['skills'].values():
+            if 'path' in skill:
+                skill['path'] = Path(skill['path'])
+    
+    return SystemConfig(**raw_config)
+
+# CLI App
+app = typer.Typer()
 
 @app.command()
 def analyze(
-    project_path: str = typer.Argument(
-        ...,
-        help="Path to the project to analyze"
-    ),
+    project_path: str,
     config_path: Optional[str] = typer.Option(
-        None,
-        '--config', '-c',
-        help="Path to custom config file"
+        "config/system_config.yml",
+        "--config",
+        "-c",
+        help="Path to configuration file"
     ),
     verbose: bool = typer.Option(
         False,
-        '--verbose', '-v',
+        "--verbose",
+        "-v",
         help="Enable verbose logging"
     )
-) -> None:
-    """Analyze a project using the intent system"""
-    # Setup logging first
-    logger = setup_logging(verbose)
-    logger.debug("cli.command.started", command="analyze")
+):
+    """Analyze a Python project using AutoGen agents"""
+    # Setup logging
+    log_level = "DEBUG" if verbose else "INFO"
+    logger = structlog.get_logger()
+    structlog.configure(
+        wrapper_class=structlog.make_filtering_bound_logger(log_level)
+    )
     
     try:
-        # Get project root
-        root_dir = Path(__file__).parent.parent.resolve()
+        # Validate paths
+        project_path = Path(project_path)
+        config_path = Path(config_path)
         
-        # Convert project path to absolute
-        project_path_obj = Path(project_path).resolve()
-        logger.debug("cli.paths", 
-                    root=str(root_dir),
-                    project_path=str(project_path_obj))
+        if not project_path.exists():
+            raise typer.BadParameter(f"Project path does not exist: {project_path}")
         
-        # Verify project path
-        if not project_path_obj.exists():
-            raise typer.BadParameter(f"Project path does not exist: {project_path_obj}")
-        if not project_path_obj.is_dir():
-            raise typer.BadParameter(f"Project path must be a directory: {project_path_obj}")
+        if not config_path.exists():
+            raise typer.BadParameter(f"Config file does not exist: {config_path}")
         
-        # Handle config path
-        if config_path:
-            config_path_obj = Path(config_path).resolve()
-        else:
-            config_path_obj = root_dir / "config" / "system_config.yml"
+        # Show analysis start
+        typer.echo(f"Starting analysis of {project_path}")
+        if verbose:
+            typer.echo(f"Using config from {config_path}")
         
-        if not config_path_obj.exists():
-            raise typer.BadParameter(f"Config file not found: {config_path_obj}")
-            
-        logger.info("cli.starting_analysis", 
-                   project=str(project_path_obj),
-                   config=str(config_path_obj))
+        # Initialize system
+        system = ProjectAnalysisSystem(str(config_path))
         
         # Run analysis
-        try:
-            asyncio.run(run_analysis(project_path_obj, config_path_obj))
-        except Exception as e:
-            logger.exception("cli.analysis_failed", error=str(e))
-            raise
-            
-    except Exception as e:
-        logger.exception("cli.failed", error=str(e))
-        console.print(f"\n[bold red]Error:[/] {str(e)}")
-        raise typer.Exit(code=1)
-
-async def run_analysis(project_path: Path, config_path: Path) -> None:
-    """Execute the project analysis workflow"""
-    logger = structlog.get_logger("intent_system")
-    
-    try:
-        logger.info("analysis.loading_config")
-        config = load_config(config_path)
+        result = asyncio.run(system.analyze_project(str(project_path)))
         
-        logger.info("analysis.creating_app")
-        app = create_app(config)
+        # Show results
+        typer.echo("\nAnalysis complete! 🎉")
+        typer.echo(f"Results saved to: {result['output_path']}")
         
-        logger.info("analysis.initializing")
-        await app.initialize()
-        
-        with console.status("[bold blue]Analyzing project...") as status:
-            result = await app.process_scope_request(str(project_path))
-            
-            if not result:
-                logger.error("analysis.no_results")
-                raise ValueError("Analysis completed but no results were returned")
-            
-            logger.info("analysis.complete", result=result)
-            status.update("[bold green]Analysis complete!")
-        
-        console.print("\n[bold green]Analysis Complete![/]")
-        console.print(f"\nResults saved to: {result.get('results_path', 'No path returned')}")
+        # Show summary if available
+        if "summary" in result["result"]:
+            typer.echo("\nSummary:")
+            for key, value in result["result"]["summary"].items():
+                typer.echo(f"  {key}: {value}")
         
     except Exception as e:
-        logger.exception("analysis.failed", error=str(e))
-        console.print(f"\n[bold red]Analysis failed:[/] {str(e)}")
-        raise
-
-def main():
-    """CLI entry point"""
-    app()
+        logger.exception("analysis.failed")
+        typer.echo(f"Error: {str(e)}", err=True)
+        raise typer.Exit(1)
 
 if __name__ == "__main__":
-    main()
+    app()

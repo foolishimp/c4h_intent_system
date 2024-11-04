@@ -1,17 +1,57 @@
 # config/system_config.yml
 
-# LLM Provider Configuration - MVP only needs OpenAI
-default_llm: openai
-providers:
-  openai:
-    model: gpt-4
-    api_key_env: OPENAI_API_KEY
-    timeout: 120
-    temperature: 0
-    additional_params:
-      max_tokens: 4096
+# LLM Configuration for AutoGen 0.3.1
+llm_config:
+  default_model: gpt-4
+  config_list:
+    - model: gpt-4
+      api_key_env: OPENAI_API_KEY
+      base_url: null  # Use default OpenAI URL
+      api_type: open_ai
+  default_temperature: 0
+  request_timeout: 120
+  cache_seed: 42
 
-# Intent System Configuration
+# Agents Configuration
+agents:
+  orchestrator:
+    name: orchestration_agent
+    type: assistant
+    description: "Orchestrates intent processing and skill execution"
+    llm_config:
+      temperature: 0
+      max_tokens: 4096
+    system_message: |
+      You are an orchestration agent in an intent-based system.
+      Your primary responsibilities are:
+      1. Analyze Python project structure through intents
+      2. Coordinate with skill execution agents
+      3. Manage analysis results and reporting
+      4. Track all transformations and maintain lineage
+
+  skill_executor:
+    name: skill_agent
+    type: user_proxy
+    description: "Executes skills and handles file operations"
+    code_execution_config:
+      work_dir: "./data/assets"
+      use_docker: false
+      timeout: 60
+
+  verification:
+    name: verification_agent
+    type: assistant
+    description: "Verifies execution results and validates transformations"
+    llm_config:
+      temperature: 0
+      max_tokens: 2048
+    system_message: |
+      You are a verification agent responsible for:
+      1. Validating skill execution results
+      2. Ensuring data quality and completeness
+      3. Verifying transformations maintain proper lineage
+
+# Intent Configuration
 intents:
   initial:
     project_discovery:
@@ -27,96 +67,61 @@ intents:
         project_path: must_exist
       actions:
         - analyze_structure
-  actions:
+
+  actions:  
     analyze_structure:
       description_template: "Analyze code structure for {project_path}"
       resolution: skill
-      skill: tartxt  # Explicitly link to tartxt skill
+      skill: tartxt  # Using tartxt for MVP
       criteria:
         parse_imports: true
         analyze_dependencies: true
-      environment: 
-        exclude_patterns: 
+      environment:
+        exclude_patterns:
           - "*.pyc"
           - "__pycache__"
           - "*.DS_Store"
         max_file_size: 10485760
-      actions: []  # No sub-actions for this one
+      validation_rules:
+        output_format: structured
 
-# Master Prompt Configuration
-master_prompt_overlay: |
-  You are part of an intent-based processing system. Your responses should be:
-  1. Focused on the specific intent being processed
-  2. Deterministic where possible
-  3. Clear about uncertainty when it exists
-  4. Tracking all transformations and decisions
-  Always maintain the context and lineage of the intent being processed.
-
-# Asset Management
-asset_base_path: ./data/assets
-
-# Agent Configuration
-agents:
-  orchestration_agent:
-    name: OrchestrationAgent
-    type: orchestrator
-    description: "Coordinates intent processing and skill execution"
-    base_prompt: |
-      You are an orchestration agent responsible for:
-      1. Analyzing intents and determining required skills
-      2. Coordinating processing flows
-      3. Managing intent transformations
-      4. Handling errors and creating debug intents
-    providers:
-      - openai
-    llm_config:
-      seed: 42
-      primary_provider: openai
-      fallback_providers: []
-      temperature: 0
-      request_timeout: 120
-
-  assurance_agent:
-    name: AssuranceAgent 
-    type: assurance
-    description: "Verifies execution and validates results"
-    base_prompt: |
-      You are an assurance agent responsible for:
-      1. Verifying skill execution results
-      2. Validating transformations
-      3. Ensuring quality of outputs
-      4. Creating verification intents
-    providers:
-      - openai
-    llm_config:
-      seed: 42
-      primary_provider: openai
-      temperature: 0
-      request_timeout: 120
-
-# Skill Configuration - MVP only needs tartxt
+# Skills Configuration
 skills:
   tartxt:
     type: project_analyzer
     path: src/skills/tartxt.py
     config:
       max_file_size: 10485760
-      default_excludes: 
+      default_excludes:
         - "*.pyc"
         - "__pycache__"
         - "*.DS_Store"
       output_format: structured
+      description: "Analyzes Python project structure and dependencies"
+
+# Group Chat Configuration
+group_chat:
+  max_rounds: 10
+  speaker_selection_method: auto
+  allow_repeat_speaker: false
+  termination_conditions:
+    - type: max_rounds
+    - type: completion
+      criteria:
+        - has_valid_result
+        - all_actions_completed
+
+# Asset Management
+asset_base_path: ./data/assets
 
 # Validation Rules
-
 validation:
   rules:
     must_exist:
       type: file_check
       validator: path_exists
       additional_params: {}
-    
-    must_be_positive_int:
-      type: value_check
-      validator: is_positive_integer 
+    structured_output:
+      type: output_check
+      validator: is_valid_structure
       additional_params: {}

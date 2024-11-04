@@ -1,146 +1,250 @@
 # src/agents/base.py
-"""
-Base Agent Implementation for Intent-Based Architecture
-Follows Microsoft AutoGen patterns for agent interactions
 
-Key features:
-- Async intent processing
-- Structured logging
-- Error handling with lineage preservation
-- Configuration validation
-- Resource lifecycle management
-"""
-
-from abc import ABC, abstractmethod
-from typing import Dict, Any, Optional, List
-from dataclasses import dataclass, field
-from contextlib import asynccontextmanager
-from enum import Enum
-import structlog
-import asyncio
+from typing import Dict, Any, Optional, List, Union, Callable
 from datetime import datetime
+import structlog
+from autogen import (
+    ConversableAgent,
+    Agent,
+    AssistantAgent,
+    GroupChat,
+    GroupChatManager,
+    config_list_from_json
+)
+from pydantic import BaseModel
 
 from src.models.intent import Intent, IntentStatus, ResolutionState
 from src.config import Config
 
-class AgentState(str, Enum):
-    """Agent lifecycle states"""
-    INITIALIZED = "initialized"
-    READY = "ready"
-    PROCESSING = "processing"
-    ERROR = "error"
-    SHUTDOWN = "shutdown"
+class AgentMessage(BaseModel):
+    """Structured message format for agent communication"""
+    intent_id: str
+    message_type: str
+    content: Dict[str, Any]
+    timestamp: datetime = datetime.utcnow()
 
-@dataclass
-class AgentContext:
-    """Shared context for agent operations"""
-    agent_id: str
-    start_time: datetime = field(default_factory=datetime.utcnow)
-    processed_intents: List[str] = field(default_factory=list)
-    state: AgentState = AgentState.INITIALIZED
-    metrics: Dict[str, Any] = field(default_factory=dict)
-
-class BaseAgent(ABC):
-    """Base class for all agents in the intent system
+class IntentAgent(ConversableAgent):
+    """Base agent class integrating AutoGen 0.3.1 with Intent Architecture"""
     
-    Implements core agent functionality following Microsoft AutoGen patterns:
-    - Async intent processing
-    - Resource lifecycle management
-    - Error handling with recovery
-    - Metrics tracking
-    - Configuration validation
-    """
-    
-    def __init__(self, config: Config):
-        """Initialize the agent with configuration"""
+    def __init__(
+        self,
+        name: str,
+        config: Config,
+        llm_config: Optional[Dict] = None,
+        system_message: Optional[str] = None,
+        **kwargs
+    ):
+        # Configure LLM settings from config
+        if llm_config is None:
+            llm_config = {
+                "config_list": config_list_from_json(
+                    config.providers[config.default_llm].dict()
+                ),
+                "temperature": config.providers[config.default_llm].temperature,
+                "timeout": config.providers[config.default_llm].timeout
+            }
+        
+        # Initialize AutoGen agent with 0.3.1 parameters
+        super().__init__(
+            name=name,
+            llm_config=llm_config,
+            system_message=system_message or config.master_prompt_overlay,
+            **kwargs
+        )
+        
         self.config = config
         self.logger = structlog.get_logger()
-        self.context = AgentContext(agent_id=self.__class__.__name__)
-        self._validate_config()
+        
+        # Register reply functions with AutoGen 0.3.1 syntax
+        self.register_reply(
+            trigger=self._is_intent_message,
+            reply_func=self._handle_intent,
+            config={"filter_dict": {"type": "intent"}}
+        )
+        
+        # Set up skill registry
+        self.skills = {}
+        self._initialize_skills()
 
-    @asynccontextmanager
-    async def lifecycle(self):
-        """Manage agent lifecycle with proper resource cleanup"""
+    async def _handle_intent(
+        self,
+        message: Dict[str, Any],
+        sender: Optional[Agent] = None,
+        context: Optional[Dict] = None
+    ) -> Union[str, Dict]:
+        """Process incoming intent messages"""
         try:
-            await self.initialize()
-            self.context.state = AgentState.READY
-            yield self
-        finally:
-            await self.cleanup()
-            self.context.state = AgentState.SHUTDOWN
+            intent = Intent(**message["content"])
+            
+            self.logger.info(
+                "agent.intent_received",
+                agent=self.name,
+                intent_id=str(intent.id),
+                intent_type=intent.type
+            )
+            
+            # Process intent
+            result = await self.process_intent(intent)
+            
+            # Structure response
+            response = AgentMessage(
+                intent_id=str(result.id),
+                message_type="intent_result",
+                content=result.dict()
+            )
+            
+            return response.dict()
+            
+        except Exception as e:
+            self.logger.exception(
+                "agent.intent_processing_failed",
+                error=str(e),
+                message=message
+            )
+            raise
 
-    async def initialize(self) -> None:
-        """Initialize agent resources and validate configuration"""
-        self.logger.info("agent.initializing", 
-                        agent_id=self.context.agent_id,
-                        config=self.config.dict())
-        await self._setup_resources()
-        self.context.state = AgentState.INITIALIZED
-        self.logger.info("agent.initialized")
+    def register_function(
+        self,
+        function: Callable,
+        name: Optional[str] = None,
+        description: Optional[str] = None
+    ) -> None:
+        """Register a function for AutoGen function calling"""
+        function_config = {
+            "name": name or function.__name__,
+            "description": description or function.__doc__ or "",
+            "parameters": {
+                # Extract parameters from function signature
+                # This could be enhanced with more type information
+                "type": "object",
+                "properties": {},
+                "required": []
+            }
+        }
+        
+        self.register_reply(
+            lambda msg: msg.get("function_call", {}).get("name") == function_config["name"],
+            function,
+            config={"function": function_config}
+        )
 
-    async def cleanup(self) -> None:
-        """Cleanup agent resources"""
-        self.logger.info("agent.cleanup", 
-                        agent_id=self.context.agent_id,
-                        metrics=self.context.metrics)
+    def _initialize_skills(self) -> None:
+        """Initialize available skills from config"""
+        if hasattr(self.config, 'skills'):
+            for skill_name, skill_config in self.config.skills.items():
+                try:
+                    # Import and initialize skill
+                    module_path = skill_config.path
+                    if module_path.exists():
+                        # Register skill as a function
+                        self.register_function(
+                            function=self._create_skill_function(skill_name, skill_config),
+                            name=skill_name,
+                            description=skill_config.config.get('description', '')
+                        )
+                        
+                        self.skills[skill_name] = {
+                            "config": skill_config,
+                            "path": module_path
+                        }
+                except Exception as e:
+                    self.logger.error(
+                        "agent.skill_initialization_failed",
+                        skill=skill_name,
+                        error=str(e)
+                    )
 
-    @abstractmethod
+    def _create_skill_function(self, skill_name: str, skill_config: Any) -> Callable:
+        """Create a callable function wrapper for a skill"""
+        async def skill_function(**kwargs):
+            # Implement skill execution logic here
+            pass
+        
+        skill_function.__name__ = skill_name
+        skill_function.__doc__ = skill_config.config.get('description', '')
+        return skill_function
+
     async def process_intent(self, intent: Intent) -> Intent:
-        """Process an intent and return transformed result
+        """Process an intent - to be implemented by concrete agents"""
+        raise NotImplementedError
+
+class IntentAssistantAgent(IntentAgent, AssistantAgent):
+    """Assistant agent specialized for intent analysis and orchestration"""
+    
+    def __init__(
+        self,
+        name: str,
+        config: Config,
+        **kwargs
+    ):
+        super().__init__(
+            name=name,
+            config=config,
+            system_message=self._build_system_message(config),
+            **kwargs
+        )
+
+    def _build_system_message(self, config: Config) -> str:
+        """Build specialized system message for assistant"""
+        base_message = config.master_prompt_overlay
+        return f"""{base_message}
         
-        Must be implemented by concrete agent classes.
+        As an Intent Assistant Agent, you:
+        1. Analyze incoming intents to determine processing strategy
+        2. Coordinate with other agents for intent resolution
+        3. Maintain intent lineage and transformation history
+        4. Handle error recovery and debugging
+        
+        Follow the intent architecture flow:
+        - Analyze intent requirements
+        - Determine skill needs
+        - Manage decomposition
+        - Track resolution state
         """
-        pass
 
-    async def handle_error(self, error: Exception, intent: Intent) -> Intent:
-        """Create error intent for debugging and recovery
+class IntentGroupChat:
+    """Manages multi-agent conversations for intent processing using AutoGen 0.3.1"""
+    
+    def __init__(
+        self,
+        agents: List[IntentAgent],
+        config: Config,
+        max_rounds: int = 10
+    ):
+        self.agents = agents
+        self.config = config
         
-        Maintains complete lineage for debugging and recovery flows.
-        """
-        self.context.state = AgentState.ERROR
-        self.logger.exception("agent.error",
-                            agent_id=self.context.agent_id,
-                            intent_id=str(intent.id),
-                            error=str(error))
-
-        # Create debug intent while maintaining lineage
-        debug_intent = intent.transformTo("debug")
-        debug_intent.description = f"Error in {self.context.agent_id}: {str(error)}"
-        debug_intent.context.update({
-            "original_intent": intent.dict(),
-            "error": str(error),
-            "error_type": type(error).__name__,
-            "agent_context": self.context.__dict__
-        })
-        debug_intent.criteria = {"resolve_error": True}
-        debug_intent.status = IntentStatus.ERROR
-        debug_intent.resolution_state = ResolutionState.SKILL_FAILURE
-
-        # Track error in metrics
-        self._update_metrics("errors", error)
-
-        return debug_intent
-
-    def _validate_config(self) -> None:
-        """Validate agent configuration requirements"""
-        if not self.config:
-            raise ValueError(f"{self.context.agent_id} requires configuration")
+        # Create AutoGen 0.3.1 GroupChat with enhanced configuration
+        self.group_chat = GroupChat(
+            agents=agents,
+            messages=[],
+            max_rounds=max_rounds,
+            speaker_selection_method="auto",
+            allow_repeat_speaker=False
+        )
         
-        required_fields = ["agents", "providers", "master_prompt_overlay"]
-        missing = [field for field in required_fields if not hasattr(self.config, field)]
-        if missing:
-            raise ValueError(f"Missing required config fields: {missing}")
-
-    async def _setup_resources(self) -> None:
-        """Setup agent resources and connections"""
-        # Implement resource setup (e.g., LLM clients, caches, etc.)
-        pass
-
-    def _update_metrics(self, metric_name: str, value: Any) -> None:
-        """Update agent metrics"""
-        if metric_name not in self.context.metrics:
-            self.context.metrics[metric_name] = []
-        self.context.metrics[metric_name].append({
-            "timestamp": datetime.utcnow().isoformat(),
-            "value": str(value)
-        })
+        # Create chat manager with timeout
+        self.manager = GroupChatManager(
+            groupchat=self.group_chat,
+            name="intent_manager",
+            llm_config={"timeout": config.providers[config.default_llm].timeout}
+        )
+    
+    async def process_intent(self, intent: Intent) -> Intent:
+        """Process intent through group chat"""
+        message = AgentMessage(
+            intent_id=str(intent.id),
+            message_type="intent",
+            content=intent.dict()
+        )
+        
+        # Use 0.3.1 chat initiation
+        result = await self.manager.run(
+            message=message.dict(),
+            sender=self.agents[0]  # Specify initial sender
+        )
+        
+        if isinstance(result, dict) and "content" in result:
+            return Intent(**result["content"])
+        
+        raise ValueError("Invalid result from group chat")
