@@ -27,21 +27,21 @@ intents:
         project_path: must_exist
       actions:
         - analyze_structure
-
   actions:
     analyze_structure:
       description_template: "Analyze code structure for {project_path}"
       resolution: skill
-      skill: tartxt
+      skill: tartxt  # Explicitly link to tartxt skill
       criteria:
         parse_imports: true
         analyze_dependencies: true
-      environment:
+      environment: 
         exclude_patterns: 
           - "*.pyc"
           - "__pycache__"
           - "*.DS_Store"
-        max_file_size: 10485760  # 10MB
+        max_file_size: 10485760
+      actions: []  # No sub-actions for this one
 
 # Master Prompt Configuration
 master_prompt_overlay: |
@@ -108,11 +108,15 @@ skills:
       output_format: structured
 
 # Validation Rules
+
 validation:
-  must_exist:
-    type: file_check
-    validator: path_exists
-  
-  must_be_positive_int:
-    type: value_check
-    validator: is_positive_integer
+  rules:
+    must_exist:
+      type: file_check
+      validator: path_exists
+      additional_params: {}
+    
+    must_be_positive_int:
+      type: value_check
+      validator: is_positive_integer 
+      additional_params: {}

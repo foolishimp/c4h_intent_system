@@ -26,11 +26,18 @@ class DiscoveryAgent(BaseAgent):
         """Initialize the discovery agent with configuration"""
         super().__init__(config)
         try:
-            self.skill_path = config.get_skill_path("tartxt")
+            # Access Pydantic model fields directly
+            skill_config = config.skills.get("tartxt")
+            if not skill_config:
+                raise ValueError("Missing required skill config: tartxt")
+                
+            self.skill_path = skill_config.path
             if not self.skill_path.exists():
                 raise FileNotFoundError(f"Required skill not found: {self.skill_path}")
+                
             self.logger = structlog.get_logger()
-        except ValueError as e:
+            
+        except Exception as e:
             raise ValueError(f"Discovery agent initialization failed: {str(e)}")
 
     async def process_intent(self, intent: Intent) -> Intent:

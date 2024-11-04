@@ -1,13 +1,12 @@
 # src/agents/assurance.py
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from dataclasses import dataclass
 import structlog
-import asyncio
 
 from .base import BaseAgent
 from ..models.intent import Intent, IntentType
-from ..config import Config
+from ..config import Config, ValidationRuleConfig
 
 @dataclass
 class ValidationRule:
@@ -15,6 +14,15 @@ class ValidationRule:
     type: str
     validator: str
     params: Dict[str, Any] = None
+
+    @classmethod
+    def from_config(cls, config: ValidationRuleConfig) -> 'ValidationRule':
+        """Create ValidationRule from config"""
+        return cls(
+            type=config.type,
+            validator=config.validator,
+            params=config.additional_params
+        )
 
 class AssuranceAgent(BaseAgent):
     """Agent responsible for verifying execution results and validating transformations"""
@@ -37,16 +45,12 @@ class AssuranceAgent(BaseAgent):
     async def validateSkillExecution(self, skill: str, result: Any) -> bool:
         """Validate skill execution results"""
         # Get skill-specific rules
-        skill_rules = self.verification_rules.get(skill, {})
-        
-        # Default to valid if no rules defined
-        if not skill_rules:
+        if skill not in self.verification_rules:
             self.logger.debug("assurance.no_rules_for_skill", skill=skill)
             return True
 
-        # Apply validation rules
         try:
-            for rule in skill_rules.values():
+            for rule in self.verification_rules[skill]:
                 self.logger.debug("assurance.applying_rule", 
                                 skill=skill,
                                 rule=rule)
@@ -65,14 +69,7 @@ class AssuranceAgent(BaseAgent):
             return False
 
     async def process_intent(self, intent: Intent) -> Intent:
-        """Process verification intents
-        
-        Args:
-            intent: Intent to process
-        
-        Returns:
-            Processed intent with verification results
-        """
+        """Process verification intents"""
         try:
             if intent.type != IntentType.VERIFICATION:
                 raise ValueError(f"Invalid intent type: {intent.type}")
@@ -83,9 +80,12 @@ class AssuranceAgent(BaseAgent):
                 
             # Apply verification rules
             verification_results = {}
-            for rule_name, rule in self.verification_rules.items():
-                result = await self._validate_rule(rule, asset)
-                verification_results[rule_name] = result
+            for rule_name, rules in self.verification_rules.items():
+                results = []
+                for rule in rules:
+                    result = await self._validate_rule(rule, asset)
+                    results.append(result)
+                verification_results[rule_name] = results
             
             # Update intent with results    
             intent.context['verification_results'] = verification_results
@@ -107,16 +107,19 @@ class AssuranceAgent(BaseAgent):
 
     def _load_rules(self) -> Dict[str, Any]:
         """Load verification rules from config"""
-        if hasattr(self.config, 'validation'):
-            rules = {}
-            # Convert Pydantic model fields to dict format
-            for rule_name, rule_config in self.config.validation.items():
-                rules[rule_name] = ValidationRule(
-                    type=rule_config.type,
-                    validator=rule_config.validator
-                )
+        rules = {}
+        if not hasattr(self.config, 'validation') or not hasattr(self.config.validation, 'rules'):
+            self.logger.warning("assurance.no_validation_rules_configured")
             return rules
-        return {}
+
+        try:
+            # Convert config rules to ValidationRule instances
+            for rule_name, rule_config in self.config.validation.rules.items():
+                rules[rule_name] = ValidationRule.from_config(rule_config)
+            return rules
+        except Exception as e:
+            self.logger.error("assurance.failed_to_load_rules", error=str(e))
+            return rules
 
     async def _validate_rule(self, rule: ValidationRule, data: Any) -> bool:
         """Execute a validation rule"""

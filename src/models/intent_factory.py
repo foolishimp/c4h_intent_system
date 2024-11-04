@@ -8,11 +8,7 @@ class IntentFactory:
     """Creates intents based on system configuration"""
     
     def __init__(self, config: Config):
-        """Initialize with system configuration
-        
-        Args:
-            config: System configuration instance
-        """
+        """Initialize with system configuration"""
         self.config = config
         self.intent_configs = config.intents  # Access intents field directly
 
@@ -32,14 +28,17 @@ class IntentFactory:
             **params
         }
         
-        # Create the intent
+        # Create the intent with new fields
         return Intent(
             type=intent_type,
             description=description,
             environment=environment,
             criteria=intent_config.criteria,
             status=IntentStatus.CREATED,
-            resolution_state=ResolutionState.INTENT_RECEIVED
+            resolution_state=ResolutionState.INTENT_RECEIVED,
+            resolution=intent_config.resolution,
+            skill=intent_config.skill,
+            actions=intent_config.actions
         )
 
     def create_action_intent(self, action_type: str, parent_id: str, **params) -> Intent:
@@ -59,5 +58,8 @@ class IntentFactory:
             criteria=action_config.criteria,
             parent_id=parent_id,
             status=IntentStatus.CREATED,
-            resolution_state=ResolutionState.INTENT_RECEIVED
+            resolution_state=ResolutionState.INTENT_RECEIVED,
+            resolution=action_config.resolution,
+            skill=action_config.skill,
+            actions=action_config.actions
         )

@@ -1,6 +1,6 @@
 # src/models/intent.py
 
-from pydantic import BaseModel, Field  # Added Field import
+from pydantic import BaseModel, Field
 from uuid import UUID, uuid4
 from typing import Optional, List, Dict, Any, Union
 from datetime import datetime
@@ -64,6 +64,11 @@ class Intent(BaseModel):
     lineage: Lineage = Field(default_factory=Lineage)
     created_at: datetime = Field(default_factory=datetime.utcnow)
     resolution_state: ResolutionState = Field(default=ResolutionState.INTENT_RECEIVED)
+    
+    # Add new fields
+    resolution: Optional[str] = None  # skill, decompose, etc.
+    skill: Optional[str] = None       # Name of skill to execute if resolution is 'skill'
+    actions: List[str] = Field(default_factory=list)  # Follow-up actions
 
     def subdivide(self) -> List['Intent']:
         """Subdivide intent into smaller intents following architecture flow"""
@@ -99,8 +104,8 @@ class Intent(BaseModel):
                 return False
                 
             # Validate based on type
-            if self.type == IntentType.SCOPE:
-                return self._validate_scope_analysis()
+            if self.type == IntentType.DISCOVERY:
+                return self._validate_discovery()
             elif self.type == IntentType.ACTION:
                 return self._validate_action()
                 
@@ -109,52 +114,17 @@ class Intent(BaseModel):
         except Exception:
             return False
 
-    def transformTo(self, new_type: Union[IntentType, str]) -> 'Intent':
-        """Create new intent of different type while maintaining lineage"""
-        new_intent = Intent(
-            type=new_type,
-            description=f"Transformed from {self.type}: {self.description}",
-            environment=self.environment.copy(),
-            context=self.context.copy(),
-            criteria=self.criteria.copy(),
-            parent_id=self.id
-        )
-        
-        # Record transformation with resolution state
-        self._record_transformation(
-            target_id=new_intent.id,
-            reason=f"Type transformation from {self.type} to {new_type}",
-            resolution_state=self.resolution_state
-        )
-        
-        # Copy existing lineage
-        new_intent.lineage.transformations.extend(self.lineage.transformations)
-        new_intent.lineage.assets = self.lineage.assets.copy()
-        new_intent.lineage.metadata = self.lineage.metadata.copy()
-        
-        return new_intent
-
-    def update_resolution(self, state: ResolutionState) -> None:
-        """Update the resolution state and corresponding status"""
-        self.resolution_state = state
-        
-        # Update main status based on resolution state
-        if state in [ResolutionState.SKILL_FAILURE, ResolutionState.NEEDS_CLARIFICATION]:
-            self.status = IntentStatus.ERROR
-        elif state == ResolutionState.SKILL_SUCCESS:
-            self.status = IntentStatus.COMPLETED
-        elif state == ResolutionState.VERIFICATION_NEEDED:
-            self.status = IntentStatus.VERIFICATION_NEEDED
-        else:
-            self.status = IntentStatus.PROCESSING
-
-    def needs_skill(self) -> bool:
-        """Check if intent requires direct skill execution"""
-        return self.resolution_state == ResolutionState.NEEDS_SKILL
-
-    def needs_decomposition(self) -> bool:
-        """Check if intent requires decomposition"""
-        return self.resolution_state == ResolutionState.NEEDS_DECOMPOSITION
+    def _validate_discovery(self) -> bool:
+        """Validate discovery intent requirements"""
+        if self.resolution == 'skill' and not self.skill:
+            return False
+        return True
+            
+    def _validate_action(self) -> bool:
+        """Validate action intent requirements"""
+        if self.resolution == 'skill' and not self.skill:
+            return False
+        return True
 
     def _record_transformation(self, target_id: UUID, reason: str, 
                              resolution_state: Optional[ResolutionState] = None) -> None:
@@ -167,16 +137,6 @@ class Intent(BaseModel):
             resolution_state=resolution_state
         )
         self.lineage.transformations.append(transformation)
-
-    def _validate_scope_analysis(self) -> bool:
-        """Validate scope analysis intent"""
-        required_fields = ['project_path', 'analysis_depth']
-        return all(field in self.criteria for field in required_fields)
-
-    def _validate_action(self) -> bool:
-        """Validate action intent"""
-        required_fields = ['action_type', 'target']
-        return all(field in self.criteria for field in required_fields)
 
     class Config:
         """Pydantic model configuration"""

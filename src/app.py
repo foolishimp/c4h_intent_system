@@ -3,12 +3,11 @@
 from typing import Dict, Any
 from pathlib import Path
 import structlog
-import asyncio  # Added for async support
+import asyncio
 
 from src.config import Config
 from src.agents.orchestration import OrchestrationAgent
 from src.agents.assurance import AssuranceAgent
-from src.agents.discovery import DiscoveryAgent
 
 class IntentApp:
     """Main application class for the Intent System"""
@@ -39,6 +38,35 @@ class IntentApp:
             
         except Exception as e:
             self.logger.exception("app.initialize.failed", error=str(e))
+            raise
+
+    async def process_scope_request(self, project_path: str) -> Dict[str, Any]:
+        """Process a scoping request for project analysis
+        
+        Args:
+            project_path: Path to the project to analyze
+            
+        Returns:
+            Dictionary containing analysis results and metadata
+        """
+        self.logger.info("app.process_scope.starting", project_path=project_path)
+        
+        try:
+            # Delegate to orchestrator
+            result = await self.orchestrator.process_scope_request(project_path)
+            
+            if not result:
+                self.logger.error("app.process_scope.no_results")
+                raise ValueError("Analysis completed but no results were returned")
+            
+            self.logger.info("app.process_scope.complete", 
+                           intent_id=result.get("intent_id"),
+                           output_path=result.get("results_path"))
+                           
+            return result
+            
+        except Exception as e:
+            self.logger.exception("app.process_scope.failed", error=str(e))
             raise
 
 def create_app(config: Config) -> IntentApp:

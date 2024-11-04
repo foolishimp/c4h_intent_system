@@ -77,6 +77,16 @@ class IntentConfig(BaseModel):
     validation_rules: Dict[str, str] = Field(default_factory=dict)
     actions: List[str] = Field(default_factory=list)
 
+class ValidationRuleConfig(BaseModel):
+    """Configuration for a validation rule"""
+    type: str
+    validator: str
+    additional_params: Dict[str, Any] = Field(default_factory=dict)
+
+class ValidationConfig(BaseModel):
+    """Configuration for validation rules"""
+    rules: Dict[str, ValidationRuleConfig]
+
 class Config(BaseModel):
     """Application configuration"""
     default_llm: str
@@ -86,7 +96,7 @@ class Config(BaseModel):
     agents: Dict[str, AgentConfig]
     skills: Dict[str, SkillConfig]
     intents: Dict[str, Dict[str, IntentConfig]]
-    validation: Dict[str, Dict[str, str]]
+    validation: ValidationConfig
 
     logger: Any = Field(default_factory=lambda: structlog.get_logger())
 
