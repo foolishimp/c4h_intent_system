@@ -173,4 +173,4 @@ class ProjectRefactorSystem:
             }
         }
         
-        return await self.verifier.run(verification_message
+        return await self.verifier.run(verification_message)
