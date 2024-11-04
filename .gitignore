@@ -37,6 +37,7 @@ ENV/
 # Project specific
 data/assets/*
 !data/assets/.gitkeep
+workspaces/
 
 # Environment variables
 .env
