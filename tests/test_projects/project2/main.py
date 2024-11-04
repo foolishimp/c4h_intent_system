@@ -1,17 +1,14 @@
-from utils import format_name
+from utils import format_name, validate_age
 
 def process_user(user_data):
+    """Process user data and return formatted string"""
     name = format_name(user_data["name"])
-    age = user_data["age"]
+    age = validate_age(user_data["age"])
     return f"{name} is {age} years old"
-# Continue creating test project2 files
-cat > tests/test_projects/project2/utils.py << 'EOF'
-def format_name(name):
-    return name.strip().title()
 
-def validate_age(age):
-    if not isinstance(age, int):
-        raise TypeError("Age must be an integer")
-    if age < 0 or age > 150:
-        raise ValueError("Age must be between 0 and 150")
-    return age
+if __name__ == "__main__":
+    test_data = {
+        "name": "john doe",
+        "age": 25
+    }
+    print(process_user(test_data))

@@ -1,5 +1,6 @@
 # Project dependencies
 autogen==0.3.1
+flaml[automl]>=2.3.2  # Required for autogen features
 ruff==0.2.1  # For code formatting
 libcst==1.1.0  # For code transformations
 semgrep==1.45.0  # For pattern matching
