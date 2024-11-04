@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Union
 from enum import Enum
 import yaml
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field
+from pydantic.functional_validators import field_validator
 from dotenv import load_dotenv
 import os
 import structlog
@@ -19,8 +20,9 @@ class SkillConfig(BaseModel):
     path: Path
     config: Dict[str, Any] = Field(default_factory=dict)
 
-    @validator('path')
-    def validate_path(cls, v):
+    @field_validator('path')
+    @classmethod
+    def validate_path(cls, v: Path) -> Path:
         if not v.exists():
             raise ValueError(f"Skill path does not exist: {v}")
         return v
@@ -34,10 +36,26 @@ class LLMConfig(BaseModel):
     request_timeout: int = 120
     functions: Optional[List[Dict[str, Any]]] = None
 
-    @validator('temperature')
-    def validate_temperature(cls, v):
+    @field_validator('temperature')
+    @classmethod
+    def validate_temperature(cls, v: float) -> float:
         if not 0 <= v <= 1:
             raise ValueError("Temperature must be between 0 and 1")
+        return v
+
+class ProviderConfig(BaseModel):
+    """Configuration for an LLM provider"""
+    model: str
+    api_key_env: str
+    timeout: int = 120
+    temperature: float = 0
+    additional_params: Dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator('api_key_env')
+    @classmethod
+    def validate_api_key(cls, v: str) -> str:
+        if not os.getenv(v):
+            raise ValueError(f"Missing environment variable: {v}")
         return v
 
 class AgentConfig(BaseModel):
@@ -48,20 +66,6 @@ class AgentConfig(BaseModel):
     base_prompt: str
     providers: List[str]
     llm_config: LLMConfig
-
-class ProviderConfig(BaseModel):
-    """Configuration for an LLM provider"""
-    model: str
-    api_key_env: str
-    timeout: int = 120
-    temperature: float = 0
-    additional_params: Dict[str, Any] = Field(default_factory=dict)
-
-    @validator('api_key_env')
-    def validate_api_key(cls, v):
-        if not os.getenv(v):
-            raise ValueError(f"Missing environment variable: {v}")
-        return v
 
 class IntentConfig(BaseModel):
     """Configuration for an intent type"""
@@ -87,15 +91,29 @@ class Config(BaseModel):
     logger: Any = Field(default_factory=lambda: structlog.get_logger())
 
     class Config:
+        """Pydantic model configuration"""
         arbitrary_types_allowed = True
 
-    @validator('asset_base_path')
-    def validate_asset_path(cls, v):
+    @field_validator('asset_base_path')
+    @classmethod
+    def validate_asset_path(cls, v: Path) -> Path:
         v.mkdir(parents=True, exist_ok=True)
         return v
 
-    @validator('skills')
-    def validate_skills(cls, v):
+    def get_skill_config(self, skill_name: str) -> SkillConfig:
+        """Get configuration for a specific skill"""
+        if skill_name not in self.skills:
+            raise ValueError(f"No configuration found for skill: {skill_name}")
+        return self.skills[skill_name]
+
+    def get_skill_path(self, skill_name: str) -> Path:
+        """Get the path for a specific skill"""
+        skill_config = self.get_skill_config(skill_name)
+        return skill_config.path
+
+    @field_validator('skills')
+    @classmethod
+    def validate_skills(cls, v: Dict[str, SkillConfig]) -> Dict[str, SkillConfig]:
         """Validate that all referenced skills exist"""
         for skill_name, skill_config in v.items():
             if not skill_config.path.exists():
@@ -158,7 +176,17 @@ class Config(BaseModel):
             raise
 
 def load_config(path: Path) -> Config:
-    """Load and validate configuration"""
+    """Load and validate configuration
+    
+    Args:
+        path: Path to the config file
+        
+    Returns:
+        Validated Config instance
+    
+    Raises:
+        Exception: If config loading or validation fails
+    """
     logger = structlog.get_logger()
     
     try:

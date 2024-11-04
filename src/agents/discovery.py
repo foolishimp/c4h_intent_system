@@ -2,14 +2,14 @@
 
 import os
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 from datetime import datetime
 import subprocess
 import sys
 import structlog
 
 from src.agents.base import BaseAgent
-from src.models.intent import Intent, IntentStatus, ResolutionState
+from src.models.intent import Intent, ResolutionState
 from src.config import Config
 
 class DiscoveryAgent(BaseAgent):
@@ -23,15 +23,30 @@ class DiscoveryAgent(BaseAgent):
     """
 
     def __init__(self, config: Config):
+        """Initialize the discovery agent with configuration"""
         super().__init__(config)
-        self.skill_path = config.get_skill_config("tartxt").path
-        if not os.path.exists(self.skill_path):
-            raise FileNotFoundError(f"Required skill not found: {self.skill_path}")
+        try:
+            self.skill_path = config.get_skill_path("tartxt")
+            if not self.skill_path.exists():
+                raise FileNotFoundError(f"Required skill not found: {self.skill_path}")
+            self.logger = structlog.get_logger()
+        except ValueError as e:
+            raise ValueError(f"Discovery agent initialization failed: {str(e)}")
 
     async def process_intent(self, intent: Intent) -> Intent:
-        """Process a discovery intent"""
+        """Process a discovery intent
+        
+        Args:
+            intent: The intent to process
+            
+        Returns:
+            Processed intent with results
+        
+        Raises:
+            ValueError: If the intent type is invalid
+        """
         try:
-            if intent.type != "project_discovery":  # Updated intent type
+            if intent.type != "project_discovery":
                 raise ValueError(f"Invalid intent type for DiscoveryAgent: {intent.type}")
 
             # Update resolution state
@@ -44,25 +59,26 @@ class DiscoveryAgent(BaseAgent):
             # Run project discovery
             discovery_content = await self._discover_project(project_path)
             
-            # Parse and structure the discovery results
+            # Parse and structure results
             structured_discovery = self._structure_discovery(discovery_content)
             
-            # Update intent with discovery results
+            # Add results to intent context
             intent.context.update({
                 "discovery_results": structured_discovery,
                 "discovery_timestamp": datetime.utcnow().isoformat(),
                 "discovered_path": project_path,
-                "discovery_tools": ["tartxt"],
+                "discovery_tools": ["tartxt"]
             })
             
             # Add discovery metrics
             intent.context["discovery_metrics"] = self._calculate_metrics(structured_discovery)
             
-            # Set project scope based on discovery
+            # Set project scope
             intent.context["project_scope"] = self._determine_scope(structured_discovery)
             
-            # Update resolution state and status
+            # Update resolution state
             intent.update_resolution(ResolutionState.SKILL_SUCCESS)
+            
             return intent
 
         except Exception as e:
@@ -74,7 +90,7 @@ class DiscoveryAgent(BaseAgent):
             result = subprocess.run(
                 [
                     sys.executable,
-                    self.skill_path,
+                    str(self.skill_path),  # Convert Path to string
                     "--exclude", "*.pyc,__pycache__,*.DS_Store",
                     "--output",
                     project_path
