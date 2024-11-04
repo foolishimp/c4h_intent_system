@@ -45,4 +45,6 @@ backup_txt/
 .DS_Store/
 .DS_Store
 tests/.DS_Store
-
+.history/
+*.txt
+!requirements.txt

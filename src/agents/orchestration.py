@@ -5,21 +5,16 @@ Handles intent routing, decomposition, and skill execution coordination
 """
 
 from typing import Dict, Any, Optional, List
-from uuid import UUID
-from datetime import datetime
-from pathlib import Path
 from dataclasses import dataclass, field
 import structlog
 import yaml
+from pathlib import Path
 
-# src/agents/orchestration.py
-# First line after module docstring should be:
-from typing import Dict, Any, Optional, List
-from .base import BaseAgent  # This is the critical import
+from .base import BaseAgent
 from ..models.intent import Intent, IntentStatus, ResolutionState
 from ..models.intent_factory import IntentFactory
 from ..config import Config
-from .discovery import DiscoveryAgent 
+from .discovery import DiscoveryAgent
 
 @dataclass
 class Analysis:
@@ -45,7 +40,7 @@ class OrchestrationAgent(BaseAgent):
     def __init__(self, config: Config):
         super().__init__(config)
         self.intent_factory = IntentFactory(config)
-        self.discovery_agent = DiscoveryAgent(config)  # Add discovery agent
+        self.discovery_agent = DiscoveryAgent(config)
         self.logger = structlog.get_logger()
 
     async def process_scope_request(self, project_path: str) -> Dict[str, Any]:
@@ -115,10 +110,14 @@ class OrchestrationAgent(BaseAgent):
                     
                 return await self.combine_results(results)
                 
+            # Process using discovery agent for project_discovery
+            if intent.type == 'project_discovery':
+                return await self.discovery_agent.process_intent(intent)
+                
             # Process using appropriate skill
             if intent.type in self.config.intents['actions']:
                 action_config = self.config.intents['actions'][intent.type]
-                skill_name = action_config['skill']
+                skill_name = action_config.skill
                 result = await self.execute_skill(skill_name, intent)
                 return result
                 
@@ -135,19 +134,19 @@ class OrchestrationAgent(BaseAgent):
                 verification_required=True,
                 details={
                     "reason": "Project discovery requires multiple analysis steps",
-                    "timestamp": datetime.utcnow().isoformat()
+                    "timestamp": self.current_time()
                 }
             )
         elif intent.type in self.config.intents['actions']:
             action_config = self.config.intents['actions'][intent.type]
             return Analysis(
                 resolution_state=ResolutionState.NEEDS_SKILL,
-                skill_name=action_config['skill'],
-                verification_required=action_config.get('requires_verification', False),
+                skill_name=action_config.skill,
+                verification_required=action_config.validation_rules is not None,
                 details={
                     "action_type": intent.type,
-                    "config": action_config,
-                    "timestamp": datetime.utcnow().isoformat()
+                    "config": action_config.dict(),
+                    "timestamp": self.current_time()
                 }
             )
         else:
@@ -160,12 +159,24 @@ class OrchestrationAgent(BaseAgent):
                         intent_id=str(intent.id))
         
         skill_config = self.config.skills[skill_name]
-        # Skill execution logic here
-        return intent
+        
+        # Execute the skill
+        intent.update_resolution(ResolutionState.SKILL_EXECUTION)
+        
+        try:
+            # For now, just use discovery agent as our only skill
+            result = await self.discovery_agent.process_intent(intent)
+            intent.update_resolution(ResolutionState.SKILL_SUCCESS)
+            return result
+        except Exception as e:
+            self.logger.exception("skill.execution_failed", 
+                                skill=skill_name,
+                                error=str(e))
+            intent.update_resolution(ResolutionState.SKILL_FAILURE)
+            raise
 
     async def combine_results(self, results: List[Intent]) -> Intent:
         """Combine multiple intent results into a single result"""
-        # Implementation for combining results
         if not results:
             raise ValueError("No results to combine")
             
