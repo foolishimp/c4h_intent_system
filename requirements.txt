@@ -9,6 +9,9 @@ pyyaml>=6.0.1
 python-dotenv>=1.0.0
 aiohttp>=3.9.1
 asyncio>=3.4.3
+typer==0.9.0
+rich>=13.5.2
+structlog>=23.3.0
 
 # AI/LLM Providers
 openai>=1.0.0
