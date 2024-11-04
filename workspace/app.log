@@ -1,8 +1,0 @@
-INFO:root:greet() called with World
-INFO:root:greet() completed
-INFO:root:calculate_sum() called with [1, 2, 3, 4, 5]
-INFO:root:calculate_sum() result: 15
-INFO:root:greet() called with World
-INFO:root:greet() completed
-INFO:root:calculate_sum() called with [1, 2, 3, 4, 5]
-INFO:root:calculate_sum() result: 15

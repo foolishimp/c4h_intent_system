@@ -3,7 +3,7 @@
 # OpenAI Configuration
 openai:
   api_key_env: OPENAI_API_KEY
-  model: gpt-4
+  model: gpt-4o
   temperature: 0
   timeout: 120
 
@@ -11,22 +11,22 @@ openai:
 agents:
   discovery:
     name: discovery_agent
-    model: gpt-4
+    model: gpt-4o
     temperature: 0
   
   analysis:
     name: analysis_agent
-    model: gpt-4
+    model: gpt-4o
     temperature: 0
   
   refactor:
     name: refactor_agent
-    model: gpt-4
+    model: gpt-4o
     temperature: 0
   
   assurance:
     name: assurance_agent
-    model: gpt-4
+    model: gpt-4o
     temperature: 0
 
 # Skill Configuration
