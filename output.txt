@@ -1,0 +1,431 @@
+[11/04/24 12:49:09] DEBUG    {'level': 10, 'verbose': True, 'event': 'logging.initialized', 'timestamp': '2024-11-04T01:49:09.520665Z'}                                                               _base.py:215
+DEBUG:intent_system:{'level': 10, 'verbose': True, 'event': 'logging.initialized', 'timestamp': '2024-11-04T01:49:09.520665Z'}
+                    DEBUG    {'command': 'analyze', 'event': 'cli.command.started', 'timestamp': '2024-11-04T01:49:09.522831Z'}                                                                       _base.py:215
+DEBUG:intent_system:{'command': 'analyze', 'event': 'cli.command.started', 'timestamp': '2024-11-04T01:49:09.522831Z'}
+                    DEBUG    {'root': '/Users/jim/src/autogen/coder4h/intent_system', 'project_path': '/Users/jim/src/autogen/coder4h/intent_system/tests/test_project', 'event': 'cli.paths',        _base.py:215
+                             'timestamp': '2024-11-04T01:49:09.523445Z'}                                                                                                                                          
+DEBUG:intent_system:{'root': '/Users/jim/src/autogen/coder4h/intent_system', 'project_path': '/Users/jim/src/autogen/coder4h/intent_system/tests/test_project', 'event': 'cli.paths', 'timestamp': '2024-11-04T01:49:09.523445Z'}
+                    INFO     {'project': '/Users/jim/src/autogen/coder4h/intent_system/tests/test_project', 'config': '/Users/jim/src/autogen/coder4h/intent_system/config/system_config.yml',        _base.py:215
+                             'event': 'cli.starting_analysis', 'timestamp': '2024-11-04T01:49:09.524006Z'}                                                                                                        
+INFO:intent_system:{'project': '/Users/jim/src/autogen/coder4h/intent_system/tests/test_project', 'config': '/Users/jim/src/autogen/coder4h/intent_system/config/system_config.yml', 'event': 'cli.starting_analysis', 'timestamp': '2024-11-04T01:49:09.524006Z'}
+                    INFO     {'event': 'analysis.loading_config', 'timestamp': '2024-11-04T01:49:09.524697Z'}                                                                                         _base.py:215
+INFO:intent_system:{'event': 'analysis.loading_config', 'timestamp': '2024-11-04T01:49:09.524697Z'}
+INFO:src.config:{'path': '/Users/jim/src/autogen/coder4h/intent_system/config/system_config.yml', 'event': 'config.loading', 'timestamp': '2024-11-04T01:49:09.525139Z'}
+INFO:src.config:{'path': '/Users/jim/src/autogen/coder4h/intent_system/.env', 'event': 'config.env_loaded', 'timestamp': '2024-11-04T01:49:09.525463Z'}
+ERROR:src.config:{'error': "2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error", 'event': 'config.load_failed', 'timestamp': '2024-11-04T01:49:09.530753Z', 'exception': 'Traceback (most recent call last):\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml\n    config = cls(**data)\n             ^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath(\'src/skills/dependency_analyzer.py\'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath(\'src/skills/report_generator.py\'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error'}
+Traceback (most recent call last):
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml
+    config = cls(**data)
+             ^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 2 validation errors for Config
+skills.dependency_analyzer.path
+  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'), input_type=PosixPath]
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+skills.report_generator.path
+  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'), input_type=PosixPath]
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+ERROR:src.config:{'error': "2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error", 'event': 'config.load_failed', 'timestamp': '2024-11-04T01:49:09.531261Z', 'exception': 'Traceback (most recent call last):\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 218, in load_config\n    config = Config.from_yaml(path)\n             ^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml\n    config = cls(**data)\n             ^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath(\'src/skills/dependency_analyzer.py\'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath(\'src/skills/report_generator.py\'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error'}
+Traceback (most recent call last):
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 218, in load_config
+    config = Config.from_yaml(path)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml
+    config = cls(**data)
+             ^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 2 validation errors for Config
+skills.dependency_analyzer.path
+  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'), input_type=PosixPath]
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+skills.report_generator.path
+  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'), input_type=PosixPath]
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+                    ERROR    {'error': "2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py \n    For        _base.py:215
+                             further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist:                                     
+                             src/skills/report_generator.py \n    For further information visit https://errors.pydantic.dev/2.9/v/value_error", 'event': 'analysis.failed', 'timestamp':                          
+                             '2024-11-04T01:49:09.531525Z', 'exception': 'Traceback (most recent call last):\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 151, in                      
+                             run_analysis\n    config = load_config(config_path)\n             ^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line                
+                             218, in load_config\n    config = Config.from_yaml(path)\n             ^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line             
+                             123, in from_yaml\n    config = cls(**data)\n             ^^^^^^^^^^^\n  File                                                                                                        
+                             "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__\n    validated_self =                                       
+                             self.__pydantic_validator__.validate_python(data, self_instance=self)\n                                                                                                              
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 2 validation errors for                                         
+                             Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py \n    For further information visit                             
+                             https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py \n    For further              
+                             information visit https://errors.pydantic.dev/2.9/v/value_error'}                                                                                                                    
+                             ╭───────────────────────────────────────────────────────────────── Traceback (most recent call last) ──────────────────────────────────────────────────────────────────╮             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/cli.py:151 in run_analysis                                                                                          │             
+                             │                                                                                                                                                                      │             
+                             │   148 │                                                                                                                                                              │             
+                             │   149 │   try:                                                                                                                                                       │             
+                             │   150 │   │   logger.info("analysis.loading_config")                                                                                                                 │             
+                             │ ❱ 151 │   │   config = load_config(config_path)                                                                                                                      │             
+                             │   152 │   │                                                                                                                                                          │             
+                             │   153 │   │   logger.info("analysis.creating_app")                                                                                                                   │             
+                             │   154 │   │   app = create_app(config)                                                                                                                               │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/config.py:218 in load_config                                                                                        │             
+                             │                                                                                                                                                                      │             
+                             │   215 │                                                                                                                                                              │             
+                             │   216 │   try:                                                                                                                                                       │             
+                             │   217 │   │   logger.info("config.loading", path=str(path))                                                                                                          │             
+                             │ ❱ 218 │   │   config = Config.from_yaml(path)                                                                                                                        │             
+                             │   219 │   │   logger.info("config.loaded")                                                                                                                           │             
+                             │   220 │   │   return config                                                                                                                                          │             
+                             │   221                                                                                                                                                                │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/config.py:123 in from_yaml                                                                                          │             
+                             │                                                                                                                                                                      │             
+                             │   120 │   │   │   │   │   skill['path'] = Path(skill['path'])                                                                                                        │             
+                             │   121 │   │   │                                                                                                                                                      │             
+                             │   122 │   │   │   # Create config instance                                                                                                                           │             
+                             │ ❱ 123 │   │   │   config = cls(**data)                                                                                                                               │             
+                             │   124 │   │   │                                                                                                                                                      │             
+                             │   125 │   │   │   # Validate all components                                                                                                                          │             
+                             │   126 │   │   │   config.validate_components()                                                                                                                       │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py:212 in __init__                                                      │             
+                             │                                                                                                                                                                      │             
+                             │    209 │   │   """                                                                                                                                                   │             
+                             │    210 │   │   # `__tracebackhide__` tells pytest and some other tools to omit this function                                                                         │             
+                             │        from tracebacks                                                                                                                                               │             
+                             │    211 │   │   __tracebackhide__ = True                                                                                                                              │             
+                             │ ❱  212 │   │   validated_self = self.__pydantic_validator__.validate_python(data,                                                                                    │             
+                             │        self_instance=self)                                                                                                                                           │             
+                             │    213 │   │   if self is not validated_self:                                                                                                                        │             
+                             │    214 │   │   │   warnings.warn(                                                                                                                                    │             
+                             │    215 │   │   │   │   'A custom validator is returning a value other than `self`.\n'                                                                                │             
+                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯             
+                             ValidationError: 2 validation errors for Config                                                                                                                                      
+                             skills.dependency_analyzer.path                                                                                                                                                      
+                               Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'),                           
+                             input_type=PosixPath]                                                                                                                                                                
+                                 For further information visit https://errors.pydantic.dev/2.9/v/value_error                                                                                                      
+                             skills.report_generator.path                                                                                                                                                         
+                               Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'),                                 
+                             input_type=PosixPath]                                                                                                                                                                
+                                 For further information visit https://errors.pydantic.dev/2.9/v/value_error                                                                                                      
+ERROR:intent_system:{'error': "2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error", 'event': 'analysis.failed', 'timestamp': '2024-11-04T01:49:09.531525Z', 'exception': 'Traceback (most recent call last):\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 151, in run_analysis\n    config = load_config(config_path)\n             ^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 218, in load_config\n    config = Config.from_yaml(path)\n             ^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml\n    config = cls(**data)\n             ^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath(\'src/skills/dependency_analyzer.py\'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath(\'src/skills/report_generator.py\'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error'}
+Traceback (most recent call last):
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 151, in run_analysis
+    config = load_config(config_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 218, in load_config
+    config = Config.from_yaml(path)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml
+    config = cls(**data)
+             ^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 2 validation errors for Config
+skills.dependency_analyzer.path
+  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'), input_type=PosixPath]
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+skills.report_generator.path
+  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'), input_type=PosixPath]
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+
+Analysis failed: 2 validation errors for Config
+skills.dependency_analyzer.path
+  Value error, Skill path does not exist: src/skills/dependency_analyzer.py 
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+skills.report_generator.path
+  Value error, Skill path does not exist: src/skills/report_generator.py 
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+                    ERROR    {'error': "2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py \n    For        _base.py:215
+                             further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist:                                     
+                             src/skills/report_generator.py \n    For further information visit https://errors.pydantic.dev/2.9/v/value_error", 'event': 'cli.analysis_failed', 'timestamp':                      
+                             '2024-11-04T01:49:09.576696Z', 'exception': 'Traceback (most recent call last):\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 135, in                      
+                             analyze\n    asyncio.run(run_analysis(project_path_obj, config_path_obj))\n  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 190, in                
+                             run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 118, in run\n                      
+                             return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File                                                                                   
+                             "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n                 
+                             File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 151, in run_analysis\n    config = load_config(config_path)\n                                                   
+                             ^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 218, in load_config\n    config = Config.from_yaml(path)\n                       
+                             ^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml\n    config = cls(**data)\n                                      
+                             ^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__\n    validated_self =                   
+                             self.__pydantic_validator__.validate_python(data, self_instance=self)\n                                                                                                              
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 2 validation errors for                                         
+                             Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py \n    For further information visit                             
+                             https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py \n    For further              
+                             information visit https://errors.pydantic.dev/2.9/v/value_error'}                                                                                                                    
+                             ╭───────────────────────────────────────────────────────────────── Traceback (most recent call last) ──────────────────────────────────────────────────────────────────╮             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/cli.py:135 in analyze                                                                                               │             
+                             │                                                                                                                                                                      │             
+                             │   132 │   │                                                                                                                                                          │             
+                             │   133 │   │   # Run analysis                                                                                                                                         │             
+                             │   134 │   │   try:                                                                                                                                                   │             
+                             │ ❱ 135 │   │   │   asyncio.run(run_analysis(project_path_obj, config_path_obj))                                                                                       │             
+                             │   136 │   │   except Exception as e:                                                                                                                                 │             
+                             │   137 │   │   │   logger.exception("cli.analysis_failed", error=str(e))                                                                                              │             
+                             │   138 │   │   │   raise                                                                                                                                              │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py:190 in run                                                                                       │             
+                             │                                                                                                                                                                      │             
+                             │   187 │   │   │   "asyncio.run() cannot be called from a running event loop")                                                                                        │             
+                             │   188 │                                                                                                                                                              │             
+                             │   189 │   with Runner(debug=debug) as runner:                                                                                                                        │             
+                             │ ❱ 190 │   │   return runner.run(main)                                                                                                                                │             
+                             │   191                                                                                                                                                                │             
+                             │   192                                                                                                                                                                │             
+                             │   193 def _cancel_all_tasks(loop):                                                                                                                                   │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py:118 in run                                                                                       │             
+                             │                                                                                                                                                                      │             
+                             │   115 │   │                                                                                                                                                          │             
+                             │   116 │   │   self._interrupt_count = 0                                                                                                                              │             
+                             │   117 │   │   try:                                                                                                                                                   │             
+                             │ ❱ 118 │   │   │   return self._loop.run_until_complete(task)                                                                                                         │             
+                             │   119 │   │   except exceptions.CancelledError:                                                                                                                      │             
+                             │   120 │   │   │   if self._interrupt_count > 0:                                                                                                                      │             
+                             │   121 │   │   │   │   uncancel = getattr(task, "uncancel", None)                                                                                                     │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/base_events.py:653 in run_until_complete                                                                    │             
+                             │                                                                                                                                                                      │             
+                             │    650 │   │   if not future.done():                                                                                                                                 │             
+                             │    651 │   │   │   raise RuntimeError('Event loop stopped before Future completed.')                                                                                 │             
+                             │    652 │   │                                                                                                                                                         │             
+                             │ ❱  653 │   │   return future.result()                                                                                                                                │             
+                             │    654 │                                                                                                                                                             │             
+                             │    655 │   def stop(self):                                                                                                                                           │             
+                             │    656 │   │   """Stop running the event loop.                                                                                                                       │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/cli.py:151 in run_analysis                                                                                          │             
+                             │                                                                                                                                                                      │             
+                             │   148 │                                                                                                                                                              │             
+                             │   149 │   try:                                                                                                                                                       │             
+                             │   150 │   │   logger.info("analysis.loading_config")                                                                                                                 │             
+                             │ ❱ 151 │   │   config = load_config(config_path)                                                                                                                      │             
+                             │   152 │   │                                                                                                                                                          │             
+                             │   153 │   │   logger.info("analysis.creating_app")                                                                                                                   │             
+                             │   154 │   │   app = create_app(config)                                                                                                                               │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/config.py:218 in load_config                                                                                        │             
+                             │                                                                                                                                                                      │             
+                             │   215 │                                                                                                                                                              │             
+                             │   216 │   try:                                                                                                                                                       │             
+                             │   217 │   │   logger.info("config.loading", path=str(path))                                                                                                          │             
+                             │ ❱ 218 │   │   config = Config.from_yaml(path)                                                                                                                        │             
+                             │   219 │   │   logger.info("config.loaded")                                                                                                                           │             
+                             │   220 │   │   return config                                                                                                                                          │             
+                             │   221                                                                                                                                                                │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/config.py:123 in from_yaml                                                                                          │             
+                             │                                                                                                                                                                      │             
+                             │   120 │   │   │   │   │   skill['path'] = Path(skill['path'])                                                                                                        │             
+                             │   121 │   │   │                                                                                                                                                      │             
+                             │   122 │   │   │   # Create config instance                                                                                                                           │             
+                             │ ❱ 123 │   │   │   config = cls(**data)                                                                                                                               │             
+                             │   124 │   │   │                                                                                                                                                      │             
+                             │   125 │   │   │   # Validate all components                                                                                                                          │             
+                             │   126 │   │   │   config.validate_components()                                                                                                                       │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py:212 in __init__                                                      │             
+                             │                                                                                                                                                                      │             
+                             │    209 │   │   """                                                                                                                                                   │             
+                             │    210 │   │   # `__tracebackhide__` tells pytest and some other tools to omit this function                                                                         │             
+                             │        from tracebacks                                                                                                                                               │             
+                             │    211 │   │   __tracebackhide__ = True                                                                                                                              │             
+                             │ ❱  212 │   │   validated_self = self.__pydantic_validator__.validate_python(data,                                                                                    │             
+                             │        self_instance=self)                                                                                                                                           │             
+                             │    213 │   │   if self is not validated_self:                                                                                                                        │             
+                             │    214 │   │   │   warnings.warn(                                                                                                                                    │             
+                             │    215 │   │   │   │   'A custom validator is returning a value other than `self`.\n'                                                                                │             
+                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯             
+                             ValidationError: 2 validation errors for Config                                                                                                                                      
+                             skills.dependency_analyzer.path                                                                                                                                                      
+                               Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'),                           
+                             input_type=PosixPath]                                                                                                                                                                
+                                 For further information visit https://errors.pydantic.dev/2.9/v/value_error                                                                                                      
+                             skills.report_generator.path                                                                                                                                                         
+                               Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'),                                 
+                             input_type=PosixPath]                                                                                                                                                                
+                                 For further information visit https://errors.pydantic.dev/2.9/v/value_error                                                                                                      
+ERROR:intent_system:{'error': "2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error", 'event': 'cli.analysis_failed', 'timestamp': '2024-11-04T01:49:09.576696Z', 'exception': 'Traceback (most recent call last):\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 135, in analyze\n    asyncio.run(run_analysis(project_path_obj, config_path_obj))\n  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 190, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 151, in run_analysis\n    config = load_config(config_path)\n             ^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 218, in load_config\n    config = Config.from_yaml(path)\n             ^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml\n    config = cls(**data)\n             ^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath(\'src/skills/dependency_analyzer.py\'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath(\'src/skills/report_generator.py\'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error'}
+Traceback (most recent call last):
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 135, in analyze
+    asyncio.run(run_analysis(project_path_obj, config_path_obj))
+  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 151, in run_analysis
+    config = load_config(config_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 218, in load_config
+    config = Config.from_yaml(path)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml
+    config = cls(**data)
+             ^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 2 validation errors for Config
+skills.dependency_analyzer.path
+  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'), input_type=PosixPath]
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+skills.report_generator.path
+  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'), input_type=PosixPath]
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+                    ERROR    {'error': "2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py \n    For        _base.py:215
+                             further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist:                                     
+                             src/skills/report_generator.py \n    For further information visit https://errors.pydantic.dev/2.9/v/value_error", 'event': 'cli.failed', 'timestamp':                               
+                             '2024-11-04T01:49:09.646751Z', 'exception': 'Traceback (most recent call last):\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 135, in                      
+                             analyze\n    asyncio.run(run_analysis(project_path_obj, config_path_obj))\n  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 190, in                
+                             run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 118, in run\n                      
+                             return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File                                                                                   
+                             "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n                 
+                             File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 151, in run_analysis\n    config = load_config(config_path)\n                                                   
+                             ^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 218, in load_config\n    config = Config.from_yaml(path)\n                       
+                             ^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml\n    config = cls(**data)\n                                      
+                             ^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__\n    validated_self =                   
+                             self.__pydantic_validator__.validate_python(data, self_instance=self)\n                                                                                                              
+                             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 2 validation errors for                                         
+                             Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py \n    For further information visit                             
+                             https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py \n    For further              
+                             information visit https://errors.pydantic.dev/2.9/v/value_error'}                                                                                                                    
+                             ╭───────────────────────────────────────────────────────────────── Traceback (most recent call last) ──────────────────────────────────────────────────────────────────╮             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/cli.py:135 in analyze                                                                                               │             
+                             │                                                                                                                                                                      │             
+                             │   132 │   │                                                                                                                                                          │             
+                             │   133 │   │   # Run analysis                                                                                                                                         │             
+                             │   134 │   │   try:                                                                                                                                                   │             
+                             │ ❱ 135 │   │   │   asyncio.run(run_analysis(project_path_obj, config_path_obj))                                                                                       │             
+                             │   136 │   │   except Exception as e:                                                                                                                                 │             
+                             │   137 │   │   │   logger.exception("cli.analysis_failed", error=str(e))                                                                                              │             
+                             │   138 │   │   │   raise                                                                                                                                              │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py:190 in run                                                                                       │             
+                             │                                                                                                                                                                      │             
+                             │   187 │   │   │   "asyncio.run() cannot be called from a running event loop")                                                                                        │             
+                             │   188 │                                                                                                                                                              │             
+                             │   189 │   with Runner(debug=debug) as runner:                                                                                                                        │             
+                             │ ❱ 190 │   │   return runner.run(main)                                                                                                                                │             
+                             │   191                                                                                                                                                                │             
+                             │   192                                                                                                                                                                │             
+                             │   193 def _cancel_all_tasks(loop):                                                                                                                                   │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py:118 in run                                                                                       │             
+                             │                                                                                                                                                                      │             
+                             │   115 │   │                                                                                                                                                          │             
+                             │   116 │   │   self._interrupt_count = 0                                                                                                                              │             
+                             │   117 │   │   try:                                                                                                                                                   │             
+                             │ ❱ 118 │   │   │   return self._loop.run_until_complete(task)                                                                                                         │             
+                             │   119 │   │   except exceptions.CancelledError:                                                                                                                      │             
+                             │   120 │   │   │   if self._interrupt_count > 0:                                                                                                                      │             
+                             │   121 │   │   │   │   uncancel = getattr(task, "uncancel", None)                                                                                                     │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/base_events.py:653 in run_until_complete                                                                    │             
+                             │                                                                                                                                                                      │             
+                             │    650 │   │   if not future.done():                                                                                                                                 │             
+                             │    651 │   │   │   raise RuntimeError('Event loop stopped before Future completed.')                                                                                 │             
+                             │    652 │   │                                                                                                                                                         │             
+                             │ ❱  653 │   │   return future.result()                                                                                                                                │             
+                             │    654 │                                                                                                                                                             │             
+                             │    655 │   def stop(self):                                                                                                                                           │             
+                             │    656 │   │   """Stop running the event loop.                                                                                                                       │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/cli.py:151 in run_analysis                                                                                          │             
+                             │                                                                                                                                                                      │             
+                             │   148 │                                                                                                                                                              │             
+                             │   149 │   try:                                                                                                                                                       │             
+                             │   150 │   │   logger.info("analysis.loading_config")                                                                                                                 │             
+                             │ ❱ 151 │   │   config = load_config(config_path)                                                                                                                      │             
+                             │   152 │   │                                                                                                                                                          │             
+                             │   153 │   │   logger.info("analysis.creating_app")                                                                                                                   │             
+                             │   154 │   │   app = create_app(config)                                                                                                                               │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/config.py:218 in load_config                                                                                        │             
+                             │                                                                                                                                                                      │             
+                             │   215 │                                                                                                                                                              │             
+                             │   216 │   try:                                                                                                                                                       │             
+                             │   217 │   │   logger.info("config.loading", path=str(path))                                                                                                          │             
+                             │ ❱ 218 │   │   config = Config.from_yaml(path)                                                                                                                        │             
+                             │   219 │   │   logger.info("config.loaded")                                                                                                                           │             
+                             │   220 │   │   return config                                                                                                                                          │             
+                             │   221                                                                                                                                                                │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/src/config.py:123 in from_yaml                                                                                          │             
+                             │                                                                                                                                                                      │             
+                             │   120 │   │   │   │   │   skill['path'] = Path(skill['path'])                                                                                                        │             
+                             │   121 │   │   │                                                                                                                                                      │             
+                             │   122 │   │   │   # Create config instance                                                                                                                           │             
+                             │ ❱ 123 │   │   │   config = cls(**data)                                                                                                                               │             
+                             │   124 │   │   │                                                                                                                                                      │             
+                             │   125 │   │   │   # Validate all components                                                                                                                          │             
+                             │   126 │   │   │   config.validate_components()                                                                                                                       │             
+                             │                                                                                                                                                                      │             
+                             │ /Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py:212 in __init__                                                      │             
+                             │                                                                                                                                                                      │             
+                             │    209 │   │   """                                                                                                                                                   │             
+                             │    210 │   │   # `__tracebackhide__` tells pytest and some other tools to omit this function                                                                         │             
+                             │        from tracebacks                                                                                                                                               │             
+                             │    211 │   │   __tracebackhide__ = True                                                                                                                              │             
+                             │ ❱  212 │   │   validated_self = self.__pydantic_validator__.validate_python(data,                                                                                    │             
+                             │        self_instance=self)                                                                                                                                           │             
+                             │    213 │   │   if self is not validated_self:                                                                                                                        │             
+                             │    214 │   │   │   warnings.warn(                                                                                                                                    │             
+                             │    215 │   │   │   │   'A custom validator is returning a value other than `self`.\n'                                                                                │             
+                             ╰──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯             
+                             ValidationError: 2 validation errors for Config                                                                                                                                      
+                             skills.dependency_analyzer.path                                                                                                                                                      
+                               Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'),                           
+                             input_type=PosixPath]                                                                                                                                                                
+                                 For further information visit https://errors.pydantic.dev/2.9/v/value_error                                                                                                      
+                             skills.report_generator.path                                                                                                                                                         
+                               Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'),                                 
+                             input_type=PosixPath]                                                                                                                                                                
+                                 For further information visit https://errors.pydantic.dev/2.9/v/value_error                                                                                                      
+ERROR:intent_system:{'error': "2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error", 'event': 'cli.failed', 'timestamp': '2024-11-04T01:49:09.646751Z', 'exception': 'Traceback (most recent call last):\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 135, in analyze\n    asyncio.run(run_analysis(project_path_obj, config_path_obj))\n  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 190, in run\n    return runner.run(main)\n           ^^^^^^^^^^^^^^^^\n  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 118, in run\n    return self._loop.run_until_complete(task)\n           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete\n    return future.result()\n           ^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 151, in run_analysis\n    config = load_config(config_path)\n             ^^^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 218, in load_config\n    config = Config.from_yaml(path)\n             ^^^^^^^^^^^^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml\n    config = cls(**data)\n             ^^^^^^^^^^^\n  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__\n    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)\n                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^\npydantic_core._pydantic_core.ValidationError: 2 validation errors for Config\nskills.dependency_analyzer.path\n  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath(\'src/skills/dependency_analyzer.py\'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error\nskills.report_generator.path\n  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath(\'src/skills/report_generator.py\'), input_type=PosixPath]\n    For further information visit https://errors.pydantic.dev/2.9/v/value_error'}
+Traceback (most recent call last):
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 135, in analyze
+    asyncio.run(run_analysis(project_path_obj, config_path_obj))
+  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 190, in run
+    return runner.run(main)
+           ^^^^^^^^^^^^^^^^
+  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/runners.py", line 118, in run
+    return self._loop.run_until_complete(task)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/.pyenv/versions/3.11.5/lib/python3.11/asyncio/base_events.py", line 653, in run_until_complete
+    return future.result()
+           ^^^^^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/cli.py", line 151, in run_analysis
+    config = load_config(config_path)
+             ^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 218, in load_config
+    config = Config.from_yaml(path)
+             ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/src/config.py", line 123, in from_yaml
+    config = cls(**data)
+             ^^^^^^^^^^^
+  File "/Users/jim/src/autogen/coder4h/intent_system/venv/lib/python3.11/site-packages/pydantic/main.py", line 212, in __init__
+    validated_self = self.__pydantic_validator__.validate_python(data, self_instance=self)
+                     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+pydantic_core._pydantic_core.ValidationError: 2 validation errors for Config
+skills.dependency_analyzer.path
+  Value error, Skill path does not exist: src/skills/dependency_analyzer.py [type=value_error, input_value=PosixPath('src/skills/dependency_analyzer.py'), input_type=PosixPath]
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+skills.report_generator.path
+  Value error, Skill path does not exist: src/skills/report_generator.py [type=value_error, input_value=PosixPath('src/skills/report_generator.py'), input_type=PosixPath]
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+
+Error: 2 validation errors for Config
+skills.dependency_analyzer.path
+  Value error, Skill path does not exist: src/skills/dependency_analyzer.py 
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error
+skills.report_generator.path
+  Value error, Skill path does not exist: src/skills/report_generator.py 
+    For further information visit https://errors.pydantic.dev/2.9/v/value_error

@@ -2,6 +2,12 @@
 
 import os
 from pathlib import Path
+import structlog
+import logging
+
+# Setup basic logging
+logging.basicConfig(level=logging.INFO)
+logger = structlog.get_logger("intent_system")
 
 # Ensure we're in the project root directory
 os.chdir(Path(__file__).parent)
