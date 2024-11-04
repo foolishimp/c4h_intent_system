@@ -16,7 +16,7 @@ class IntentStatus(str, Enum):
     FAILED = "failed"
 
 class Intent(BaseModel):
-    """Simple intent model for code transformations"""
+    """Intent model for code transformations"""
     id: UUID = Field(default_factory=uuid4)
     description: str
     project_path: str
@@ -25,5 +25,7 @@ class Intent(BaseModel):
     created_at: datetime = Field(default_factory=datetime.utcnow)
     error: Optional[str] = None
 
+    # Remove the frozen config
     class Config:
-        frozen = True
+        # frozen = True  # Remove this line
+        arbitrary_types_allowed = True

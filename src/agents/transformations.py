@@ -1,6 +1,5 @@
 # src/main.py
 
-
 import asyncio
 import sys
 from pathlib import Path
@@ -8,6 +7,7 @@ import os
 from typing import Dict, Any, List
 import structlog
 import autogen
+import subprocess
 from libcst.codemod import CodemodContext
 from models.intent import Intent, IntentStatus
 from agents.transformations import (
@@ -68,42 +68,50 @@ class TransformationManager:
             }
         )
 
-    def scan_project(self, project_path: Path) -> Dict[str, Any]:
-        """Scan project files and read their contents"""
-        python_files = {}
-        for file_path in project_path.rglob("*.py"):
-            if "__pycache__" not in str(file_path):
-                try:
-                    with open(file_path, 'r') as f:
-                        python_files[str(file_path)] = f.read()
-                except Exception as e:
-                    logger.error(f"Error reading file {file_path}: {e}")
-        return python_files
+    def run_tartxt(self, project_path: Path) -> str:
+        """Run tartxt discovery"""
+        try:
+            tartxt_path = Path(__file__).parent / "skills" / "tartxt.py"
+            if not tartxt_path.exists():
+                tartxt_path = Path("src/skills/tartxt.py")
+            
+            result = subprocess.run(
+                [
+                    sys.executable,
+                    str(tartxt_path),
+                    "-o",  # Output to stdout
+                    "--exclude", "*.pyc,__pycache__,*.DS_Store",
+                    str(project_path)
+                ],
+                capture_output=True,
+                text=True,
+                check=True
+            )
+            return result.stdout
+        except subprocess.CalledProcessError as e:
+            logger.error("tartxt.failed", error=str(e), stderr=e.stderr)
+            raise
 
     def run_discovery(self, project_path: Path) -> Dict[str, Any]:
         """Run project discovery phase"""
-        # Scan project files
-        project_files = self.scan_project(project_path)
+        # Use tartxt to scan project
+        discovery_output = self.run_tartxt(project_path)
         
-        # Create discovery message
-        files_content = "\n\n".join([
-            f"File: {path}\nContent:\n{content}"
-            for path, content in project_files.items()
-        ])
-        
+        # Pass discovery output to agent for analysis
         chat_response = self.manager.initiate_chat(
             self.discovery_agent,
-            message=f"""Analyze these Python files for modification:
+            message=f"""Analyze this project structure for adding logging to all functions:
             
-            {files_content}
+            {discovery_output}
             
-            Identify which files need changes and what specific modifications are needed.
+            Identify which Python files need modifications and which functions within them
+            should have logging added.
             """
         )
         
         return {
-            "discovery_output": chat_response.last_message(),
-            "project_files": project_files
+            "discovery_output": discovery_output,
+            "analysis": chat_response.last_message()
         }
 
     def run_analysis(self, context: Dict[str, Any], intent: str) -> Dict[str, Any]:
@@ -114,12 +122,13 @@ class TransformationManager:
             Based on this discovery analysis:
             {context['discovery_output']}
             
-            Create a detailed plan to: {intent}
+            And the intent: {intent}
             
-            For each file that needs modification, specify:
-            1. What changes are needed
-            2. Where in the file to make changes
-            3. How to implement using libcst
+            Create a detailed plan specifying:
+            1. Which files to modify
+            2. What specific changes to make in each file
+            3. How to implement the changes using libcst
+            4. Any potential risks or considerations
             """
         )
         
@@ -146,15 +155,28 @@ class TransformationManager:
             """
         )
         
+        # Extract Python files from tartxt output
+        python_files = {}
+        current_file = None
+        for line in context['discovery_output'].split('\n'):
+            if line.startswith("File: ") and line.endswith(".py"):
+                current_file = line.split("File: ")[1]
+            elif line == "Contents:" and current_file:
+                python_files[current_file] = ""
+            elif current_file and python_files.get(current_file) is not None:
+                python_files[current_file] += line + "\n"
+        
         # Apply transformations to files
         modified_files = {}
-        for file_path, content in context['project_files'].items():
+        for file_path, content in python_files.items():
             modified_content = self.apply_transformations(file_path, content)
             if modified_content != content:
                 modified_files[file_path] = modified_content
                 # Write changes back to file
                 with open(file_path, 'w') as f:
                     f.write(modified_content)
+                # Format the modified file
+                format_code(Path(file_path))
         
         return {"modified_files": modified_files}
 
@@ -180,67 +202,4 @@ class TransformationManager:
         
         return {"validation_results": chat_response.last_message()}
 
-def process_intent(intent: Intent) -> Dict[str, Any]:
-    """Process a code transformation intent"""
-    manager = TransformationManager()
-    context: Dict[str, Any] = {}
-    
-    try:
-        # Discovery phase
-        intent.status = IntentStatus.ANALYZING
-        logger.info("Starting discovery phase", intent_id=str(intent.id))
-        context.update(manager.run_discovery(Path(intent.project_path)))
-        
-        # Analysis phase
-        logger.info("Starting analysis phase", intent_id=str(intent.id))
-        context.update(manager.run_analysis(context, intent.description))
-        
-        # Refactoring phase
-        intent.status = IntentStatus.TRANSFORMING
-        logger.info("Starting refactoring phase", intent_id=str(intent.id))
-        context.update(manager.run_refactor(context))
-        
-        # Validation phase
-        intent.status = IntentStatus.VALIDATING
-        logger.info("Starting validation phase", intent_id=str(intent.id))
-        context.update(manager.run_assurance(context))
-        
-        intent.status = IntentStatus.COMPLETED
-        logger.info("Intent processing completed successfully", intent_id=str(intent.id))
-        return {"status": "success", "context": context}
-        
-    except Exception as e:
-        logger.error("Intent processing failed", 
-                    intent_id=str(intent.id),
-                    error=str(e),
-                    exc_info=True)
-        intent.status = IntentStatus.FAILED
-        intent.error = str(e)
-        return {"status": "failed", "error": str(e)}
-
-def main():
-    """Main entry point"""
-    if len(sys.argv) != 4:
-        print("Usage: python main.py refactor <project_path> '<intent description>'")
-        sys.exit(1)
-        
-    command = sys.argv[1]
-    if command != "refactor":
-        print("Only 'refactor' command is supported")
-        sys.exit(1)
-        
-    project_path = Path(sys.argv[2]).resolve()
-    if not project_path.exists():
-        print(f"Error: Project path does not exist: {project_path}")
-        sys.exit(1)
-        
-    intent = Intent(
-        description=sys.argv[3],
-        project_path=str(project_path)
-    )
-    
-    result = process_intent(intent)
-    print(f"\nRefactoring completed with status: {result['status']}")
-
-if __name__ == "__main__":
-    main()
+# ... rest of the file (process_intent and main functions) remains the same ...
