@@ -6,6 +6,7 @@ import subprocess
 import sys
 from pathlib import Path
 import autogen
+import re
 
 logger = structlog.get_logger()
 
@@ -18,7 +19,7 @@ class DiscoveryAgent:
         Args:
             config_list: Autogen LLM configuration list
         """
-        # Initialize Autogen components for future use
+        # Initialize Autogen components
         self.assistant = autogen.AssistantAgent(
             name="discovery_assistant",
             llm_config={"config_list": config_list} if config_list else None,
@@ -31,6 +32,36 @@ class DiscoveryAgent:
             human_input_mode="NEVER",
             code_execution_config=False
         )
+
+    def _parse_manifest(self, output: str) -> Dict[str, bool]:
+        """Parse manifest section from tartxt output to get file list
+        
+        Args:
+            output: Raw tartxt output
+            
+        Returns:
+            Dict mapping file paths to True
+        """
+        files = {}
+        manifest_section = False
+        
+        for line in output.split('\n'):
+            line = line.strip()
+            
+            if line == "== Manifest ==":
+                manifest_section = True
+                continue
+            elif line.startswith("== Content =="):
+                break
+                
+            if manifest_section and line:
+                # Skip any non-file lines
+                if not line.startswith(('==', 'Warning:', 'Error:')):
+                    # Convert Windows paths if present
+                    norm_path = line.replace('\\', '/')
+                    files[norm_path] = True
+                    
+        return files
     
     async def analyze(self, project_path: str) -> Dict[str, Any]:
         """Run tartxt discovery on project and return output
@@ -39,7 +70,7 @@ class DiscoveryAgent:
             project_path: Path to project to analyze
             
         Returns:
-            Dict containing tartxt discovery output
+            Dict containing tartxt discovery output and file list
         """
         try:
             # Run tartxt discovery
@@ -50,13 +81,20 @@ class DiscoveryAgent:
                 check=True
             )
             
+            # Extract file list from manifest
+            files = self._parse_manifest(result.stdout)
+            
+            if not files:
+                logger.warning("discovery.no_files_found",
+                            project_path=project_path)
+            
             discovery_result = {
                 "project_path": project_path,
                 "discovery_output": result.stdout,
+                "files": files
             }
             
-            # Keep one LLM verification for future extensibility
-            # but don't enter extended chat
+            # Simple LLM verification
             try:
                 await self.coordinator.a_initiate_chat(
                     self.assistant,
@@ -64,10 +102,11 @@ class DiscoveryAgent:
                     {result.stdout}
                     
                     Acknowledge receipt and confirm the content is parseable.""",
-                    max_turns=1  # Limit to single exchange
+                    max_turns=1
                 )
                 
-                logger.info("discovery.autogen_processed")
+                logger.info("discovery.autogen_processed",
+                          file_count=len(files))
             except Exception as e:
                 logger.error("discovery.autogen_processing_failed", 
                            error=str(e))
