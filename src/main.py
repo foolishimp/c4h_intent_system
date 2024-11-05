@@ -3,162 +3,118 @@
 import asyncio
 import sys
 import os
+import subprocess
 from enum import Enum
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import structlog
 import autogen
-from datetime import datetime
-import shutil
-import uuid
-import argparse
+from libcst.codemod import CodemodContext
+from models.intent import Intent, IntentStatus
+from agents.transformations import (
+    LoggingTransform,
+    get_transformer,
+    format_code,
+    run_semgrep_check
+)
 
 logger = structlog.get_logger()
 
 class RefactoringStrategy(str, Enum):
     """Available refactoring strategies"""
     CODEMOD = "codemod"  # Uses libcst
-    LLM = "llm"          # Direct LLM code generation
+    LLM = "llm"          # LLM-based transformations
 
-class WorkspaceManager:
-    """Manages workspaces for refactoring attempts"""
-    
-    def __init__(self, base_path: Path):
-        self.base_path = base_path
-        self.workspace_root = base_path / "workspaces"
-        self.workspace_root.mkdir(parents=True, exist_ok=True)
+class ValidationResult:
+    """Structured validation result"""
+    def __init__(self, status: str, errors: List[Dict[str, Any]] = None):
+        self.status = status
+        self.errors = errors or []
         
-    def create_workspace(self, intent_id: str, strategy: RefactoringStrategy) -> Path:
-        """Create a new workspace for a refactoring attempt"""
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        workspace_path = self.workspace_root / f"{intent_id}_{strategy}_{timestamp}"
-        workspace_path.mkdir(parents=True, exist_ok=True)
-        return workspace_path
+    @property
+    def is_success(self) -> bool:
+        return self.status == "success" and not self.errors
         
-    def copy_to_workspace(self, source_path: Path, workspace: Path) -> None:
-        """Copy project files to workspace"""
-        if source_path.is_file():
-            shutil.copy2(source_path, workspace)
-        else:
-            shutil.copytree(source_path, workspace / source_path.name, dirs_exist_ok=True)
-            
-    def get_workspace_files(self, workspace: Path, pattern: str = "*.py") -> List[Path]:
-        """Get all matching files in workspace"""
-        return [f for f in workspace.rglob(pattern) if "__pycache__" not in str(f)]
-        
-    def compare_workspaces(self, workspace1: Path, workspace2: Path) -> Dict[str, Any]:
-        """Compare results between two workspaces"""
-        import difflib
-        
-        diffs = {}
-        files1 = set(self.get_workspace_files(workspace1))
-        files2 = set(self.get_workspace_files(workspace2))
-        
-        for file1 in files1:
-            rel_path = file1.relative_to(workspace1)
-            file2 = workspace2 / rel_path
-            
-            if file2.exists():
-                with open(file1) as f1, open(file2) as f2:
-                    diff = list(difflib.unified_diff(
-                        f1.readlines(),
-                        f2.readlines(),
-                        fromfile=str(file1),
-                        tofile=str(file2)
-                    ))
-                    if diff:
-                        diffs[str(rel_path)] = diff
-                        
-        return diffs
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status,
+            "errors": self.errors
+        }
 
-class RefactoringManager:
-    """Manages code refactoring with multiple strategies"""
+class TransformationManager:
+    """Manages the lifecycle of code transformations with proper termination control"""
     
-    def __init__(self, strategy: RefactoringStrategy = RefactoringStrategy.CODEMOD):
+    def __init__(self, strategy: RefactoringStrategy = RefactoringStrategy.CODEMOD, max_iterations: int = 3):
         self.strategy = strategy
-        self.workspace_manager = WorkspaceManager(Path.cwd())
+        self.max_iterations = max_iterations
         
-        # Validate API key
-        if not os.getenv("OPENAI_API_KEY"):
+        # Check for API key
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable is not set")
             
-        # Initialize agents
         self.config_list = [
             {
                 "model": "gpt-4",
-                "api_key": os.getenv("OPENAI_API_KEY"),
+                "api_key": api_key,
             }
         ]
-
-        # Create the function calling configuration
-        function_config = {
-            "functions": [{
-                "name": "process_python_file",
-                "description": "Process and modify a Python file",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "code": {
-                            "type": "string",
-                            "description": "The modified Python code"
-                        }
-                    },
-                    "required": ["code"]
-                }
-            }],
-            "config_list": self.config_list
-        }
         
-        self.llm_agent = autogen.AssistantAgent(
-            name="llm_refactor",
-            llm_config=function_config,
-            system_message="""You are a Python code refactoring expert. 
-            When given Python code and a refactoring task:
-            1. Analyze the code structure
-            2. Make the requested changes
-            3. Return only the complete modified code
-            4. Preserve all existing functionality
-            5. Follow Python best practices
-            6. Do not include any explanations, just the code"""
+        # Initialize agents with enhanced system messages
+        self.discovery_agent = autogen.AssistantAgent(
+            name="discovery",
+            llm_config={"config_list": self.config_list},
+            system_message="""You analyze Python project structure and identify files for modification.
+            For each Python file, analyze its contents and structure to determine what changes are needed.
+            Provide output in a structured format for the next stage."""
         )
         
+        self.analysis_agent = autogen.AssistantAgent(
+            name="analysis",
+            llm_config={"config_list": self.config_list},
+            system_message="""You analyze code and create detailed transformation plans.
+            Focus on specific changes needed in each file.
+            Return actions in a structured format with clear validation criteria."""
+        )
+        
+        self.assurance_agent = autogen.AssistantAgent(
+            name="assurance",
+            llm_config={"config_list": self.config_list},
+            system_message="""You validate code changes and ensure correctness.
+            Check that modifications maintain code functionality.
+            Provide detailed error information for any failures."""
+        )
+        
+        # Human proxy for coordination with termination awareness
         self.manager = autogen.UserProxyAgent(
             name="manager",
             human_input_mode="NEVER",
             code_execution_config={
                 "work_dir": "workspace",
-                "use_docker": False,
+                "use_docker": False
             }
         )
+        
+        # Initialize transformer based on strategy
+        self.transformer = get_transformer(str(strategy))
 
-    async def validate_auth(self) -> bool:
-        """Validate using Autogen's built-in mechanisms"""
+    async def run_discovery(self, intent: Intent) -> Dict[str, Any]:
+        """Enhanced discovery phase with structured output"""
+        logger.info("Starting discovery phase", intent_id=str(intent.id))
+        
+        # Run tartxt discovery
         try:
-            # Initialize a basic chat to test connection
-            chat_response = await self.manager.a_initiate_chat(
-                self.llm_agent,
-                message="Return 'OK' if you can read this message.",
+            result = subprocess.run(
+                [sys.executable, "src/skills/tartxt.py", "-o", str(intent.project_path)],
+                capture_output=True,
+                text=True,
+                check=True
             )
-            return any("OK" in str(msg.get("content", "")) 
-                      for msg in chat_response.chat_messages 
-                      if msg.get("role") == "assistant")
-        except Exception as e:
-            logger.error(f"Auth validation failed: {e}")
-            return False
-
-    async def refactor_file_llm(self, file_path: Path, intent: str) -> Optional[str]:
-        """Refactor a file using direct LLM approach"""
-        try:
-            with open(file_path) as f:
-                content = f.read()
-                
-            message = f"""Refactor this Python code to {intent}. Return only the complete refactored code:
-
-            {content}"""
             
+            # Get discovery agent analysis
             chat_response = await self.manager.a_initiate_chat(
-                self.llm_agent,
-                message=message,
+                self.discovery_agent,
+                message=f"""Analyze for: {intent.description}\n\nProject structure:\n{result.stdout}"""
             )
             
             # Get the last assistant message
@@ -166,95 +122,237 @@ class RefactoringManager:
                 msg['content'] for msg in chat_response.chat_messages
                 if msg.get('role') == 'assistant'
             ]
+            last_message = assistant_messages[-1] if assistant_messages else ""
             
-            if not assistant_messages:
-                return None
-                
-            # Extract code from the last message
-            code = self._extract_code(assistant_messages[-1])
-            return code if code else None
+            return {
+                "discovery_output": result.stdout,
+                "analysis": last_message,
+                "files_to_modify": self._parse_files_to_modify(last_message)
+            }
             
         except Exception as e:
-            logger.error(f"Error in refactor_file_llm: {e}")
-            return None
+            logger.error("Discovery failed", error=str(e))
+            raise
 
-    def _extract_code(self, message: str) -> Optional[str]:
-        """Extract code from message, handling various formats"""
-        try:
-            # Try Python code block
-            if "```python" in message:
-                return message.split("```python")[1].split("```")[0].strip()
-            # Try generic code block
-            elif "```" in message:
-                return message.split("```")[1].strip()
-            # No code block, check if it's just code
-            elif "import" in message or "def " in message or "class " in message:
-                return message.strip()
-            return None
-        except Exception:
-            return None
+    def _parse_files_to_modify(self, agent_response: str) -> List[str]:
+        """Parse the discovery agent's response to get files to modify"""
+        files = []
+        for line in agent_response.split('\n'):
+            if line.strip().endswith('.py'):
+                files.append(line.strip())
+        return files
 
-    async def process_intent(self, intent_id: str, project_path: Path, intent_desc: str) -> Dict[str, Any]:
-        """Process a refactoring intent"""
-        workspace = self.workspace_manager.create_workspace(intent_id, self.strategy)
-        self.workspace_manager.copy_to_workspace(project_path, workspace)
+    async def run_analysis(self, context: Dict[str, Any], intent_description: str) -> Dict[str, Any]:
+        """Run analysis phase to create transformation plan"""
+        chat_response = await self.manager.a_initiate_chat(
+            self.analysis_agent,
+            message=f"""
+            Based on this discovery analysis:
+            {context['discovery_output']}
+            
+            Create a detailed plan to: {intent_description}
+            
+            For each file that needs modification, specify:
+            1. What changes are needed
+            2. Where in the file to make changes
+            3. How to implement the changes
+            """
+        )
         
-        results = {
-            'workspace': str(workspace),
-            'processed': 0,
-            'modified': 0,
-            'results': {}
-        }
+        # Get the last assistant message
+        assistant_messages = [
+            msg['content'] for msg in chat_response.chat_messages
+            if msg.get('role') == 'assistant'
+        ]
+        last_message = assistant_messages[-1] if assistant_messages else ""
         
-        for file_path in self.workspace_manager.get_workspace_files(workspace):
+        return {"analysis_plan": last_message}
+
+    async def run_refactor(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Run code transformation phase using selected strategy"""
+        modified_files = {}
+        
+        for file_path in context.get('files_to_modify', []):
             try:
-                modified = await self.refactor_file_llm(file_path, intent_desc)
+                with open(file_path, 'r') as f:
+                    source = f.read()
                 
-                if modified:
-                    # Write modified content
-                    with open(file_path, 'w') as f:
-                        f.write(modified)
-                        
-                    results['results'][str(file_path)] = {'status': 'modified'}
-                    results['modified'] += 1
+                if isinstance(self.transformer, LoggingTransform):
+                    # Use codemod approach
+                    transform_context = CodemodContext(filename=file_path)
+                    transform = self.transformer(transform_context, {})
+                    modified_source = transform.transform_module(source)
                 else:
-                    results['results'][str(file_path)] = {'status': 'unchanged'}
+                    # Use LLM approach
+                    modified_source = await self.transformer.transform_code(source)
+                
+                if modified_source and modified_source != source:
+                    modified_files[file_path] = modified_source
+                    # Write changes back to file
+                    with open(file_path, 'w') as f:
+                        f.write(modified_source)
                     
-                results['processed'] += 1
+                    # Format the modified code
+                    format_code(Path(file_path))
                     
             except Exception as e:
-                logger.error(f"Failed to refactor {file_path}: {e}")
-                results['results'][str(file_path)] = {
-                    'status': 'error',
-                    'error': str(e)
-                }
-                results['processed'] += 1
-                
-        return results
+                logger.error(f"Error transforming {file_path}: {e}")
+                continue
+        
+        return {"modified_files": modified_files}
 
-async def process_intent(project_path: Path, intent: str, strategy: RefactoringStrategy) -> Dict[str, Any]:
-    """Main processing function with auth validation"""
-    try:
-        manager = RefactoringManager(strategy)
-        
-        print("Validating API access...")
-        if not await manager.validate_auth():
-            raise ValueError("Failed to authenticate with OpenAI API")
+    async def run_validation(self, changes: Dict[str, Any]) -> ValidationResult:
+        """Enhanced validation with structured results"""
+        try:
+            # Compile check
+            compile_errors = []
+            for file_path in changes['modified_files']:
+                try:
+                    if file_path.endswith('.py'):
+                        with open(file_path, 'rb') as f:
+                            compile(f.read(), file_path, 'exec')
+                except Exception as e:
+                    compile_errors.append({
+                        'file': file_path,
+                        'type': 'compilation',
+                        'message': str(e)
+                    })
             
-        return await manager.process_intent(str(uuid.uuid4()), project_path, intent)
+            if compile_errors:
+                return ValidationResult("failed", compile_errors)
+            
+            # Run semgrep checks if available
+            semgrep_result = run_semgrep_check(
+                [Path(f) for f in changes['modified_files']],
+                {"python": True}  # Basic Python checks
+            )
+            
+            if semgrep_result.get('errors', []):
+                return ValidationResult("failed", [
+                    {'type': 'semgrep', 'message': err}
+                    for err in semgrep_result['errors']
+                ])
+            
+            # Run tests if available
+            test_result = await self._run_tests()
+            if not test_result.get('success', False):
+                return ValidationResult("failed", [
+                    {'type': 'test', 'message': err} 
+                    for err in test_result.get('errors', [])
+                ])
+            
+            return ValidationResult("success")
+            
+        except Exception as e:
+            return ValidationResult("error", [{'type': 'system', 'message': str(e)}])
+
+    async def _run_tests(self) -> Dict[str, Any]:
+        """Run available tests for the project"""
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pytest", "tests/"],
+                capture_output=True,
+                text=True
+            )
+            return {
+                "success": result.returncode == 0,
+                "errors": result.stderr.split('\n') if result.returncode != 0 else []
+            }
+        except subprocess.CalledProcessError as e:
+            return {
+                "success": False,
+                "errors": [str(e)]
+            }
+
+    async def create_sub_intent(self, parent_intent: Intent, validation_result: ValidationResult) -> Intent:
+        """Create a sub-intent from validation failures"""
+        error_descriptions = [f"Fix: {error['message']}" for error in validation_result.errors]
+        description = f"Fix validation errors:\n" + "\n".join(error_descriptions)
         
-    except Exception as e:
-        logger.error(f"Processing failed: {e}")
-        raise ValueError(f"Processing failed: {str(e)}")
+        return Intent(
+            description=description,
+            project_path=parent_intent.project_path,
+            parent_id=parent_intent.id,
+            status=IntentStatus.CREATED
+        )
+
+    async def process_intent(self, intent: Intent) -> Dict[str, Any]:
+        """Process intent with termination control and feedback loop"""
+        context: Dict[str, Any] = {}
+        iteration_count = 0
+        
+        try:
+            # Initial discovery and analysis
+            intent.status = IntentStatus.ANALYZING
+            context.update(await self.run_discovery(intent))
+            context.update(await self.run_analysis(context, intent.description))
+            
+            while iteration_count < self.max_iterations:
+                iteration_count += 1
+                logger.info(f"Starting iteration {iteration_count}", intent_id=str(intent.id))
+                
+                # Apply transformations
+                intent.status = IntentStatus.TRANSFORMING
+                changes = await self.run_refactor(context)
+                context['changes'] = changes
+                
+                # Validate changes
+                intent.status = IntentStatus.VALIDATING
+                validation_result = await self.run_validation(changes)
+                
+                if validation_result.is_success:
+                    intent.status = IntentStatus.COMPLETED
+                    return {
+                        "status": "success",
+                        "context": context,
+                        "iterations": iteration_count
+                    }
+                
+                # Create and process sub-intent for fixes
+                sub_intent = await self.create_sub_intent(intent, validation_result)
+                context.update(await self.run_discovery(sub_intent))
+                
+            # Max iterations reached
+            intent.status = IntentStatus.FAILED
+            return {
+                "status": "failed",
+                "error": f"Max iterations ({self.max_iterations}) reached without success",
+                "context": context
+            }
+            
+        except Exception as e:
+            logger.error("Intent processing failed", 
+                        intent_id=str(intent.id),
+                        error=str(e),
+                        exc_info=True)
+            intent.status = IntentStatus.FAILED
+            return {
+                "status": "failed",
+                "error": str(e),
+                "context": context
+            }
+
+async def process_intent(project_path: Path, intent_desc: str, strategy: RefactoringStrategy) -> Dict[str, Any]:
+    """Main entry point for intent processing"""
+    intent = Intent(
+        description=intent_desc,
+        project_path=str(project_path)
+    )
+    manager = TransformationManager(strategy=strategy)
+    return await manager.process_intent(intent)
 
 def main():
-    """Command-line interface"""
+    """Enhanced main entry point with strategy selection"""
+    import argparse
+    
     parser = argparse.ArgumentParser(description="Refactor Python code")
     parser.add_argument('command', choices=['refactor'])
     parser.add_argument('project_path', type=Path)
     parser.add_argument('intent', type=str)
-    parser.add_argument('--strategy', choices=['codemod', 'llm'], default='codemod')
-    parser.add_argument('--timeout', type=int, default=30, help="Timeout in seconds per file")
+    parser.add_argument('--strategy', choices=['codemod', 'llm'], default='codemod',
+                      help="Refactoring strategy to use")
+    parser.add_argument('--max-iterations', type=int, default=3,
+                      help="Maximum number of refactoring iterations")
     
     args = parser.parse_args()
     
@@ -265,31 +363,22 @@ def main():
     try:
         strategy = RefactoringStrategy(args.strategy)
         print(f"\nStarting refactoring with {strategy.value} strategy...")
-        print(f"Timeout set to {args.timeout} seconds per file")
+        print(f"Max iterations: {args.max_iterations}")
         
         result = asyncio.run(process_intent(args.project_path, args.intent, strategy))
         
-        print(f"\nRefactoring completed in workspace: {result['workspace']}")
-        print(f"Files processed: {result['processed']}")
-        print(f"Files modified: {result['modified']}")
-        print("\nResults:")
-        
-        for file_path, file_result in result['results'].items():
-            status = {
-                'modified': '✅',
-                'unchanged': '⏩',
-                'error': '❌'
-            }.get(file_result['status'], '❓')
+        print(f"\nRefactoring completed with status: {result['status']}")
+        if result['status'] == 'success':
+            print(f"Completed in {result.get('iterations', 1)} iterations")
+        else:
+            print(f"Error: {result.get('error', 'Unknown error')}")
+            sys.exit(1)
             
-            print(f"{status} {Path(file_path).name}")
-            if file_result['status'] == 'error':
-                print(f"   Error: {file_result['error']}")
-                
     except KeyboardInterrupt:
         print("\nOperation cancelled by user")
         sys.exit(1)
     except Exception as e:
-        print(f"\nUnexpected error: {str(e)}")
+        print(f"\nUnexpected error: {e}")
         sys.exit(1)
 
 if __name__ == "__main__":
