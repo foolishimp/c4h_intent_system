@@ -18,7 +18,7 @@ class IntentStatus(str, Enum):
 class Intent(BaseModel):
     """Intent model for code transformations"""
     id: UUID = Field(default_factory=uuid4)
-    description: str
+    description: Dict[str, Any]  # Now accepts structured intent
     project_path: str
     status: IntentStatus = IntentStatus.CREATED
     context: Dict[str, Any] = Field(default_factory=dict)

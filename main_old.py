@@ -78,7 +78,7 @@ class RefactoringManager:
         # Initialize agents
         self.config_list = [
             {
-                "model": "gpt-4",
+                "model": "gpt-4o",
                 "api_key": os.getenv("OPENAI_API_KEY"),
             }
         ]

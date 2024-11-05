@@ -17,7 +17,7 @@ class AssuranceAgent:
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
                 raise ValueError("OPENAI_API_KEY environment variable not set")
-            config_list = [{"model": "gpt-4", "api_key": api_key}]
+            config_list = [{"model": "gpt-4o", "api_key": api_key}]
             
         self.validator = autogen.AssistantAgent(
             name="validator",

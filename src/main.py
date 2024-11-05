@@ -15,29 +15,23 @@ def main():
     parser.add_argument('command', choices=['refactor'])
     parser.add_argument('project_path', type=Path)
     parser.add_argument('intent', type=str)
-    parser.add_argument('--strategy', choices=['codemod', 'llm'], default='codemod',
-                      help="Refactoring strategy to use")
-    parser.add_argument('--max-iterations', type=int, default=3,
-                      help="Maximum number of refactoring iterations")
+    parser.add_argument('--merge-strategy', choices=['codemod', 'llm'], default='codemod',
+                      help="Strategy for merging code changes")
+    parser.add_argument('--max-iterations', type=int, default=3)
     
     args = parser.parse_args()
     
-    if not args.project_path.exists():
-        print(f"Error: Project path does not exist: {args.project_path}")
-        sys.exit(1)
-        
     try:
-        # Initialize intent agent with specified strategy
-        strategy = RefactoringStrategy(args.strategy)
-        agent = IntentAgent(strategy=strategy, max_iterations=args.max_iterations)
+        # Create structured intent with merge strategy
+        intent = {
+            "description": args.intent,
+            "merge_strategy": args.merge_strategy
+        }
         
-        print(f"\nStarting refactoring with {strategy.value} strategy...")
-        print(f"Max iterations: {args.max_iterations}")
-        print(f"Project path: {args.project_path}")
-        print(f"Intent: {args.intent}")
+        # Initialize agent
+        agent = IntentAgent(max_iterations=args.max_iterations)
         
-        # Process the intent
-        result = asyncio.run(agent.process(args.project_path, args.intent))
+        result = asyncio.run(agent.process(args.project_path, intent))
         
         print(f"\nRefactoring completed with status: {result['status']}")
         if result['status'] == 'success':
@@ -52,6 +46,3 @@ def main():
     except Exception as e:
         print(f"\nUnexpected error: {e}")
         sys.exit(1)
-
-if __name__ == "__main__":
-    main()

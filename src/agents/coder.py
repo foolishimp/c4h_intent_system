@@ -4,17 +4,18 @@ from typing import Dict, Any, Optional, List
 from pathlib import Path
 import structlog
 import autogen
-import os
 import difflib
 from enum import Enum
+import os
+
 from skills.codemod import CodeTransformation, apply_transformation
 
 logger = structlog.get_logger()
 
 class MergeMethod(str, Enum):
     """Available merge methods"""
-    LLM = "llm"      # Use LLM for merging changes
-    CODEMOD = "codemod"  # Use AST-based codemod transformations
+    LLM = "llm"      # Use LLM to interpret and apply changes
+    CODEMOD = "codemod"  # Use AST-based transformations
 
 class Coder:
     """Coder agent responsible for merging and applying code changes"""
@@ -24,17 +25,21 @@ class Coder:
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
                 raise ValueError("OPENAI_API_KEY environment variable not set")
-            config_list = [{"model": "gpt-4", "api_key": api_key}]
+            config_list = [{"model": "gpt-4o", "api_key": api_key}]
         
-        self.merger = autogen.AssistantAgent(
+        # Initialize merge assistant for LLM-based merges
+        self.merge_assistant = autogen.AssistantAgent(
             name="code_merger",
             llm_config={"config_list": config_list},
             system_message="""You are an expert code merger.
-            Given original content and changes in diff format:
+            Given a file's original content and changes in unified diff format:
             1. Apply the changes precisely
             2. Resolve any conflicts
-            3. Maintain file format and style
-            Return only the final merged content."""
+            3. Maintain code style and formatting
+            4. Return only the final merged content
+            
+            Do not include any explanation or commentary in your response,
+            only return the complete merged code."""
         )
         
         self.coordinator = autogen.UserProxyAgent(
@@ -43,50 +48,7 @@ class Coder:
             code_execution_config=False
         )
 
-    async def _merge_llm(self, file_path: str, original: str, diff: str) -> Optional[str]:
-        """Use LLM to merge changes from diff"""
-        try:
-            chat_response = await self.coordinator.a_initiate_chat(
-                self.merger,
-                message=f"""
-                File: {file_path}
-
-                ORIGINAL CONTENT:
-                {original}
-
-                CHANGES TO APPLY (DIFF):
-                {diff}
-
-                Apply these changes to the original content.
-                Return ONLY the merged result without any explanation."""
-            )
-
-            # Get merged content from response
-            for message in chat_response.chat_history:
-                if message.get('role') == 'assistant':
-                    return message['content'].strip()
-
-            return None
-
-        except Exception as e:
-            logger.error("coder.llm_merge_failed", error=str(e))
-            return None
-
-    def _merge_codemod(self, file_path: str, changes: Dict[str, Any]) -> Optional[str]:
-        """Use codemod to apply changes via AST transformations"""
-        try:
-            transform = CodeTransformation(
-                source_file=file_path,
-                changes=changes
-            )
-            
-            return apply_transformation(transform)
-
-        except Exception as e:
-            logger.error("coder.codemod_failed", error=str(e))
-            return None
-
-    def _write_file_with_backup(self, file_path: str, content: str) -> bool:
+    def _write_with_backup(self, file_path: str, content: str) -> bool:
         """Write content to file with backup of original"""
         try:
             path = Path(file_path)
@@ -118,9 +80,65 @@ class Coder:
                 logger.info("coder.backup_restored", file=str(path))
             return False
 
-    async def transform(self, context: Dict[str, Any], method: MergeMethod = MergeMethod.LLM) -> Dict[str, Any]:
+    async def _merge_llm(self, file_path: str, original: str, changes: str) -> Optional[str]:
+        """Use LLM to merge changes into original content"""
+        try:
+            chat_response = await self.coordinator.a_initiate_chat(
+                self.merge_assistant,
+                message=f"""
+                Apply the following changes to the code:
+
+                ORIGINAL FILE ({file_path}):
+                {original}
+
+                CHANGES (UNIFIED DIFF):
+                {changes}
+
+                Return the complete merged file content.
+                """
+            )
+
+            # Get merged content from response
+            for message in chat_response.chat_history:
+                if message.get('role') == 'assistant':
+                    return message['content'].strip()
+
+            return None
+
+        except Exception as e:
+            logger.error("coder.llm_merge_failed", 
+                        file=file_path,
+                        error=str(e))
+            return None
+
+    def _merge_codemod(self, file_path: str, changes: Dict[str, Any]) -> Optional[str]:
+        """Use codemod to apply changes via AST transformations"""
+        try:
+            transform = CodeTransformation(
+                source_file=file_path,
+                changes=changes
+            )
+            
+            return apply_transformation(transform)
+
+        except Exception as e:
+            logger.error("coder.codemod_failed", 
+                        file=file_path,
+                        error=str(e))
+            return None
+
+    async def transform(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Apply refactoring actions using specified merge method"""
         try:
+            # Extract merge strategy from intent context
+            intent_description = context.get("intent_description", {})
+            merge_strategy = (
+                intent_description.get("merge_strategy", "codemod") 
+                if isinstance(intent_description, dict) 
+                else "codemod"
+            )
+            method = MergeMethod(merge_strategy)
+            
             actions = context.get("refactor_actions", [])
             if not actions:
                 raise ValueError("No refactoring actions provided")
@@ -130,7 +148,7 @@ class Coder:
             
             for action in actions:
                 file_path = action["file_path"]
-                changes = action["changes"]
+                changes = action["changes"]  # Expected in unified diff format
                 description = action.get("description", "")
                 
                 # Read original content if file exists
@@ -139,18 +157,24 @@ class Coder:
                     original_content = path.read_text()
                     
                     # Apply changes using specified method
-                    logger.info(f"coder.applying_changes", 
+                    logger.info("coder.applying_changes", 
                               file=file_path, 
                               method=method.value)
                     
                     if method == MergeMethod.LLM:
-                        merged_content = await self._merge_llm(file_path, original_content, changes)
+                        merged_content = await self._merge_llm(
+                            file_path,
+                            original_content,
+                            changes
+                        )
                     else:  # CODEMOD
-                        merged_content = self._merge_codemod(file_path, {
-                            "diff": changes,
-                            "line_range": action.get("line_range"),
-                            "description": description
-                        })
+                        merged_content = self._merge_codemod(
+                            file_path,
+                            {
+                                "diff": changes,
+                                "description": description
+                            }
+                        )
                     
                     if not merged_content:
                         failed_files.append(file_path)
@@ -160,11 +184,20 @@ class Coder:
                         continue
                 else:
                     # For new files, extract content from diff
-                    merged_content = changes.split('\n')[1:]  # Skip diff header
-                    merged_content = '\n'.join(line[1:] for line in merged_content if line.startswith('+'))
+                    if not changes.startswith("--- "):
+                        logger.error("coder.invalid_diff", file=file_path)
+                        failed_files.append(file_path)
+                        continue
+                        
+                    # Parse new content from unified diff
+                    diff_lines = changes.split('\n')
+                    merged_content = '\n'.join(
+                        line[1:] for line in diff_lines 
+                        if line.startswith('+') and not line.startswith('+++')
+                    )
 
                 # Write merged content
-                if self._write_file_with_backup(file_path, merged_content):
+                if self._write_with_backup(file_path, merged_content):
                     modified_files.append(file_path)
                     logger.info("coder.changes_applied", 
                               file=file_path, 
