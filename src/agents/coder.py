@@ -1,12 +1,9 @@
 # src/agents/coder.py
 
-from typing import Dict, Any, Optional, List, Union
+from typing import Dict, Any, Optional, List
 from pathlib import Path
-from libcst.codemod import CodemodContext
-import libcst as cst
 import structlog
 import autogen
-import json
 import os
 
 logger = structlog.get_logger()
@@ -25,11 +22,11 @@ class Coder:
             name="coder",
             llm_config={"config_list": config_list},
             system_message="""You are an expert coding agent that implements code transformations.
-            Given an architectural plan and code:
-            1. Implement the required changes
-            2. Follow the transformation steps precisely
+            You will:
+            1. Review the architectural plan
+            2. Apply changes precisely as specified
             3. Maintain code quality and style
-            4. Return the modified code"""
+            4. Return success/failure status with details"""
         )
         
         self.coordinator = autogen.UserProxyAgent(
@@ -38,61 +35,51 @@ class Coder:
             code_execution_config=False
         )
 
+    def _write_changes(self, changes: Dict[str, str]) -> None:
+        """Write changes to files with backup"""
+        for file_path, content in changes.items():
+            try:
+                path = Path(file_path)
+                # Create backup
+                backup_path = path.with_suffix(path.suffix + '.bak')
+                if path.exists():
+                    path.rename(backup_path)
+                
+                # Write new content
+                path.write_text(content)
+                logger.info("coder.file_written", 
+                           file=str(path),
+                           backup=str(backup_path))
+                
+            except Exception as e:
+                logger.error("coder.write_failed",
+                           file=file_path,
+                           error=str(e))
+                # Restore from backup if exists
+                if backup_path.exists():
+                    backup_path.rename(path)
+                raise
+
     async def transform(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Transform code according to architectural plan"""
         try:
-            plan = context.get("architectural_analysis")
-            files = context.get("files_to_modify", [])
+            plan = context.get("architectural_plan")
+            if not plan or "changes" not in plan:
+                raise ValueError("Missing required transformation plan")
+
+            changes = plan["changes"]
             
-            if not plan or not files:
-                raise ValueError("Missing required transformation context")
+            # Write the changes
+            self._write_changes(changes)
             
-            modified_files = {}
-            
-            for file_path in files:
-                with open(file_path, 'r') as f:
-                    source = f.read()
-                
-                # Get transformation steps for this file
-                chat_response = await self.coordinator.a_initiate_chat(
-                    self.coder,
-                    message=f"""
-                    TRANSFORMATION PLAN:
-                    {json.dumps(plan, indent=2)}
-                    
-                    SOURCE FILE ({file_path}):
-                    {source}
-                    
-                    Implement the required changes and return the complete modified code.
-                    Return ONLY the modified code without any explanation or markdown.
-                    """
-                )
-                
-                # Get modified code
-                assistant_messages = [
-                    msg['content'] for msg in chat_response.chat_messages
-                    if msg.get('role') == 'assistant'
-                ]
-                modified_code = assistant_messages[-1] if assistant_messages else source
-                
-                if modified_code != source:
-                    modified_files[file_path] = modified_code
-                    
-                    # Write changes
-                    with open(file_path, 'w') as f:
-                        f.write(modified_code)
-            
-            return {"modified_files": modified_files}
+            return {
+                "status": "success",
+                "modified_files": list(changes.keys())
+            }
             
         except Exception as e:
-            logger.error("coder.failed", error=str(e))
-            raise
-            
-# Utility functions
-def format_code(file_path: Path) -> None:
-    """Format code using ruff"""
-    try:
-        subprocess.run(['ruff', 'check', '--fix', str(file_path)], check=True)
-        subprocess.run(['ruff', 'format', str(file_path)], check=True)
-    except subprocess.CalledProcessError as e:
-        logger.error(f"Error formatting {file_path}: {e}")
+            logger.error("coder.transform_failed", error=str(e))
+            return {
+                "status": "failed",
+                "error": str(e)
+            }
