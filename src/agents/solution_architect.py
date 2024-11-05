@@ -19,16 +19,24 @@ class SolutionArchitect:
                 raise ValueError("OPENAI_API_KEY environment variable not set")
             config_list = [{"model": "gpt-4", "api_key": api_key}]
         
+        # Add debug configuration for visibility
+        llm_config = {
+            "config_list": config_list,
+            "log_level": "debug",  # Show prompts
+            "logging_func": logger.debug,  # Use structlog
+            "timeout": 120
+        }
+        
         self.assistant = autogen.AssistantAgent(
             name="solution_architect",
-            llm_config={"config_list": config_list},
+            llm_config=llm_config,
             system_message="""You are a solution architect that creates refactoring plans.
             Analyze the code and intent, then produce a series of merge actions.
             Each merge action must specify:
             - file_path: Path to the target file
             - changes: Unified diff of the changes
-            Return ONLY a JSON object with an 'actions' array.
-            Do not include any explanatory text or markdown formatting."""
+            Return ONLY a raw JSON object with an 'actions' array.
+            Do not include markdown formatting or code blocks."""
         )
         
         self.coordinator = autogen.UserProxyAgent(
@@ -48,6 +56,7 @@ class SolutionArchitect:
             if not discovery_output:
                 raise ValueError("Missing discovery output")
 
+            # Improved prompt formatting to avoid JSON parsing issues
             prompt = f"""
             REFACTORING REQUEST:
             {intent}
@@ -55,7 +64,8 @@ class SolutionArchitect:
             CODEBASE:
             {discovery_output}
             
-            Analyze the code and provide merge actions in this format:
+            Analyze the code and provide merge actions in this exact format:
+            
             {{
                 "actions": [
                     {{
@@ -65,8 +75,15 @@ class SolutionArchitect:
                 ]
             }}
             
-            Return ONLY the JSON object, no additional text.
+            Important:
+            1. Return ONLY the raw JSON
+            2. No markdown, no code blocks
+            3. No explanation text
+            4. The response must start with {{
             """
+
+            # Log the prompt for debugging
+            logger.debug("architect.prompt", prompt=prompt)
 
             chat_response = await self.coordinator.a_initiate_chat(
                 self.assistant,
@@ -74,35 +91,21 @@ class SolutionArchitect:
                 max_turns=1
             )
 
-            # Extract and validate response
+            # Log raw response for debugging
             for message in reversed(chat_response.chat_history):
                 if message.get('role') == 'assistant':
-                    content = message['content'].strip()
-                    
+                    response = message['content']
+                    logger.debug("architect.raw_response", response=response)
                     try:
-                        # Try parsing as direct JSON first
-                        result = json.loads(content)
-                        if "actions" in result:
-                            return result
-                    except json.JSONDecodeError:
-                        # If not valid JSON, try extracting from potential markdown
-                        if "```json" in content:
-                            json_str = content.split("```json")[1].split("```")[0].strip()
-                            result = json.loads(json_str)
-                            if "actions" in result:
-                                return result
-                        
-                        # Last resort - try to find JSON-like content
-                        json_start = content.find('{')
-                        json_end = content.rfind('}') + 1
-                        if json_start >= 0 and json_end > json_start:
-                            result = json.loads(content[json_start:json_end])
-                            if "actions" in result:
-                                return result
-                                
-                    raise ValueError("Could not extract valid actions from response")
+                        return json.loads(response.strip())
+                    except json.JSONDecodeError as e:
+                        logger.error("architect.json_parse_failed", 
+                                   error=str(e),
+                                   response=response,
+                                   char_position=e.pos)
+                        raise
 
-            raise ValueError("No valid response from architect")
+            raise ValueError("No response from architect")
 
         except Exception as e:
             logger.error("architect.failed", error=str(e))

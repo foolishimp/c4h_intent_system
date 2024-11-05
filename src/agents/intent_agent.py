@@ -4,13 +4,12 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 import structlog
 import autogen
-import json
 import os
 
 from models.intent import Intent, IntentStatus
 from agents.discovery import DiscoveryAgent 
 from agents.solution_architect import SolutionArchitect
-from agents.coder import Coder
+from agents.coder import Coder, MergeMethod
 from agents.assurance import AssuranceAgent
 
 logger = structlog.get_logger()
@@ -43,40 +42,42 @@ class IntentAgent:
     async def _execute_discovery(self, intent: Intent) -> Dict[str, Any]:
         """Execute discovery phase"""
         logger.info("discovery.starting", intent_id=str(intent.id))
+        print("\nRunning discovery and analysis...")
         intent.status = IntentStatus.ANALYZING
-        
-        discovery_result = await self.discovery.analyze(str(intent.project_path))
-        if not discovery_result:
-            raise ValueError("Discovery analysis failed")
-            
-        return discovery_result
+        return await self.discovery.analyze(str(intent.project_path))
 
-    async def _execute_solution(self, intent: Intent, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_solution(self, intent: Intent, discovery_output: str) -> Dict[str, Any]:
         """Execute solution planning phase"""
         logger.info("solution.starting", intent_id=str(intent.id))
         
-        # Restore original nesting that worked
+        # Pass raw discovery output directly
         solution_context = {
             "intent": intent.description,
-            "discovery_output": {
-                "discovery_output": context
-            }
+            "discovery_output": discovery_output
         }
     
         return await self.architect.analyze(solution_context)
 
-    async def _execute_implementation(self, intent: Intent, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def _execute_implementation(self, intent: Intent, solution: Dict[str, Any]) -> Dict[str, Any]:
         """Execute implementation phase"""
         logger.info("implementation.starting", intent_id=str(intent.id))
         intent.status = IntentStatus.TRANSFORMING
         
-        if "refactor_actions" not in context:
-            raise ValueError("No refactor actions in context")
-            
-        return await self.coder.transform({"actions": context["refactor_actions"]})
+        # Solution architect returns the full response with actions
+        # We just need to pass it through with the merge strategy
+        return await self.coder.transform({
+            **solution,  # Pass through the solution with actions
+            "merge_strategy": intent.description.get("merge_strategy", MergeMethod.LLM)
+        })
+
 
     async def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
         """Process an intent through the complete workflow"""
+        print(f"\nStarting refactoring process...")
+        print(f"Project path: {project_path}")
+        print(f"Intent: {intent_desc.get('description', '')}")
+        print(f"Merge strategy: {intent_desc.get('merge_strategy', 'llm')}\n")
+
         intent = Intent(
             description=intent_desc,
             project_path=str(project_path)
@@ -84,32 +85,25 @@ class IntentAgent:
         
         context = {}
         try:
-            # Discovery Phase
-            discovery_result = await self._execute_discovery(intent)
-            context.update(discovery_result)
+            # Discovery Phase - Keep raw output
+            discovery_output = await self._execute_discovery(intent)
             
-            # Solution Phase
-            solution_result = await self._execute_solution(intent, context)
+            # Solution Phase - Pass raw discovery output
+            solution = await self._execute_solution(intent, discovery_output)
             
-            # Handle solution result - can be string or dict
-            if isinstance(solution_result, str):
-                try:
-                    solution_result = json.loads(solution_result)
-                except json.JSONDecodeError as e:
-                    raise ValueError(f"Invalid solution format: {str(e)}")
+            # Implementation Phase - Pass solution dict
+            implementation_result = await self._execute_implementation(intent, solution)
             
-            # Extract actions and add to context
-            if "actions" in solution_result:
-                context["refactor_actions"] = solution_result["actions"]
-            else:
-                raise ValueError("No actions in solution result")
-            
-            # Implementation Phase
-            implementation_result = await self._execute_implementation(intent, context)
             if implementation_result["status"] != "success":
                 intent.status = IntentStatus.FAILED
                 return implementation_result
-            context.update(implementation_result)
+                
+            # Store everything in context for debugging
+            context.update({
+                "discovery_output": discovery_output,
+                "solution": solution,
+                "implementation": implementation_result
+            })
             
             # Success path
             intent.status = IntentStatus.COMPLETED
