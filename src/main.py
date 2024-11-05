@@ -21,24 +21,6 @@ class RefactoringStrategy(str, Enum):
     CODEMOD = "codemod"
     LLM = "llm"
 
-class ValidationResult:
-    """Structured validation result"""
-    def __init__(self, status: str, errors: List[Dict[str, Any]] = None):
-        self.status = status
-        self.errors = errors or []
-        
-    @property
-    def is_success(self) -> bool:
-        return self.status == "success" and not self.errors
-        
-    def to_dict(self) -> Dict[str, Any]:
-        return {
-            "status": self.status,
-            "errors": self.errors
-        }
-
-# src/main.py
-
 class IntentProcessor:
     """Orchestrates the intent processing workflow using specialized agents"""
     
@@ -61,81 +43,57 @@ class IntentProcessor:
 
     async def process_intent(self, intent: Intent) -> Dict[str, Any]:
         """Process intent through the agent workflow"""
-        context: Dict[str, Any] = {
-            "intent_id": str(intent.id),
-            "project_path": intent.project_path,
-            "intent_description": intent.description
-        }
-        iteration_count = 0
-        
         try:
             # Discovery phase
             logger.info("Starting discovery phase", intent_id=str(intent.id))
             intent.status = IntentStatus.ANALYZING
             discovery_result = await self.discovery.analyze(intent.project_path)
-            context.update(discovery_result)
+            context = {
+                "intent_id": str(intent.id),
+                "project_path": intent.project_path,
+                "intent_description": intent.description,
+                "discovery_output": discovery_result.get("discovery_output", "")
+            }
             
-            # Architecture phase
+            # Architecture phase - Now with loop prevention
             logger.info("Starting architecture phase", intent_id=str(intent.id))
             architectural_result = await self.architect.analyze(context)
-            if not architectural_result:
-                raise ValueError("No architectural plan produced")
+            if not architectural_result or "architectural_plan" not in architectural_result:
+                raise ValueError("No valid architectural plan produced")
+                
             context.update(architectural_result)
             
-            while iteration_count < self.max_iterations:
-                iteration_count += 1
-                logger.info(f"Starting iteration {iteration_count}", intent_id=str(intent.id))
+            # Implementation phase
+            logger.info("Starting implementation phase", intent_id=str(intent.id))
+            intent.status = IntentStatus.TRANSFORMING
+            implementation = await self.coder.transform(context)
+            
+            if implementation.get("status") == "failed":
+                logger.error("Implementation failed", 
+                           intent_id=str(intent.id),
+                           error=implementation.get("error"))
+                intent.status = IntentStatus.FAILED
+                return implementation
                 
-                # Implementation phase
-                logger.info("Starting implementation phase", intent_id=str(intent.id))
-                intent.status = IntentStatus.TRANSFORMING
-                if self.strategy == RefactoringStrategy.LLM:
-                    implementation = await self.coder.transform(context)
-                else:
-                    implementation = await self.coder.transform_codemod(context)
+            context.update(implementation)
+            
+            # Validation phase
+            logger.info("Starting validation phase", intent_id=str(intent.id))
+            intent.status = IntentStatus.VALIDATING
+            validation = await self.assurance.validate(context)
+            
+            if validation.get("status") == "success":
+                intent.status = IntentStatus.COMPLETED
+                return {
+                    "status": "success",
+                    "context": context,
+                    "iterations": 1
+                }
                 
-                # Check for implementation failure
-                if implementation.get("status") == "failed":
-                    logger.error("Implementation failed", 
-                               intent_id=str(intent.id),
-                               error=implementation.get("error"))
-                    intent.status = IntentStatus.FAILED
-                    return implementation
-                
-                context.update(implementation)
-                
-                # Validation phase
-                logger.info("Starting validation phase", intent_id=str(intent.id))
-                intent.status = IntentStatus.VALIDATING
-                validation = await self.assurance.validate(context)
-                
-                if validation.get("status") == "success":
-                    intent.status = IntentStatus.COMPLETED
-                    logger.info("Intent processing completed successfully", 
-                              intent_id=str(intent.id),
-                              iterations=iteration_count)
-                    return {
-                        "status": "success",
-                        "context": context,
-                        "iterations": iteration_count,
-                        "workspace": implementation.get("workspace")
-                    }
-                
-                # Handle validation failures
-                logger.warning("Validation failed, will retry", 
-                             intent_id=str(intent.id),
-                             iteration=iteration_count,
-                             errors=validation.get("errors", []))
-                context["validation_errors"] = validation.get("errors", [])
-                
-            # Max iterations reached
-            logger.error("Max iterations reached without success",
-                        intent_id=str(intent.id),
-                        max_iterations=self.max_iterations)
             intent.status = IntentStatus.FAILED
             return {
                 "status": "failed",
-                "error": f"Max iterations ({self.max_iterations}) reached without success",
+                "error": "Validation failed",
                 "context": context
             }
             
