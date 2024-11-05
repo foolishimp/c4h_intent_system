@@ -5,8 +5,14 @@ from pathlib import Path
 import structlog
 import autogen
 import os
+from enum import Enum
 
 logger = structlog.get_logger()
+
+class MergeMethod(str, Enum):
+    """Available merge methods"""
+    LLM = "llm"      # Use LLM to interpret and apply changes
+    CODEMOD = "codemod"  # Use AST-based transformations (not implemented)
 
 class Coder:
     """Coder agent responsible for applying merge actions using LLM"""
@@ -88,10 +94,15 @@ class Coder:
     async def transform(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Apply merge actions"""
         try:
-            # Just grab the actions and process them
+            # Extract actions and method
             actions = context.get("actions", [])
+            method = context.get("merge_strategy", MergeMethod.LLM)
+
             if not actions:
                 raise ValueError("No actions provided")
+
+            if method != MergeMethod.LLM:
+                raise ValueError(f"Merge method {method} not supported, only LLM merges implemented")
 
             modified_files = []
             failed_files = []
