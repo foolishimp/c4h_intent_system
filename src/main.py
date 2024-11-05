@@ -64,9 +64,12 @@ class TransformationManager:
         self.discovery_agent = autogen.AssistantAgent(
             name="discovery",
             llm_config={"config_list": self.config_list},
-            system_message="""You analyze Python project structure and identify files for modification.
-            For each Python file, analyze its contents and structure to determine what changes are needed.
-            Provide output in a structured format for the next stage."""
+            system_message="""You are a project analysis agent.
+            When given a project structure and intent:
+            1. Analyze the files and identify Python files that need modification
+            2. Return ONLY a JSON array of file paths to modify
+            3. Do not include any explanation or conversation
+            Example output: ["path/to/file1.py", "path/to/file2.py"]"""
         )
         
         self.analysis_agent = autogen.AssistantAgent(
