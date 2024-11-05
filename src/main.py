@@ -12,7 +12,7 @@ import autogen
 from libcst.codemod import CodemodContext
 from models.intent import Intent, IntentStatus
 from agents.transformations import (
-    LoggingTransform,
+    GenericTransform,
     get_transformer,
     format_code,
     run_semgrep_check
@@ -76,8 +76,13 @@ class TransformationManager:
             name="analysis",
             llm_config={"config_list": self.config_list},
             system_message="""You analyze code and create detailed transformation plans.
-            Focus on specific changes needed in each file.
-            Return actions in a structured format with clear validation criteria."""
+            For each file provide modifications:
+            - module_transforms: List of module level changes
+            - function_transforms: List of function level changes
+            Each modification should include:
+            - type: Type of modification (insert_import, insert_body, modify_function)
+            - data: Specific modification data
+            Return a JSON structure of changes."""
         )
         
         self.assurance_agent = autogen.AssistantAgent(
@@ -99,7 +104,7 @@ class TransformationManager:
         )
         
         # Initialize transformer based on strategy
-        self.transformer = get_transformer(str(strategy))
+        self.transformer_class = get_transformer(str(strategy))
 
     async def run_discovery(self, intent: Intent) -> Dict[str, Any]:
         """Enhanced discovery phase with structured output"""
@@ -153,12 +158,14 @@ class TransformationManager:
             Based on this discovery analysis:
             {context['discovery_output']}
             
-            Create a detailed plan to: {intent_description}
+            Create a detailed plan for: {intent_description}
             
             For each file that needs modification, specify:
-            1. What changes are needed
-            2. Where in the file to make changes
-            3. How to implement the changes
+            1. Required imports and module-level changes
+            2. Function-level modifications
+            3. Validation requirements
+            
+            Return a JSON structure with transformations for each file.
             """
         )
         
@@ -175,19 +182,23 @@ class TransformationManager:
         """Run code transformation phase using selected strategy"""
         modified_files = {}
         
+        # Extract transformation plan from analysis
+        transform_args = context.get('analysis_plan', {}).get('transformations', {})
+        
         for file_path in context.get('files_to_modify', []):
             try:
                 with open(file_path, 'r') as f:
                     source = f.read()
                 
-                if isinstance(self.transformer, LoggingTransform):
-                    # Use codemod approach
+                if self.strategy == RefactoringStrategy.CODEMOD:
+                    # Use codemod approach with generic transform
                     transform_context = CodemodContext(filename=file_path)
-                    transform = self.transformer(transform_context, {})
-                    modified_source = transform.transform_module(source)
+                    transformer = self.transformer_class(transform_context, transform_args.get(file_path, {}))
+                    modified_source = transformer.transform_module(source)
                 else:
                     # Use LLM approach
-                    modified_source = await self.transformer.transform_code(source)
+                    transformer = self.transformer_class()
+                    modified_source = await transformer.transform_code(source, transform_args.get(file_path, {}))
                 
                 if modified_source and modified_source != source:
                     modified_files[file_path] = modified_source
