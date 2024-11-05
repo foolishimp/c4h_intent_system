@@ -48,8 +48,9 @@ class SolutionArchitect:
         current_content = []
         
         for line in content.split('\n'):
+            # Strip any trailing colons from file paths
             if line.startswith('tests/test_projects/'):
-                current_file = line.strip()
+                current_file = line.strip().rstrip(':')
             elif line.strip() == '```python':
                 in_code_block = True
                 current_content = []
@@ -79,16 +80,18 @@ class SolutionArchitect:
         """Write changes to the filesystem"""
         for file_path, content in files.items():
             try:
+                # Ensure clean file path without colons
+                clean_path = file_path.rstrip(':')
                 # Create directories if they don't exist
-                Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+                Path(clean_path).parent.mkdir(parents=True, exist_ok=True)
                 
                 # Write the content
-                with open(file_path, 'w') as f:
+                with open(clean_path, 'w') as f:
                     f.write(content)
                     
-                logger.info(f"Updated file: {file_path}")
+                logger.info(f"Updated file: {clean_path}")
             except Exception as e:
-                logger.error(f"Failed to write file {file_path}: {str(e)}")
+                logger.error(f"Failed to write file {clean_path}: {str(e)}")
                 raise
 
     async def analyze(self, context: Dict[str, Any]) -> Dict[str, Any]:
@@ -111,6 +114,7 @@ class SolutionArchitect:
                 {discovery_output}
                 
                 Analyze and return ONE definitive response with concrete changes.
+                Ensure file paths do not end with colons.
                 """,
                 max_turns=2  # Limit conversation length
             )
@@ -121,7 +125,7 @@ class SolutionArchitect:
                 return {}
 
             for message in chat_response.chat_history:
-                if message.get('role') == 'user' and message.get('name') == 'solution_architect':
+                if message.get('role') == 'assistant':
                     try:
                         content = message['content']
                         
@@ -136,15 +140,19 @@ class SolutionArchitect:
                         # Write changes to files
                         self._write_changes(files)
 
+                        # Ensure clean file paths in the response
+                        clean_files = {k.rstrip(':'): v for k, v in files.items()}
+                        clean_file_paths = [k.rstrip(':') for k in files.keys()]
+
                         return {
                             "architectural_plan": {
                                 "changes": [
                                     {"file": file, "content": content}
-                                    for file, content in files.items()
+                                    for file, content in clean_files.items()
                                 ],
                                 "validation_rules": validation_rules
                             },
-                            "files_to_modify": list(files.keys())
+                            "files_to_modify": clean_file_paths
                         }
                     except Exception as e:
                         logger.error("architect.parse_error", error=str(e))
