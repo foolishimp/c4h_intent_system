@@ -1,6 +1,7 @@
 # src/agents/solution_architect.py
 
 from typing import Dict, Any, Optional, List
+from pathlib import Path
 import structlog
 import autogen
 import json
@@ -39,6 +40,57 @@ class SolutionArchitect:
             code_execution_config=False
         )
 
+    def _extract_code_blocks(self, content: str) -> Dict[str, str]:
+        """Extract code blocks and their associated file paths from the architect's response"""
+        files = {}
+        current_file = None
+        in_code_block = False
+        current_content = []
+        
+        for line in content.split('\n'):
+            if line.startswith('tests/test_projects/'):
+                current_file = line.strip()
+            elif line.strip() == '```python':
+                in_code_block = True
+                current_content = []
+            elif line.strip() == '```':
+                if current_file and current_content:
+                    files[current_file] = '\n'.join(current_content)
+                in_code_block = False
+            elif in_code_block:
+                current_content.append(line)
+                
+        return files
+
+    def _extract_validation_rules(self, content: str) -> List[str]:
+        """Extract validation rules from the architect's response"""
+        rules = []
+        in_validation = False
+        
+        for line in content.split('\n'):
+            if line.startswith('VALIDATION CRITERIA:'):
+                in_validation = True
+            elif in_validation and line.strip():
+                rules.append(line.strip())
+                
+        return rules
+
+    def _write_changes(self, files: Dict[str, str]) -> None:
+        """Write changes to the filesystem"""
+        for file_path, content in files.items():
+            try:
+                # Create directories if they don't exist
+                Path(file_path).parent.mkdir(parents=True, exist_ok=True)
+                
+                # Write the content
+                with open(file_path, 'w') as f:
+                    f.write(content)
+                    
+                logger.info(f"Updated file: {file_path}")
+            except Exception as e:
+                logger.error(f"Failed to write file {file_path}: {str(e)}")
+                raise
+
     async def analyze(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze intent and produce concrete code changes"""
         try:
@@ -63,63 +115,40 @@ class SolutionArchitect:
                 max_turns=2  # Limit conversation length
             )
 
-            # Get response from chat history instead of chat_messages
+            # Get response from chat history 
             if not chat_response.chat_history:
                 logger.error("architect.no_chat_history")
                 return {}
 
             for message in chat_response.chat_history:
-                if message.get('role') == 'assistant':
+                if message.get('role') == 'user' and message.get('name') == 'solution_architect':
                     try:
-                        # Parse the message content into structured format
                         content = message['content']
-                        changes = []
-                        validation_rules = []
                         
-                        # Simple parsing of the architect's response
-                        current_file = None
-                        current_content = []
+                        # Extract code blocks and validation rules
+                        files = self._extract_code_blocks(content)
+                        validation_rules = self._extract_validation_rules(content)
                         
-                        for line in content.split('\n'):
-                            if line.startswith('tests/test_projects/'):
-                                if current_file and current_content:
-                                    changes.append({
-                                        "file": current_file,
-                                        "content": '\n'.join(current_content)
-                                    })
-                                current_file = line.strip()
-                                current_content = []
-                            elif line.startswith('```python'):
-                                continue
-                            elif line.startswith('```'):
-                                if current_file and current_content:
-                                    changes.append({
-                                        "file": current_file,
-                                        "content": '\n'.join(current_content)
-                                    })
-                                current_file = None
-                                current_content = []
-                            elif current_file and current_content or line.strip():
-                                current_content.append(line)
-                            elif line.startswith('VALIDATION CRITERIA:'):
-                                in_validation = True
-                            elif in_validation and line.strip():
-                                validation_rules.append(line.strip())
+                        if not files:
+                            logger.error("architect.no_file_changes")
+                            return {}
+                            
+                        # Write changes to files
+                        self._write_changes(files)
 
                         return {
                             "architectural_plan": {
-                                "changes": changes,
+                                "changes": [
+                                    {"file": file, "content": content}
+                                    for file, content in files.items()
+                                ],
                                 "validation_rules": validation_rules
                             },
-                            "files_to_modify": [
-                                "tests/test_projects/project1/sample.py",
-                                "tests/test_projects/project2/utils.py",
-                                "tests/test_projects/project2/main.py"
-                            ]
+                            "files_to_modify": list(files.keys())
                         }
                     except Exception as e:
                         logger.error("architect.parse_error", error=str(e))
-                    break
+                        raise
                     
             logger.error("architect.no_valid_response")
             return {}
