@@ -42,11 +42,11 @@ class IntentAgent:
         )
         
         # Initialize specialized agents
-        self.discovery = DiscoveryAgent.from_env()
-        self.architect = SolutionArchitect(config_list)
-        self.coder = Coder(config_list)
+        self.discovery = DiscoveryAgent(config_list)         
+        self.architect = SolutionArchitect(config_list)         
+        self.coder = Coder(config_list)         
         self.assurance = AssuranceAgent(config_list)
-        
+
         logger.info("intent_agent.initialized", max_iterations=max_iterations)
 
     def _get_config_list(self) -> List[Dict[str, Any]]:

@@ -18,7 +18,7 @@ class DiscoveryAgent:
         Args:
             config_list: Autogen LLM configuration list
         """
-        # Initialize Autogen components
+        # Initialize Autogen components for future use
         self.assistant = autogen.AssistantAgent(
             name="discovery_assistant",
             llm_config={"config_list": config_list} if config_list else None,
@@ -55,14 +55,16 @@ class DiscoveryAgent:
                 "discovery_output": result.stdout,
             }
             
-            # Process through Autogen assistant
+            # Keep one LLM verification for future extensibility
+            # but don't enter extended chat
             try:
-                chat_response = await self.coordinator.a_initiate_chat(
+                await self.coordinator.a_initiate_chat(
                     self.assistant,
                     message=f"""Process this discovery output:
                     {result.stdout}
                     
-                    Acknowledge receipt and confirm the content is parseable."""
+                    Acknowledge receipt and confirm the content is parseable.""",
+                    max_turns=1  # Limit to single exchange
                 )
                 
                 logger.info("discovery.autogen_processed")
