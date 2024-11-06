@@ -11,6 +11,8 @@ from agents.discovery import DiscoveryAgent
 from agents.solution_architect import SolutionArchitect
 from agents.coder import Coder, MergeMethod
 from agents.assurance import AssuranceAgent
+from skills.semantic_interpreter import SemanticInterpreter
+from skills.semantic_loop import SemanticLoop
 
 logger = structlog.get_logger()
 
@@ -30,6 +32,10 @@ class IntentAgent:
         self.coder = Coder(config_list)         
         self.assurance = AssuranceAgent(config_list)
 
+        # Initialize semantic skills
+        self.interpreter = SemanticInterpreter(config_list)
+        self.semantic_loop = SemanticLoop(config_list, max_iterations)
+
         logger.info("intent_agent.initialized", max_iterations=max_iterations)
 
     def _get_config_list(self) -> List[Dict[str, Any]]:
@@ -37,7 +43,7 @@ class IntentAgent:
         api_key = os.getenv("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY environment variable not set")
-        return [{"model": "gpt-4o", "api_key": api_key}]
+        return [{"model": "gpt-4", "api_key": api_key}]
 
     async def _execute_discovery(self, intent: Intent) -> Dict[str, Any]:
         """Execute discovery phase"""
@@ -50,26 +56,78 @@ class IntentAgent:
         """Execute solution planning phase"""
         logger.info("solution.starting", intent_id=str(intent.id))
         
-        # Pass raw discovery output directly
+        # Get raw solution from architect
         solution_context = {
             "intent": intent.description,
             "discovery_output": discovery_output
         }
-    
-        return await self.architect.analyze(solution_context)
+        
+        response = await self.architect.analyze(solution_context)
+        logger.debug("solution.architect_response", response=response)
+        
+        # Use semantic interpreter to extract actions
+        result = await self.interpreter.interpret(
+            content=response,
+            prompt="""Find all code change actions in this response.
+                     Each action should have:
+                     - file_path: Path to the file to modify
+                     - changes: Complete new file content
+                     Return as JSON: {"actions": [...]}""",
+            context_type="solution_analysis",
+            intent_id=str(intent.id)
+        )
+        
+        if not result.data or "actions" not in result.data:
+            raise ValueError("No valid actions found in solution architect response")
+            
+        return {
+            "actions": result.data["actions"],
+            "context": {
+                "full_response": response,
+                "interpretation": result.raw_response
+            }
+        }
 
     async def _execute_implementation(self, intent: Intent, solution: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute implementation phase"""
+        """Execute implementation phase with semantic loop"""
         logger.info("implementation.starting", intent_id=str(intent.id))
         intent.status = IntentStatus.TRANSFORMING
         
-        # Solution architect returns the full response with actions
-        # We just need to pass it through with the merge strategy
-        return await self.coder.transform({
-            **solution,  # Pass through the solution with actions
-            "merge_strategy": intent.description.get("merge_strategy", MergeMethod.LLM)
-        })
+        actions = solution.get("actions", [])
+        if not actions:
+            raise ValueError("No actions to implement")
 
+        # Define success criteria
+        def check_success(result: Any) -> bool:
+            return (isinstance(result, dict) and 
+                   result.get("status") == "success" and 
+                   not result.get("failed_files", []))
+
+        # Use semantic loop for implementation
+        loop_result = await self.semantic_loop.iterate(
+            initial_result={"actions": actions},
+            improvement_goal="""Implement these code changes successfully.
+                              For any failures:
+                              1. Analyze the error
+                              2. Suggest fixes
+                              3. Try alternative approaches""",
+            success_check=check_success
+        )
+        
+        # Update intent status based on result
+        final_result = loop_result["final_result"]
+        if check_success(final_result):
+            intent.status = IntentStatus.COMPLETED
+        else:
+            intent.status = IntentStatus.FAILED
+        
+        return {
+            "status": final_result.get("status", "failed"),
+            "modified_files": final_result.get("modified_files", []),
+            "failed_files": final_result.get("failed_files", []),
+            "iterations": loop_result["iterations"],
+            "context": loop_result["context"]
+        }
 
     async def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
         """Process an intent through the complete workflow"""
@@ -85,19 +143,15 @@ class IntentAgent:
         
         context = {}
         try:
-            # Discovery Phase - Keep raw output
+            # Discovery Phase
             discovery_output = await self._execute_discovery(intent)
             
-            # Solution Phase - Pass raw discovery output
+            # Solution Phase with semantic interpretation
             solution = await self._execute_solution(intent, discovery_output)
             
-            # Implementation Phase - Pass solution dict
+            # Implementation Phase with semantic loop
             implementation_result = await self._execute_implementation(intent, solution)
             
-            if implementation_result["status"] != "success":
-                intent.status = IntentStatus.FAILED
-                return implementation_result
-                
             # Store everything in context for debugging
             context.update({
                 "discovery_output": discovery_output,
@@ -105,12 +159,10 @@ class IntentAgent:
                 "implementation": implementation_result
             })
             
-            # Success path
-            intent.status = IntentStatus.COMPLETED
             return {
-                "status": "success",
+                "status": implementation_result["status"],
                 "context": context,
-                "iterations": 1
+                "iterations": implementation_result["iterations"]
             }
             
         except Exception as e:

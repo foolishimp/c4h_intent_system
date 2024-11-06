@@ -6,6 +6,7 @@ import structlog
 import autogen
 import os
 from enum import Enum
+import json
 
 logger = structlog.get_logger()
 
@@ -15,7 +16,7 @@ class MergeMethod(str, Enum):
     CODEMOD = "codemod"  # Use AST-based transformations (not implemented)
 
 class Coder:
-    """Coder agent responsible for applying merge actions using LLM"""
+    """Coder agent responsible for applying code changes"""
     
     def __init__(self, config_list: Optional[List[Dict[str, Any]]] = None):
         if not config_list:
@@ -28,10 +29,9 @@ class Coder:
             name="code_merger",
             llm_config={"config_list": config_list},
             system_message="""You are an expert code merger.
-            Given a file's original content and changes in unified diff format:
-            1. Apply the changes precisely
-            2. Return only the final merged content"""
-        )
+            Given a file's original content and new content:
+            1. Verify the new content is valid Python
+            2. Return only the final content""")
         
         self.coordinator = autogen.UserProxyAgent(
             name="merger_coordinator",
@@ -61,21 +61,18 @@ class Coder:
                 backup_path.rename(path)
             return False
 
-    async def _merge_llm(self, file_path: str, original: str, changes: str) -> Optional[str]:
-        """Use LLM to merge changes into original content"""
+    async def _verify_content(self, file_path: str, content: str) -> Optional[str]:
+        """Verify content is valid Python"""
         try:
             chat_response = await self.coordinator.a_initiate_chat(
                 self.merge_assistant,
                 message=f"""
-                Apply these changes to the code:
+                Verify this Python code is valid:
 
-                ORIGINAL FILE ({file_path}):
-                {original}
+                {content}
 
-                CHANGES (UNIFIED DIFF):
-                {changes}
-
-                Return only the complete merged file content.
+                If valid, return only the code.
+                If invalid, fix any basic syntax issues and return the fixed code.
                 """,
                 max_turns=1
             )
@@ -83,47 +80,69 @@ class Coder:
             # Get last assistant message
             for message in reversed(chat_response.chat_history):
                 if message.get('role') == 'assistant':
-                    return message['content'].strip()
+                    content = message.get('content', '').strip()
+                    # If content is wrapped in code blocks, extract it
+                    if content.startswith('```') and content.endswith('```'):
+                        content = '\n'.join(content.split('\n')[1:-1])
+                    return content
 
             return None
 
         except Exception as e:
-            logger.error("coder.llm_merge_failed", file=file_path, error=str(e))
+            logger.error("coder.verify_failed", file=file_path, error=str(e))
             return None
 
+    def _extract_actions(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
+        """Extract actions from context, handling various formats"""
+        # If actions is directly available
+        if "actions" in context:
+            return context["actions"]
+            
+        # If actions is in a nested structure
+        if isinstance(context.get("solution"), dict):
+            if "actions" in context["solution"]:
+                return context["solution"]["actions"]
+                
+        # If context is a string (e.g. JSON or markdown)
+        if isinstance(context, str):
+            try:
+                parsed = json.loads(context)
+                if "actions" in parsed:
+                    return parsed["actions"]
+            except json.JSONDecodeError:
+                pass
+                
+        raise ValueError("No valid actions found in context")
+
     async def transform(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply merge actions"""
+        """Apply code changes"""
         try:
-            # Extract actions and method
-            actions = context.get("actions", [])
-            method = context.get("merge_strategy", MergeMethod.LLM)
-
-            if not actions:
-                raise ValueError("No actions provided")
-
-            if method != MergeMethod.LLM:
-                raise ValueError(f"Merge method {method} not supported, only LLM merges implemented")
+            # Get actions more flexibly
+            try:
+                actions = self._extract_actions(context)
+            except ValueError as e:
+                logger.error("coder.no_actions", error=str(e))
+                return {
+                    "status": "failed",
+                    "error": str(e)
+                }
 
             modified_files = []
             failed_files = []
             
             for action in actions:
                 file_path = action["file_path"]
-                changes = action["changes"]
-                path = Path(file_path)
+                new_content = action["changes"]
                 
-                # Get original content or empty string for new files
-                original_content = path.read_text() if path.exists() else ""
+                # Verify/fix content
+                verified_content = await self._verify_content(file_path, new_content)
                 
-                # Use LLM to merge
-                merged_content = await self._merge_llm(file_path, original_content, changes)
-                
-                if not merged_content:
+                if not verified_content:
                     failed_files.append(file_path)
                     continue
                     
                 # Write result
-                if self._write_file(file_path, merged_content):
+                if self._write_file(file_path, verified_content):
                     modified_files.append(file_path)
                 else:
                     failed_files.append(file_path)

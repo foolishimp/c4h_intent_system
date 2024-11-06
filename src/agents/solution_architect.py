@@ -5,38 +5,41 @@ import structlog
 import autogen
 import json
 import os
+import re
 
 logger = structlog.get_logger()
 
 class SolutionArchitect:
-    """Solution Architect agent that produces refactoring actions using LLM"""
-    
     def __init__(self, config_list: Optional[List[Dict[str, Any]]] = None):
-        """Initialize the solution architect with LLM config"""
         if not config_list:
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
                 raise ValueError("OPENAI_API_KEY environment variable not set")
             config_list = [{"model": "gpt-4", "api_key": api_key}]
-        
-        # Add debug configuration for visibility
-        llm_config = {
-            "config_list": config_list,
-            "log_level": "debug",  # Show prompts
-            "logging_func": logger.debug,  # Use structlog
-            "timeout": 120
-        }
-        
+
         self.assistant = autogen.AssistantAgent(
             name="solution_architect",
-            llm_config=llm_config,
+            llm_config={"config_list": config_list},
             system_message="""You are a solution architect that creates refactoring plans.
-            Analyze the code and intent, then produce a series of merge actions.
-            Each merge action must specify:
-            - file_path: Path to the target file
-            - changes: Unified diff of the changes
-            Return ONLY a raw JSON object with an 'actions' array.
-            Do not include markdown formatting or code blocks."""
+            When proposing code changes:
+            1. Format your response with a ```json block containing an actions array
+            2. For each action, include:
+                - file_path: The path to the file
+                - changes: The complete new file content (not diffs)
+            3. After the JSON, provide your analysis and concerns
+            
+            Example format:
+            ```json
+            {
+                "actions": [
+                    {
+                        "file_path": "path/to/file.py",
+                        "changes": "# Complete new file content here..."
+                    }
+                ]
+            }
+            ```
+            """
         )
         
         self.coordinator = autogen.UserProxyAgent(
@@ -45,8 +48,48 @@ class SolutionArchitect:
             code_execution_config=False
         )
 
+    def _extract_json_from_markdown(self, content: str) -> Optional[Dict[str, Any]]:
+        """Extract JSON from markdown content, handling both code blocks and bare JSON"""
+        # First try to find JSON in code blocks
+        code_block_pattern = r"```(?:json)?\s*([\s\S]*?)\s*```"
+        matches = re.finditer(code_block_pattern, content)
+        
+        for match in matches:
+            try:
+                json_str = match.group(1).strip()
+                if json_str.startswith('{'):
+                    return json.loads(json_str)
+            except json.JSONDecodeError:
+                continue
+                
+        # If no valid JSON in code blocks, try finding bare JSON
+        try:
+            # Find outermost matching braces
+            brace_count = 0
+            start_idx = -1
+            potential_json = ""
+            
+            for i, char in enumerate(content):
+                if char == '{':
+                    if brace_count == 0:
+                        start_idx = i
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0 and start_idx != -1:
+                        potential_json = content[start_idx:i+1]
+                        try:
+                            return json.loads(potential_json)
+                        except json.JSONDecodeError:
+                            start_idx = -1  # Reset and keep looking
+                            
+        except Exception as e:
+            logger.error("architect.json_extraction_failed", error=str(e))
+            
+        return None
+
     async def analyze(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze intent and produce refactoring actions"""
+        """Analyze intent and produce refactoring actions with context"""
         try:
             intent = context.get("intent")
             discovery_output = context.get("discovery_output", {}).get("discovery_output")
@@ -56,56 +99,45 @@ class SolutionArchitect:
             if not discovery_output:
                 raise ValueError("Missing discovery output")
 
-            # Improved prompt formatting to avoid JSON parsing issues
-            prompt = f"""
-            REFACTORING REQUEST:
-            {intent}
-            
-            CODEBASE:
-            {discovery_output}
-            
-            Analyze the code and provide merge actions in this exact format:
-            
-            {{
-                "actions": [
-                    {{
-                        "file_path": "path/to/file.py",
-                        "changes": "unified diff format changes"
-                    }}
-                ]
-            }}
-            
-            Important:
-            1. Return ONLY the raw JSON
-            2. No markdown, no code blocks
-            3. No explanation text
-            4. The response must start with {{
-            """
-
-            # Log the prompt for debugging
-            logger.debug("architect.prompt", prompt=prompt)
-
             chat_response = await self.coordinator.a_initiate_chat(
                 self.assistant,
-                message=prompt,
+                message=f"""Analyze this code and provide complete file changes:
+
+                Intent: {intent}
+                
+                Codebase: {discovery_output}
+                
+                Please provide:
+                1. ```json block with actions array containing:
+                   - file_path: Path to the file
+                   - changes: Complete new file content with your changes
+                2. Analysis of the changes
+                3. Implementation concerns
+                
+                Do not use diffs - provide the complete new file content for each file.""",
                 max_turns=1
             )
 
-            # Log raw response for debugging
+            # Process each assistant message
             for message in reversed(chat_response.chat_history):
                 if message.get('role') == 'assistant':
-                    response = message['content']
-                    logger.debug("architect.raw_response", response=response)
-                    try:
-                        return json.loads(response.strip())
-                    except json.JSONDecodeError as e:
-                        logger.error("architect.json_parse_failed", 
-                                   error=str(e),
-                                   response=response,
-                                   char_position=e.pos)
-                        raise
+                    content = message.get('content', '')
+                    actions = self._extract_json_from_markdown(content)
+                    
+                    if actions:
+                        # Split content around the JSON to get observations
+                        json_str = json.dumps(actions)
+                        parts = content.split(json_str)
+                        
+                        return {
+                            **actions,  # The parsed actions
+                            "context": {
+                                "full_response": content,
+                                "observations": "\n".join(part.strip() for part in parts if part.strip())
+                            }
+                        }
 
-            raise ValueError("No response from architect")
+            raise ValueError("No valid actions found in response")
 
         except Exception as e:
             logger.error("architect.failed", error=str(e))
