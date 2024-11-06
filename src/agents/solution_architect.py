@@ -5,12 +5,11 @@ import structlog
 import autogen
 import os
 from skills.semantic_interpreter import SemanticInterpreter
-from skills.semantic_loop import SemanticLoop
 
 logger = structlog.get_logger()
 
 class SolutionArchitect:
-    """Solution architect using semantic interpretation for flexible analysis"""
+    """Solution architect that provides concrete code changes using diffs for efficiency"""
     
     def __init__(self, config_list: Optional[List[Dict[str, Any]]] = None):
         """Initialize with LLM config and semantic skills"""
@@ -24,14 +23,11 @@ class SolutionArchitect:
         self.assistant = autogen.AssistantAgent(
             name="solution_architect",
             llm_config={"config_list": config_list},
-            system_message="""You are a solution architect that creates refactoring plans.
-            When analyzing code and proposing changes:
-            1. Describe each change clearly in natural language
-            2. Specify which files need modification
-            3. Explain the rationale for each change
-            4. Note any potential risks or concerns
-            5. Suggest any necessary validations
-            """
+            system_message="""You are a solution architect that creates concrete code changes.
+            For small files, provide complete content.
+            For large files (>100 lines), provide unified diff format changes.
+            Always maintain existing functionality unless explicitly part of the changes.
+            All responses must be JSON formatted."""
         )
         
         self.coordinator = autogen.UserProxyAgent(
@@ -40,30 +36,29 @@ class SolutionArchitect:
             code_execution_config=False
         )
 
-        # Initialize semantic skills
         self.interpreter = SemanticInterpreter(config_list)
-        self.semantic_loop = SemanticLoop(config_list)
 
-    def _extract_last_message(self, response: autogen.ConversableAgent) -> Optional[str]:
+    def _extract_last_message(self, chat_result: Any) -> Optional[str]:
         """Extract the last assistant message from chat response"""
         try:
-            # Get the last message from chat history
-            if hasattr(response, 'chat_history'):
-                history = response.chat_history
-            else:
-                history = response.messages if hasattr(response, 'messages') else []
-
-            # Find last assistant message
-            for message in reversed(history):
-                if isinstance(message, dict) and message.get("role") == "assistant":
-                    return message.get("content", "")
+            # Handle different AutoGen response formats
+            if hasattr(chat_result, 'last_message'):
+                return chat_result.last_message.get('content', '')
+            
+            messages = (getattr(chat_result, 'messages', None) or 
+                       getattr(chat_result, 'chat_messages', []))
+            
+            for msg in reversed(messages):
+                if isinstance(msg, dict) and msg.get("role") == "assistant":
+                    return msg.get("content", "")
             return None
+            
         except Exception as e:
             logger.error("message_extraction.failed", error=str(e))
             return None
 
     async def analyze(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Analyze intent and produce refactoring actions with semantic validation"""
+        """Generate concrete code changes to fulfill the intent"""
         try:
             intent = context.get("intent")
             discovery_output = context.get("discovery_output", {}).get("discovery_output")
@@ -73,70 +68,57 @@ class SolutionArchitect:
 
             logger.info("architect.analyzing", intent=intent)
             
-            # Get solution from LLM
+            # Get solution with concrete code changes
             response = await self.coordinator.a_initiate_chat(
                 self.assistant,
-                message=f"""Analyze this code and propose changes:
+                message=f"""Based on this intent and code, generate a JSON object containing an actions array.
+                For small files provide complete content, for large files provide unified diffs.
 
                 INTENT:
                 {intent}
 
-                CODEBASE:
+                CURRENT CODE:
                 {discovery_output}
 
-                Provide a detailed description of:
-                1. Which files need to change
-                2. What changes are needed in each file
-                3. How the changes fulfill the intent
-                4. Any potential risks or special considerations
-                """,
+                Example response format:
+                {{
+                    "actions": [
+                        {{
+                            "file_path": "path/to/small/file.ext",
+                            "type": "content",
+                            "content": "complete file content here"
+                        }},
+                        {{
+                            "file_path": "path/to/large/file.ext",
+                            "type": "diff",
+                            "diff": "@@ -1,5 +1,7 @@\\n line1\\n+new line\\n line2"
+                        }}
+                    ]
+                }}""",
                 max_turns=1
             )
             
-            # Extract last message
             last_message = self._extract_last_message(response)
             if not last_message:
-                raise ValueError("No response received from solution architect")
+                logger.warning("architect.no_response")
+                return {"actions": [], "context": {"error": "No response received"}}
             
-            # Use semantic interpreter to structure the solution
+            # Extract actions array
             interpretation = await self.interpreter.interpret(
                 content=last_message,
-                prompt="""Convert this solution into a structured format with:
-                {
-                    "files": [
-                        {
-                            "path": "file path",
-                            "changes": [
-                                {
-                                    "type": "change type (e.g., add_import, add_logging)",
-                                    "content": "actual change content"
-                                }
-                            ]
-                        }
-                    ],
-                    "validation": [
-                        {
-                            "type": "validation type",
-                            "description": "what to validate"
-                        }
-                    ],
-                    "risks": [
-                        {
-                            "type": "risk type",
-                            "description": "risk description",
-                            "mitigation": "how to mitigate"
-                        }
-                    ]
-                }""",
-                context_type="solution_analysis"
+                prompt="Return the actions array from the response. If no valid actions exist, return {'actions': []}",
+                context_type="code_changes"
             )
             
+            actions = interpretation.data.get("actions", [])
+            if not actions:
+                logger.info("architect.no_changes_needed")
+            
             return {
-                "solution": interpretation.data,
+                "actions": actions,
                 "context": {
                     "raw_solution": last_message,
-                    "interpretation": interpretation.raw_response,
-                    "original_intent": intent,
+                    "interpretation": interpretation.raw_response
                 }
             }
 

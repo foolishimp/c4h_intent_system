@@ -69,18 +69,18 @@ class SemanticInterpreter:
             }
 
     async def interpret(self, 
-                       content: Union[str, Dict, List], 
-                       prompt: str,
-                       context_type: str = "general",
-                       **context: Any) -> InterpretResult:
+                    content: Union[str, Dict, List], 
+                    prompt: str,
+                    context_type: str = "general",
+                    **context: Any) -> InterpretResult:
         """Interpret content according to prompt"""
         try:
             # Normalize content to string if needed
             content_str = (json.dumps(content, indent=2) 
-                         if isinstance(content, (dict, list)) 
-                         else str(content))
+                        if isinstance(content, (dict, list)) 
+                        else str(content))
             
-            # Get interpretation from LLM
+            # Get interpretation from LLM - simplified, no format constraints
             chat_response = await self.coordinator.a_initiate_chat(
                 self.interpreter,
                 message=f"""Interpret this content according to the instructions:
@@ -91,8 +91,7 @@ class SemanticInterpreter:
                 CONTENT:
                 {content_str}
 
-                Return your interpretation as a JSON object with appropriate structure.
-                """,
+                Return your interpretation as a JSON object.""",
                 max_turns=1
             )
             
@@ -101,7 +100,7 @@ class SemanticInterpreter:
             if not last_message:
                 raise ValueError("No response received from interpreter")
             
-            # Process the response
+            # Process the response without validation
             interpreted_data = self._process_llm_response(last_message)
             
             return InterpretResult(
