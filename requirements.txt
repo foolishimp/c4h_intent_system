@@ -1,12 +1,22 @@
-# Project dependencies
+# Core AutoGen dependency
 autogen==0.3.1
-flaml[automl]>=2.3.2  # Required for autogen features
-ruff==0.2.1  # For code formatting
-libcst==1.1.0  # For code transformations
-semgrep==1.45.0  # For pattern matching
-pydantic==2.5.2  # For data validation
-PyYAML==6.0.1  # For config file handling
-structlog==24.1.0  # For structured logging
-python-dotenv==1.0.0  # For environment variable management
-pytest==7.4.3  # For testing
-pytest-asyncio==0.23.5  # For async testing support
+
+# AutoGen requirements
+flaml[automl]>=2.3.2
+
+# Code analysis and transformation
+ruff==0.2.1
+libcst==1.1.0
+semgrep==1.45.0
+
+# Data handling and validation
+pydantic==2.5.2
+PyYAML==6.0.1
+
+# Logging and configuration
+structlog==24.1.0
+python-dotenv==1.0.0
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.23.5

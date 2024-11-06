@@ -6,7 +6,6 @@ import subprocess
 import sys
 from pathlib import Path
 import autogen
-import re
 
 logger = structlog.get_logger()
 
@@ -19,12 +18,11 @@ class DiscoveryAgent:
         Args:
             config_list: Autogen LLM configuration list
         """
-        # Initialize Autogen components
+        # Initialize Autogen components - kept for interface consistency
         self.assistant = autogen.AssistantAgent(
             name="discovery_assistant",
             llm_config={"config_list": config_list} if config_list else None,
-            system_message="""You are a discovery assistant that helps analyze project structure.
-            You receive tartxt output and help process it for downstream agents."""
+            system_message="Discovery assistant for future use"
         )
         
         self.coordinator = autogen.UserProxyAgent(
@@ -94,23 +92,7 @@ class DiscoveryAgent:
                 "files": files
             }
             
-            # Simple LLM verification
-            try:
-                await self.coordinator.a_initiate_chat(
-                    self.assistant,
-                    message=f"""Process this discovery output:
-                    {result.stdout}
-                    
-                    Acknowledge receipt and confirm the content is parseable.""",
-                    max_turns=1
-                )
-                
-                logger.info("discovery.autogen_processed",
-                          file_count=len(files))
-            except Exception as e:
-                logger.error("discovery.autogen_processing_failed", 
-                           error=str(e))
-            
+            logger.info("discovery.completed", file_count=len(files))
             return discovery_result
             
         except subprocess.CalledProcessError as e:

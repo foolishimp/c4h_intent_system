@@ -1,6 +1,6 @@
 # src/agents/solution_architect.py
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List 
 import structlog
 import autogen
 import os
@@ -11,7 +11,6 @@ class SolutionArchitect:
     """Solution architect that provides concrete code changes"""
     
     def __init__(self, config_list: Optional[List[Dict[str, Any]]] = None):
-        """Initialize with AutoGen config"""
         if not config_list:
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
@@ -25,55 +24,40 @@ class SolutionArchitect:
             For each file:
             - Small files (<100 lines): Provide complete new content
             - Large files: Provide unified diff
-            Always return a JSON object with an 'actions' array containing file changes."""
+            Always return a JSON object with an actions array."""
         )
         
+        # Create coordinator with specific termination message
         self.coordinator = autogen.UserProxyAgent(
             name="architect_coordinator",
             human_input_mode="NEVER",
-            code_execution_config=False
+            code_execution_config=False,
+            # Define clear termination 
+            is_termination_msg=lambda x: True,  # Terminate after first response
         )
 
-    async def analyze(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def analyze(self, context: Dict[str, Any]) -> str:
         """Generate concrete code changes to fulfill the intent"""
-        intent = context.get("intent")
-        discovery_output = context.get("discovery_output", {}).get("discovery_output")
-        
-        if not discovery_output:
+        if not context.get("discovery_output", {}).get("discovery_output"):
             raise ValueError("Missing discovery output")
 
-        logger.info("architect.analyzing", intent=intent)
-        
-        # Get single response from AutoGen
-        try:
-            response = await self.coordinator.a_initiate_chat(
-                self.assistant,
-                message=f"""Based on this intent and code, generate changes needed.
+        # Just get the first message - no continued conversation
+        response = await self.coordinator.a_initiate_chat(
+            self.assistant,
+            message=f"""Based on this intent and code, generate changes needed.
 
-                INTENT:
-                {intent}
+            INTENT:
+            {context['intent']}
 
-                CURRENT CODE:
-                {discovery_output}
+            CURRENT CODE:
+            {context['discovery_output']['discovery_output']}
 
-                Return a JSON object with an 'actions' array containing:
-                {{
-                    "actions": [
-                        {{
-                            "file": "path/to/file",
-                            "content": "complete file contents"
-                        }}
-                    ]
-                }}""",
-                max_turns=1  # Ensure only one response
-            )
+            Return a JSON object containing an actions array with file changes."""
+        )
+
+        # Get the first response from the assistant
+        messages = response.chat_messages.get(self.assistant.name, [])
+        if not messages:
+            raise ValueError("No response received from assistant")
             
-            # Extract the last assistant message
-            assistant_msgs = [msg for msg in response.chat_messages if msg["role"] == "assistant"]
-            if assistant_msgs:
-                return {"actions": assistant_msgs[-1]["content"]}
-            return {"actions": []}
-            
-        except Exception as e:
-            logger.error("architect.analysis_failed", error=str(e))
-            raise
+        return messages[0]["content"]
