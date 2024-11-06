@@ -20,7 +20,8 @@ class SemanticLoop:
             When given a result and improvement goal:
             1. Analyze what worked and what didn't
             2. Suggest specific improvements
-            3. Maintain successful parts while fixing issues"""
+            3. Maintain successful parts while fixing issues
+            Return your suggestions as a JSON object."""
         )
         
         self.coordinator = autogen.UserProxyAgent(
@@ -32,16 +33,12 @@ class SemanticLoop:
         self.interpreter = SemanticInterpreter(config_list)
         self.context = {}
 
-    def _process_response(self, response: autogen.ConversableAgent) -> Dict[str, Any]:
-        """Process the LLM response into structured data"""
-        for message in reversed(response.chat_history):
-            if message.get("role") == "assistant":
-                content = message.get("content", "")
-                try:
-                    return json.loads(content)
-                except json.JSONDecodeError:
-                    return {"content": content}
-        return {}
+    def _extract_last_message(self, chat_history: List[Dict[str, Any]]) -> Optional[str]:
+        """Extract the last assistant message from chat history"""
+        for message in reversed(chat_history):
+            if isinstance(message, dict) and message.get("role") == "assistant":
+                return message.get("content", "")
+        return None
 
     async def iterate(self,
                      initial_result: Any,
@@ -56,6 +53,7 @@ class SemanticLoop:
                 break
                 
             try:
+                # Get improvement suggestions
                 chat_response = await self.coordinator.a_initiate_chat(
                     self.improver,
                     message=f"""Improve this result:
@@ -69,17 +67,22 @@ class SemanticLoop:
                     ITERATION: {iteration + 1} of {self.max_iterations}
                     
                     Analyze the current result and suggest improvements.
-                    Focus on:
-                    1. What worked well
-                    2. What failed or needs improvement
-                    3. Specific changes to try next
+                    Return your suggestions as a JSON object containing:
+                    1. analysis: What worked and what didn't
+                    2. improvements: Specific changes to make
+                    3. risks: Any potential issues to consider
                     """,
                     max_turns=1
                 )
                 
+                # Extract last message
+                last_message = self._extract_last_message(chat_response.chat_messages)
+                if not last_message:
+                    raise ValueError("No improvement suggestions received")
+                
                 # Interpret the improvement suggestions
                 interpretation = await self.interpreter.interpret(
-                    content=chat_response.last_message(),
+                    content=last_message,
                     prompt="""Extract the concrete improvements suggested.
                     What specific changes should be made to the current result?""",
                     context_type="improvement_analysis",
@@ -87,13 +90,14 @@ class SemanticLoop:
                 )
                 
                 # Update result based on interpretation
-                current_result = interpretation.data
+                if interpretation.data:
+                    current_result = interpretation.data
                 
                 # Store iteration context
                 self.context[f"iteration_{iteration}"] = {
                     "original_result": current_result,
-                    "improvement_suggestion": chat_response.last_message(),
-                    "interpretation": interpretation.raw_response
+                    "improvement_suggestion": last_message,
+                    "interpretation": interpretation
                 }
                 
             except Exception as e:

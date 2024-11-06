@@ -44,70 +44,23 @@ class SolutionArchitect:
         self.interpreter = SemanticInterpreter(config_list)
         self.semantic_loop = SemanticLoop(config_list)
 
-    async def _get_solution_proposal(self, intent: str, discovery_output: str) -> str:
-        """Get initial solution proposal from LLM"""
-        response = await self.coordinator.a_initiate_chat(
-            self.assistant,
-            message=f"""Analyze this code and propose changes:
+    def _extract_last_message(self, response: autogen.ConversableAgent) -> Optional[str]:
+        """Extract the last assistant message from chat response"""
+        try:
+            # Get the last message from chat history
+            if hasattr(response, 'chat_history'):
+                history = response.chat_history
+            else:
+                history = response.messages if hasattr(response, 'messages') else []
 
-            INTENT:
-            {intent}
-
-            CODEBASE:
-            {discovery_output}
-
-            Provide a detailed description of:
-            1. Which files need to change
-            2. What changes are needed in each file
-            3. How the changes fulfill the intent
-            4. Any potential risks or special considerations
-            """,
-            max_turns=1
-        )
-        
-        return response.last_message()
-
-    async def _interpret_solution(self, solution: str) -> Dict[str, Any]:
-        """Extract structured actions from solution using semantic interpretation"""
-        interpretation = await self.interpreter.interpret(
-            content=solution,
-            prompt="""Extract the concrete code changes described in this solution.
-            
-            For each change identify:
-            1. The target file path
-            2. The specific changes needed
-            3. Any validation requirements
-            4. Potential risks or concerns
-            
-            Structure your understanding to capture:
-            - Which files are being modified
-            - What modifications are needed
-            - How to verify the changes work
-            """
-        )
-        
-        return interpretation.data
-
-    async def _validate_solution(self, solution: Dict[str, Any], context: Dict[str, Any]) -> Dict[str, Any]:
-        """Validate the solution meets the intent using semantic analysis"""
-        validation = await self.interpreter.interpret(
-            content={
-                "solution": solution,
-                "context": context
-            },
-            prompt="""Analyze if this solution fulfills the original intent.
-            
-            Consider:
-            1. Does it address all aspects of the intent?
-            2. Are the proposed changes complete?
-            3. Are there any missing pieces?
-            4. What validations would confirm success?
-            
-            Provide your analysis of the solution's completeness.
-            """
-        )
-        
-        return validation.data
+            # Find last assistant message
+            for message in reversed(history):
+                if isinstance(message, dict) and message.get("role") == "assistant":
+                    return message.get("content", "")
+            return None
+        except Exception as e:
+            logger.error("message_extraction.failed", error=str(e))
+            return None
 
     async def analyze(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Analyze intent and produce refactoring actions with semantic validation"""
@@ -120,24 +73,70 @@ class SolutionArchitect:
 
             logger.info("architect.analyzing", intent=intent)
             
-            # Get initial solution proposal
-            solution_proposal = await self._get_solution_proposal(intent, discovery_output)
+            # Get solution from LLM
+            response = await self.coordinator.a_initiate_chat(
+                self.assistant,
+                message=f"""Analyze this code and propose changes:
+
+                INTENT:
+                {intent}
+
+                CODEBASE:
+                {discovery_output}
+
+                Provide a detailed description of:
+                1. Which files need to change
+                2. What changes are needed in each file
+                3. How the changes fulfill the intent
+                4. Any potential risks or special considerations
+                """,
+                max_turns=1
+            )
             
-            # Extract structured understanding
-            interpreted_solution = await self._interpret_solution(solution_proposal)
+            # Extract last message
+            last_message = self._extract_last_message(response)
+            if not last_message:
+                raise ValueError("No response received from solution architect")
             
-            # Validate solution completeness
-            validation_result = await self._validate_solution(interpreted_solution, context)
+            # Use semantic interpreter to structure the solution
+            interpretation = await self.interpreter.interpret(
+                content=last_message,
+                prompt="""Convert this solution into a structured format with:
+                {
+                    "files": [
+                        {
+                            "path": "file path",
+                            "changes": [
+                                {
+                                    "type": "change type (e.g., add_import, add_logging)",
+                                    "content": "actual change content"
+                                }
+                            ]
+                        }
+                    ],
+                    "validation": [
+                        {
+                            "type": "validation type",
+                            "description": "what to validate"
+                        }
+                    ],
+                    "risks": [
+                        {
+                            "type": "risk type",
+                            "description": "risk description",
+                            "mitigation": "how to mitigate"
+                        }
+                    ]
+                }""",
+                context_type="solution_analysis"
+            )
             
             return {
-                "solution": interpreted_solution,
-                "validation": validation_result,
+                "solution": interpretation.data,
                 "context": {
-                    "raw_proposal": solution_proposal,
-                    "interpretation_context": {
-                        "original_intent": intent,
-                        "discovery_output": discovery_output
-                    }
+                    "raw_solution": last_message,
+                    "interpretation": interpretation.raw_response,
+                    "original_intent": intent,
                 }
             }
 
