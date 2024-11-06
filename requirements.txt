@@ -1,3 +1,9 @@
+# Core dependencies
+litellm>=1.30.3
+openai>=1.12.0
+anthropic>=0.18.1
+google-generativeai>=0.3.2
+
 # Core AutoGen dependency
 autogen==0.3.1
 
@@ -20,3 +26,8 @@ python-dotenv==1.0.0
 # Testing
 pytest==7.4.3
 pytest-asyncio==0.23.5
+
+# LangChain dependencies
+langchain>=0.1.0
+langchain-community>=0.0.10
+langchain-core>=0.1.10
