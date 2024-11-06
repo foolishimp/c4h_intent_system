@@ -1,6 +1,6 @@
 # src/skills/shared/types.py
 from typing import Dict, Any, Optional
-from dataclass import dataclass
+from dataclasses import dataclass
 
 @dataclass
 class InterpretResult:

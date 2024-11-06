@@ -2,6 +2,7 @@
 from typing import Dict, Any, List, Optional, Union
 import autogen
 import structlog
+import json
 from .shared.types import InterpretResult
 
 logger = structlog.get_logger()
@@ -27,9 +28,19 @@ class SemanticInterpreter:
             code_execution_config=False
         )
 
+    def _process_llm_response(self, response: str) -> Dict[str, Any]:
+        """Process LLM response and attempt to extract structured data"""
+        try:
+            # Try to parse as JSON first
+            return json.loads(response)
+        except json.JSONDecodeError:
+            # If not JSON, return as unstructured content
+            return {"content": response}
+
     async def interpret(self, 
                        content: Union[str, Dict, List], 
                        prompt: str,
+                       context_type: str = "general",
                        **context: Any) -> InterpretResult:
         """Interpret content according to prompt"""
         try:
@@ -51,7 +62,23 @@ class SemanticInterpreter:
                 max_turns=1
             )
             
-            return self._process_response(response, content, prompt, context)
+            # Get last assistant message
+            for message in reversed(response.chat_history):
+                if message.get("role") == "assistant":
+                    result = self._process_llm_response(message.get("content", ""))
+                    
+                    return InterpretResult(
+                        data=result,
+                        raw_response=message.get("content", ""),
+                        context={
+                            "type": context_type,
+                            "original_content": content,
+                            "prompt": prompt,
+                            **context
+                        }
+                    )
+            
+            raise ValueError("No valid response from interpreter")
             
         except Exception as e:
             logger.error("interpretation.failed", error=str(e))
@@ -60,6 +87,7 @@ class SemanticInterpreter:
                 raw_response=str(e),
                 context={
                     "error": str(e),
+                    "type": context_type,
                     "original_content": content,
                     "prompt": prompt,
                     **context

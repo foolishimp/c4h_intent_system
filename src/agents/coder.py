@@ -6,38 +6,127 @@ import structlog
 import autogen
 import os
 from enum import Enum
-import json
+import ast
+import py_compile
+from skills.semantic_interpreter import SemanticInterpreter
 
 logger = structlog.get_logger()
 
 class MergeMethod(str, Enum):
     """Available merge methods"""
     LLM = "llm"      # Use LLM to interpret and apply changes
-    CODEMOD = "codemod"  # Use AST-based transformations (not implemented)
+    CODEMOD = "codemod"  # Use AST-based transformations
 
 class Coder:
-    """Coder agent responsible for applying code changes"""
+    """Coder agent using semantic interpretation for validation"""
     
     def __init__(self, config_list: Optional[List[Dict[str, Any]]] = None):
+        """Initialize with LLM config and semantic skills"""
         if not config_list:
             api_key = os.getenv("OPENAI_API_KEY")
             if not api_key:
                 raise ValueError("OPENAI_API_KEY environment variable not set")
             config_list = [{"model": "gpt-4", "api_key": api_key}]
         
-        self.merge_assistant = autogen.AssistantAgent(
-            name="code_merger",
+        # Initialize code verification LLM
+        self.assistant = autogen.AssistantAgent(
+            name="code_verifier",
             llm_config={"config_list": config_list},
-            system_message="""You are an expert code merger.
-            Given a file's original content and new content:
-            1. Verify the new content is valid Python
-            2. Return only the final content""")
+            system_message="""You are an expert code verifier.
+            When analyzing code changes:
+            1. Verify syntax correctness
+            2. Check for potential runtime errors
+            3. Suggest improvements if issues found
+            4. Consider edge cases and error conditions
+            """
+        )
         
         self.coordinator = autogen.UserProxyAgent(
-            name="merger_coordinator",
+            name="verifier_coordinator",
             human_input_mode="NEVER",
             code_execution_config=False
         )
+
+        # Initialize semantic interpreter
+        self.interpreter = SemanticInterpreter(config_list)
+
+    async def _verify_syntax(self, file_path: str, content: str) -> Dict[str, Any]:
+        """Verify code syntax through compilation attempt"""
+        try:
+            # Try to parse as AST
+            ast.parse(content)
+            
+            # Write to temporary file for compilation test
+            temp_path = Path(file_path + '.temp')
+            temp_path.write_text(content)
+            
+            try:
+                py_compile.compile(str(temp_path), doraise=True)
+                success = True
+                error = None
+            except Exception as e:
+                success = False
+                error = str(e)
+            finally:
+                temp_path.unlink(missing_ok=True)
+            
+            return {
+                "valid": success,
+                "error": error
+            }
+            
+        except Exception as e:
+            return {
+                "valid": False,
+                "error": f"Syntax error: {str(e)}"
+            }
+
+    async def _analyze_changes(self, file_path: str, content: str, 
+                             syntax_result: Dict[str, Any]) -> Dict[str, Any]:
+        """Analyze code changes using semantic interpretation"""
+        analysis = await self.interpreter.interpret(
+            content={
+                "file": file_path,
+                "code": content,
+                "syntax_check": syntax_result
+            },
+            prompt="""Analyze these code changes for potential issues.
+            
+            Consider:
+            1. Syntax correctness
+            2. Runtime safety
+            3. Error handling
+            4. Edge cases
+            5. Potential improvements
+            
+            Provide detailed analysis of any issues found.
+            """
+        )
+        
+        return analysis.data
+
+    async def _test_changes(self, file_path: str, content: str) -> Dict[str, Any]:
+        """Test code changes through execution analysis"""
+        try:
+            # Basic syntax and compilation check
+            syntax_result = await self._verify_syntax(file_path, content)
+            
+            # Semantic analysis of changes
+            analysis_result = await self._analyze_changes(file_path, content, syntax_result)
+            
+            return {
+                "success": syntax_result["valid"] and not analysis_result.get("critical_issues"),
+                "syntax": syntax_result,
+                "analysis": analysis_result,
+                "safe_to_write": syntax_result["valid"]
+            }
+            
+        except Exception as e:
+            return {
+                "success": False,
+                "error": str(e),
+                "safe_to_write": False
+            }
 
     def _write_file(self, file_path: str, content: str) -> bool:
         """Write content to file with backup"""
@@ -45,7 +134,7 @@ class Coder:
             path = Path(file_path)
             backup_path = path.with_suffix(path.suffix + '.bak')
             
-            # Backup if exists
+            # Create backup if file exists
             if path.exists():
                 path.rename(backup_path)
             
@@ -61,96 +150,64 @@ class Coder:
                 backup_path.rename(path)
             return False
 
-    async def _verify_content(self, file_path: str, content: str) -> Optional[str]:
-        """Verify content is valid Python"""
-        try:
-            chat_response = await self.coordinator.a_initiate_chat(
-                self.merge_assistant,
-                message=f"""
-                Verify this Python code is valid:
-
-                {content}
-
-                If valid, return only the code.
-                If invalid, fix any basic syntax issues and return the fixed code.
-                """,
-                max_turns=1
-            )
-
-            # Get last assistant message
-            for message in reversed(chat_response.chat_history):
-                if message.get('role') == 'assistant':
-                    content = message.get('content', '').strip()
-                    # If content is wrapped in code blocks, extract it
-                    if content.startswith('```') and content.endswith('```'):
-                        content = '\n'.join(content.split('\n')[1:-1])
-                    return content
-
-            return None
-
-        except Exception as e:
-            logger.error("coder.verify_failed", file=file_path, error=str(e))
-            return None
-
-    def _extract_actions(self, context: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract actions from context, handling various formats"""
-        # If actions is directly available
-        if "actions" in context:
-            return context["actions"]
-            
-        # If actions is in a nested structure
-        if isinstance(context.get("solution"), dict):
-            if "actions" in context["solution"]:
-                return context["solution"]["actions"]
-                
-        # If context is a string (e.g. JSON or markdown)
-        if isinstance(context, str):
-            try:
-                parsed = json.loads(context)
-                if "actions" in parsed:
-                    return parsed["actions"]
-            except json.JSONDecodeError:
-                pass
-                
-        raise ValueError("No valid actions found in context")
-
     async def transform(self, context: Dict[str, Any]) -> Dict[str, Any]:
-        """Apply code changes"""
+        """Apply code changes with semantic validation"""
         try:
-            # Get actions more flexibly
-            try:
-                actions = self._extract_actions(context)
-            except ValueError as e:
-                logger.error("coder.no_actions", error=str(e))
+            # Extract changes using semantic interpretation
+            changes_result = await self.interpreter.interpret(
+                content=context,
+                prompt="""Extract the concrete code changes to be made.
+                For each change, identify:
+                1. The target file path
+                2. The new file content
+                3. Any special handling needed
+                """
+            )
+            
+            if not changes_result.data:
                 return {
                     "status": "failed",
-                    "error": str(e)
+                    "error": "No valid changes extracted from context"
                 }
 
             modified_files = []
-            failed_files = []
+            failures = []
             
-            for action in actions:
-                file_path = action["file_path"]
-                new_content = action["changes"]
+            # Process each change
+            for change in changes_result.data:
+                file_path = change.get("file_path")
+                new_content = change.get("content")
                 
-                # Verify/fix content
-                verified_content = await self._verify_content(file_path, new_content)
-                
-                if not verified_content:
-                    failed_files.append(file_path)
+                if not file_path or not new_content:
                     continue
-                    
-                # Write result
-                if self._write_file(file_path, verified_content):
-                    modified_files.append(file_path)
+                
+                # Test changes before applying
+                test_result = await self._test_changes(file_path, new_content)
+                
+                if test_result["safe_to_write"]:
+                    if self._write_file(file_path, new_content):
+                        modified_files.append(file_path)
+                    else:
+                        failures.append({
+                            "file": file_path,
+                            "reason": "Failed to write changes",
+                            "context": test_result
+                        })
                 else:
-                    failed_files.append(file_path)
+                    failures.append({
+                        "file": file_path,
+                        "reason": "Changes failed validation",
+                        "context": test_result
+                    })
 
             return {
-                "status": "success" if not failed_files else "failed",
+                "status": "failed" if failures else "success",
                 "modified_files": modified_files,
-                "failed_files": failed_files
+                "failures": failures,
+                "validation_context": {
+                    "interpretation": changes_result.raw_response,
+                    "changes_data": changes_result.data
+                }
             }
             
         except Exception as e:
