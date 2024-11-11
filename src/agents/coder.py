@@ -8,7 +8,7 @@ import os
 from enum import Enum
 import ast
 import py_compile
-from skills.semantic_interpreter import SemanticInterpreter
+from skills.semantic_extract import SemanticInterpreter
 
 logger = structlog.get_logger()
 

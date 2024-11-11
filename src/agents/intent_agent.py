@@ -11,7 +11,7 @@ from agents.discovery import DiscoveryAgent
 from agents.solution_architect import SolutionArchitect
 from agents.coder import Coder, MergeMethod
 from agents.assurance import AssuranceAgent
-from skills.semantic_interpreter import SemanticInterpreter
+from skills.semantic_extract import SemanticInterpreter
 from skills.semantic_loop import SemanticLoop
 
 logger = structlog.get_logger()

@@ -4,7 +4,7 @@ import autogen
 import structlog
 import json
 from .shared.types import InterpretResult
-from .semantic_interpreter import SemanticInterpreter
+from .semantic_extract import SemanticExtract
 
 logger = structlog.get_logger()
 
