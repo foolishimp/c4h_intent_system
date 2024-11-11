@@ -163,11 +163,12 @@ async def test_sentence_iteration(semantic_iterator):
     print("\nTesting sentence iteration...")
     
     config = ExtractConfig(
-        pattern="""Extract each sentence as a separate item.
-        For each sentence capture:
-        - The text content
-        - The ending punctuation
-        - Whether it's a question""",
+        pattern="""Extract each sentence as a separate item. For each sentence return a JSON object with:
+        - text: The complete sentence text
+        - punctuation: The ending punctuation mark (".", "?", or "!")
+        - is_question: boolean, true if the sentence ends with "?" or starts with question words (who/what/when/where/why/how)
+        
+        Return as an array of these objects.""",
         format="json"
     )
     
@@ -177,10 +178,19 @@ async def test_sentence_iteration(semantic_iterator):
     while iterator.has_next():
         sentence = next(iterator)
         sentences.append(sentence)
-        print(f"\nSentence {iterator.position()}: {sentence.get('text', '')}")
+        print(f"\nSentence {iterator.position()}:")
+        print(f"Text: {sentence.get('text', '')}")
+        print(f"Is Question: {sentence.get('is_question', False)}")
+        print(f"Punctuation: {sentence.get('punctuation', '')}")
     
     assert len(sentences) > 5, "Should find multiple sentences"
     assert any(s.get('is_question', False) for s in sentences), "Should identify questions"
+    
+    # Add more specific assertions
+    questions = [s for s in sentences if s.get('is_question', False)]
+    print(f"\nFound {len(questions)} questions:")
+    for q in questions:
+        print(f"- {q.get('text', '')}")
 
 @pytest.mark.asyncio
 async def test_iterator_features(semantic_iterator):
