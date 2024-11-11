@@ -10,14 +10,14 @@ class SolutionArchitect(BaseAgent):
     """Solution architect that analyzes discovery output and provides concrete code changes"""
     
     def __init__(self, 
-                 provider: LLMProvider = LLMProvider.ANTHROPIC,  # Changed default to Anthropic
-                 model: str = "claude-3-sonnet-20240229"):      # Specified Claude 3.5 Sonnet
+                 provider: LLMProvider = LLMProvider.ANTHROPIC,  
+                 model: str = "claude-3-sonnet-20240229"):      
         """Initialize with specified provider"""
         super().__init__(
             provider=provider,
-            model=model,           # Pass specific model to BaseAgent
-            temperature=0,         # We want deterministic responses
-            max_retries=2         # Allow one retry for complex analysis
+            model=model,           
+            temperature=0,         
+            max_retries=2         
         )
 
     def _get_agent_name(self) -> str:
@@ -29,9 +29,11 @@ class SolutionArchitect(BaseAgent):
 
         1. Analyze the current code structure and patterns
         2. For each file needing changes, provide specific modifications:
+           - Start with all necessary import statements
            - For small files (<100 lines): Provide complete new content
            - For large files: Provide content to change
         3. Consider:
+           - All required imports must be explicitly included
            - Minimal necessary changes
            - Code style consistency
            - Maintainability
@@ -53,6 +55,7 @@ class SolutionArchitect(BaseAgent):
             return "Error: Invalid input"
             
         return f"""Based on this discovery analysis and intent, generate necessary changes.
+        Remember to include ALL required import statements at the top of any generated code.
 
         INTENT:
         {intent.get('intent', 'No intent provided')}
