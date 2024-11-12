@@ -10,7 +10,7 @@ from datetime import datetime
 
 from ..models.intent import Intent, IntentStatus
 from .discovery import DiscoveryAgent 
-from .solution_architect import SolutionArchitect
+from .solution_designer import SolutionDesigner
 from .coder import Coder
 from .assurance import AssuranceAgent
 from ..skills.semantic_extract import SemanticExtract
@@ -72,7 +72,7 @@ class IntentAgent:
         
         # Initialize specialized agents
         self.discovery = DiscoveryAgent()
-        self.architect = SolutionArchitect()
+        self.architect = SolutionDesigner()
         self.coder = Coder()
         self.assurance = AssuranceAgent()
         

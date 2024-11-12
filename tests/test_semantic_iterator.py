@@ -38,7 +38,7 @@ Then we'll create the main implementation:
 from typing import Dict, Any
 from .base_architect import BaseArchitect
 
-class SolutionArchitect(BaseArchitect):
+class SolutionDesigner(BaseArchitect):
     async def analyze(self) -> Dict[str, Any]:
         return {
             "status": "success",
