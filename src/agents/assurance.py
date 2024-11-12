@@ -50,6 +50,21 @@ class AssuranceAgent(BaseAgent):
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         logger.info("workspace.created", path=str(self.workspace_root))
         
+    def _get_agent_name(self) -> str:
+        """Get agent name - required by BaseAgent"""
+        return "assurance_agent"
+    
+    def _get_system_message(self) -> str:
+        """Get system message - required by BaseAgent"""
+        return """You are a validation expert that analyzes test results.
+        When given test output:
+        1. Extract key success/failure indicators
+        2. Identify specific test failures
+        3. Extract relevant error messages
+        4. Determine overall validation status
+        5. Provide clear validation summary
+        """
+    
     def __del__(self):
         """Cleanup workspace on destruction"""
         try:
@@ -62,35 +77,49 @@ class AssuranceAgent(BaseAgent):
     async def _run_pytest(self, test_content: str) -> ValidationResult:
         """Run pytest validation"""
         try:
-            # Create a proper test file
-            test_content = """
-import pytest
-
-def test_validation():
-    assert True  # Basic test passes
-"""
-            # Write to file
+            # Create test file with proper indentation
+            test_content = "\n".join(line.strip() for line in test_content.splitlines() if line.strip())
             test_file = self.workspace_root / "test_validation.py"
             test_file.write_text(test_content)
+            
             logger.info("pytest.file_created", path=str(test_file))
             
-            # Run pytest
-            args = ["-v", "--no-header", "--tb=short", str(test_file)]
-            exitcode = pytest.main(args)
+            # Capture test output
+            import io
+            import contextlib
+            output = io.StringIO()
+            
+            with contextlib.redirect_stdout(output), contextlib.redirect_stderr(output):
+                exitcode = pytest.main(["-v", "--no-header", str(test_file)])
+            
+            output_text = output.getvalue()
             success = exitcode == pytest.ExitCode.OK
             
+            # Log test result
+            if success:
+                logger.info("pytest.passed", exitcode=exitcode)
+            else:
+                logger.warning("pytest.failed", 
+                            exitcode=exitcode,
+                            output=output_text)
+            
+            if "failed" in output_text.lower() or "error" in output_text.lower():
+                success = False
+                
             return ValidationResult(
                 success=success,
-                output=f"Pytest completed with exit code {exitcode}",
-                validation_type="test"
+                output=output_text,
+                validation_type="test",
+                error=None if success else "Test failed"
             )
             
         except Exception as e:
-            logger.error("pytest.failed", error=str(e))
+            error_msg = str(e)
+            logger.error("pytest.execution_failed", error=error_msg)
             return ValidationResult(
                 success=False,
                 output="",
-                error=str(e),
+                error=error_msg,
                 validation_type="test"
             )
 
@@ -116,7 +145,7 @@ def test_validation():
                 env=env
             )
             
-            # Check for expected success message
+            # Check for success
             success = (result.returncode == 0 and 
                       "Validation successful" in result.stdout)
             
@@ -146,6 +175,7 @@ def test_validation():
         try:
             # Determine validation type
             validation_type = await self._extract_validation_type(validation_content)
+            logger.info("validation.type_determined", type=validation_type)
             
             # Get execution instructions
             instructions = await self._extract_instructions(validation_content)

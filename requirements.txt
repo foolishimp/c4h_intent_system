@@ -1,36 +1,21 @@
-# Core dependencies
+# Core LLM dependencies
 litellm>=1.52.3
 openai>=1.13.3
 anthropic>=0.18.1
 google-generativeai>=0.3.2
 
-# AutoGen requirements - keeping specific versions for 0.4 compatibility
-flaml>=2.3.2
-diskcache>=5.6.3
-termcolor>=2.5.0
-python-dotenv>=1.0.1
+# Code processing
+libcst>=1.2.0
 pydantic>=2.6.3
 
-# Code analysis - latest stable versions
-ruff>=0.3.0
-libcst>=1.2.0
-semgrep>=1.55.1
-
-# Testing - latest stable versions
+# Testing
 pytest>=8.0.0
 pytest-asyncio>=0.23.5
-pytest-cov>=4.1.0  # Added for coverage reporting
+pytest-cov>=4.1.0
 
-# Logging and monitoring - latest stable
+# Logging
 structlog>=24.1.0
-opentelemetry-api>=1.23.0
-opentelemetry-sdk>=1.23.0
-opentelemetry-instrumentation>=0.44.0
 
 # Configuration
+python-dotenv>=1.0.1
 PyYAML>=6.0.1
-
-# Core AutoGen dependency - keeping specific dev versions
-autogen-core==0.4.0.dev4
-autogen-agentchat==0.4.0.dev4
-autogen-ext==0.4.0.dev4

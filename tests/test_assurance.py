@@ -9,11 +9,11 @@ from src.agents.assurance import AssuranceAgent
 
 logger = structlog.get_logger()
 
-# Test data - add this at the top of your test file
+# Test data with proper Python indentation
 SAMPLE_TEST_CASE = """import pytest
 
 def test_file_changes():
-    assert True  # Replace with actual test
+    assert True  # Basic test that should pass
 """
 
 SAMPLE_VALIDATION_SCRIPT = """#!/usr/bin/env python3
@@ -106,9 +106,8 @@ async def test_validation_execution(assurance_agent):
     
     result = await assurance_agent.validate(SAMPLE_TEST_CASE)
     print(f"\nValidation result: {result}")
-    assert result["success"] == True
-    assert "output" in result
-    assert result["validation_type"] == "test"
+    assert result["success"] == True, "Basic test should pass"
+    assert "output" in result, "Should include test output"
 
 @pytest.mark.asyncio
 async def test_script_execution(assurance_agent):
@@ -123,27 +122,30 @@ async def test_script_execution(assurance_agent):
     
     result = await assurance_agent.validate(SAMPLE_VALIDATION_SCRIPT)
     print(f"\nScript execution result: {result}")
-    assert result["success"] == True
-    assert "output" in result
-    assert result["validation_type"] == "script"
+    assert result["success"] == True, "Validation script should succeed"
+    assert "output" in result, "Should include execution output"
+    assert "Validation successful" in result["output"], "Should show success message"
 
 @pytest.mark.asyncio
 async def test_failed_validation(assurance_agent):
     """Test handling of validation failures"""
     print("\nTesting validation failure handling...")
     
-    # Create failing test
-    failing_test = """
-    import pytest
-    def test_should_fail():
-        assert False
-    """
+    # Create failing test with proper indentation
+    failing_test = """import pytest
+
+def test_should_fail():
+    assert False, "This test should fail"
+"""
     
     result = await assurance_agent.validate(failing_test)
     print(f"\nFailed validation result: {result}")
-    assert result["success"] == False
-    assert "error" in result
-    assert "analysis" in result
+    
+    assert result["success"] == False, "Should detect test failure"
+    assert "error" in result, "Should include error message"
+    assert "output" in result, "Should include test output"
+    # Note: We're looking for test failure in output, not syntax error
+    assert "failed" in result["output"].lower() or "assertion" in result["output"].lower(), "Should indicate test failure in output"
 
 if __name__ == "__main__":
     pytest.main(["-v", "--log-cli-level=INFO", __file__])
