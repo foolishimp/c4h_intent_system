@@ -7,7 +7,7 @@ from enum import Enum
 import shutil
 import re
 
-from .base import BaseAgent, LLMProvider
+from .base import BaseAgent, LLMProvider, AgentResponse
 from ..skills.semantic_extract import SemanticExtract
 from ..skills.semantic_merge import SemanticMerge
 
@@ -280,3 +280,116 @@ class Coder(BaseAgent):
                 "status": "failed",
                 "error": str(e)
             }
+
+    def _map_suggestion_to_action(self, suggestion: Dict[str, Any]) -> Dict[str, Any]:
+        """Map architect suggestions to concrete actions
+        
+        Args:
+            suggestion: Suggestion from architect containing change details
+            
+        Returns:
+            Dictionary with standardized action format
+        """
+        return {
+            "file_path": suggestion.get("file_path"),
+            "change_type": suggestion.get("change_type", "modify"),
+            "instructions": suggestion.get("suggested_approach"),  # Maps to instructions field
+        }
+
+    async def process(self, context: Dict[str, Any]) -> AgentResponse:
+        """Process a change request with proper validation
+        
+        Args:
+            context: Dictionary containing either suggestions from architect
+                    or direct actions to perform
+                    
+        Returns:
+            AgentResponse with results or error
+        """
+        try:
+            logger.info("coder.processing_request", context_keys=list(context.keys()))
+            
+            # Handle special cases from architect
+            if 'needs_clarification' in context:
+                logger.info("coder.needs_clarification", question=context['needs_clarification'])
+                return AgentResponse(
+                    success=False,
+                    data={},
+                    error=f"Need clarification: {context['needs_clarification']}"
+                )
+                
+            if 'needs_information' in context:
+                logger.info("coder.needs_information", missing=context['needs_information'])
+                return AgentResponse(
+                    success=False,
+                    data={},
+                    error=f"Insufficient information: {', '.join(context['needs_information'])}"
+                )
+                
+            if 'no_changes_needed' in context:
+                logger.info("coder.no_changes_needed", reason=context['no_changes_needed'])
+                return AgentResponse(
+                    success=True,
+                    data={"message": f"No changes needed: {context['no_changes_needed']}"},
+                    error=None
+                )
+            
+            # Handle architect suggestions format
+            if 'suggestions' in context:
+                suggestions = context['suggestions']
+                if not suggestions:  # Empty suggestions list
+                    logger.info("coder.no_suggestions")
+                    return AgentResponse(
+                        success=True,
+                        data={"message": "No changes suggested"},
+                        error=None
+                    )
+                # Map suggestions to actions
+                actions = [self._map_suggestion_to_action(s) for s in suggestions]
+            else:
+                # Check for direct actions format
+                actions = context.get('actions', [])
+                if not actions:
+                    logger.info("coder.no_actions")
+                    return AgentResponse(
+                        success=True,
+                        data={"message": "No actions provided"},
+                        error=None
+                    )
+
+            # Process each action
+            changes_made = []
+            for action in actions:
+                try:
+                    # Transform handles detailed validation
+                    result = await self.transform(action)
+                    if result.get("status") == "success":
+                        changes_made.append(result)
+                        logger.info("coder.change_succeeded", 
+                                  file=action.get('file_path'),
+                                  type=action.get('change_type'))
+                    else:
+                        logger.warning("coder.change_failed",
+                                     file=action.get('file_path'),
+                                     error=result.get('error'))
+
+                except Exception as e:
+                    logger.error("coder.action_failed",
+                               action=action,
+                               error=str(e))
+
+            return AgentResponse(
+                success=True,
+                data={
+                    "changes": changes_made,
+                    "message": f"Implemented {len(changes_made)} changes"
+                }
+            )
+                
+        except Exception as e:
+            logger.error("coder.process_failed", error=str(e))
+            return AgentResponse(
+                success=False,
+                data={},
+                error=str(e)
+            )
