@@ -7,7 +7,8 @@ import subprocess
 import sys
 import pytest
 from dataclasses import dataclass
-import json
+import tempfile
+import shutil
 
 from .base import BaseAgent, LLMProvider, AgentResponse
 from ..skills.semantic_extract import SemanticExtract, ExtractResult
@@ -37,8 +38,16 @@ class AssuranceAgent(BaseAgent):
         )
         
         self.extractor = SemanticExtract(provider=provider, model=model)
-        self.workspace_root = workspace_root or Path.cwd() / "validation_workspace"
+        self.workspace_root = workspace_root or Path(tempfile.mkdtemp(prefix="validation_"))
         self.workspace_root.mkdir(parents=True, exist_ok=True)
+        
+    def __del__(self):
+        """Cleanup workspace on destruction"""
+        if hasattr(self, 'workspace_root') and self.workspace_root.exists():
+            try:
+                shutil.rmtree(self.workspace_root)
+            except:
+                pass
         
     def _get_agent_name(self) -> str:
         return "assurance_agent"
@@ -79,61 +88,73 @@ class AssuranceAgent(BaseAgent):
         )
         return result.value if result.success else {}
 
-    async def _analyze_output(self, output: str, validation_type: str) -> Dict[str, Any]:
-        """Analyze validation output"""
-        result = await self.extractor.extract(
-            content=output,
-            prompt=f"""Analyze this {validation_type} output and return JSON with:
-            - success: boolean indicating overall success
-            - error: any error message if failed
-            - details: List of specific failure details""",
-            format_hint="json"
-        )
-        return result.value if result.success else {"success": False, "error": "Failed to analyze output"}
-
-    async def _run_validation(self, instructions: Dict[str, Any]) -> ValidationResult:
-        """Execute validation command and capture results"""
+    async def _run_pytest(self, test_content: str) -> ValidationResult:
+        """Run pytest validation"""
         try:
-            if instructions.get("type") == "pytest":
-                # Run pytest programmatically
-                test_output = []
-                class OutputCapture:
-                    def pytest_runtest_logreport(self, report):
-                        test_output.append(report)
-
-                pytest.main(
-                    ["-v", instructions["command"]],
-                    plugins=[OutputCapture()]
-                )
-                output = "\n".join(str(r) for r in test_output)
-                success = all(r.passed for r in test_output if hasattr(r, 'passed'))
-                
-            else:
-                # Run shell command
-                result = subprocess.run(
-                    instructions["command"],
-                    shell=True,
-                    cwd=self.workspace_root,
-                    capture_output=True,
-                    text=True
-                )
-                output = result.stdout + result.stderr
-                success = result.returncode == 0 and \
-                         any(p in output for p in instructions.get("success_patterns", []))
+            # Clean up test content (remove leading whitespace)
+            test_content = "\n".join(line.strip() for line in test_content.splitlines())
+            
+            # Write test content to file
+            test_file = self.workspace_root / "test_validation.py"
+            test_file.write_text(test_content)
+            
+            # Run pytest programmatically
+            import pytest
+            exitcode = pytest.main(["-v", str(test_file)])
+            
+            # Interpret result
+            success = exitcode == 0 or exitcode == pytest.ExitCode.OK
+            
+            # Include more detailed output
+            test_output = "Test passed successfully" if success else f"Test failed with exit code {exitcode}"
             
             return ValidationResult(
                 success=success,
-                output=output,
-                validation_type=instructions.get("type", "script")
+                output=test_output,
+                validation_type="test"
             )
             
         except Exception as e:
-            logger.error("validation.execution_failed", error=str(e))
+            logger.error("pytest.execution_failed", error=str(e))
             return ValidationResult(
                 success=False,
                 output="",
                 error=str(e),
-                validation_type=instructions.get("type", "script")
+                validation_type="test"
+            )
+
+    async def _run_script(self, script_content: str) -> ValidationResult:
+        """Run validation script"""
+        try:
+            # Write script to file
+            script_file = self.workspace_root / "validate.py"
+            script_file.write_text(script_content)
+            script_file.chmod(0o755)
+            
+            # Execute script
+            result = subprocess.run(
+                [sys.executable, str(script_file)],
+                capture_output=True,
+                text=True,
+                cwd=str(self.workspace_root)  # Convert Path to string
+            )
+            
+            success = result.returncode == 0
+            output = result.stdout + result.stderr
+            
+            return ValidationResult(
+                success=success,
+                output=output,
+                validation_type="script"
+            )
+            
+        except Exception as e:
+            logger.error("script.execution_failed", error=str(e))
+            return ValidationResult(
+                success=False,
+                output="",
+                error=str(e),
+                validation_type="script"
             )
 
     async def validate(self, validation_content: str) -> Dict[str, Any]:
@@ -142,23 +163,26 @@ class AssuranceAgent(BaseAgent):
             # Determine validation type
             validation_type = await self._extract_validation_type(validation_content)
             
-            # Extract execution instructions
+            # Get execution instructions
             instructions = await self._extract_instructions(validation_content)
-            if not instructions:
-                raise ValueError("Failed to extract validation instructions")
             
-            # Execute validation
-            result = await self._run_validation(instructions)
+            # Run validation
+            if validation_type == "test":
+                result = await self._run_pytest(validation_content)
+            else:
+                result = await self._run_script(validation_content)
             
-            # Analyze output
-            analysis = await self._analyze_output(result.output, validation_type)
-            
+            # Return results
             return {
-                "success": result.success and analysis.get("success", False),
-                "validation_type": validation_type,
+                "success": result.success,
+                "validation_type": result.validation_type,
                 "output": result.output,
-                "analysis": analysis,
-                "error": result.error or analysis.get("error")
+                "analysis": {
+                    "success": result.success,
+                    "error": result.error if not result.success else None,
+                    "details": []
+                },
+                "error": result.error
             }
             
         except Exception as e:
