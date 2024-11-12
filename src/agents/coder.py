@@ -1,37 +1,59 @@
 # src/agents/coder.py
 
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 from pathlib import Path
 import structlog
 from enum import Enum
 import shutil
 import re
 
-from .base import BaseAgent, LLMProvider, AgentResponse
+from .base import BaseAgent, LLMProvider
 from ..skills.semantic_extract import SemanticExtract
+from ..skills.semantic_merge import SemanticMerge
 
 logger = structlog.get_logger()
 
-class MergeStrategy(str, Enum):
-    """Available merge strategies"""
-    INLINE = "inline"    # Direct file replacement
-    GITDIFF = "gitdiff"  # Apply changes as git-style diff
-    PATCH = "patch"      # Use patch format
+class MergeMethod(str, Enum):
+    """Available merge methods"""
+    INLINE = "inline"    # Direct content replacement
+    SMART = "smart"      # Semantic understanding merge
+
+class AssetType(str, Enum):
+    """Supported asset types"""
+    PYTHON = "python"
+    JAVA = "java"
+    JAVASCRIPT = "javascript"
+    TYPESCRIPT = "typescript"
+    HTML = "html"
+    CSS = "css"
+    MARKDOWN = "markdown"
+    TEXT = "text"
+    UNKNOWN = "unknown"
 
 class Coder(BaseAgent):
-    """Code modification agent using semantic extraction"""
+    """Code modification agent using semantic tools"""
     
     def __init__(self, 
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
-                 model: Optional[str] = None):
-        """Initialize coder with specified provider"""
+                 model: Optional[str] = None,
+                 max_file_size: int = 1024 * 1024):  # 1MB default
+        """Initialize coder with specified provider
+        
+        Args:
+            provider: LLM provider to use
+            model: Specific model to use, or None for provider default
+            max_file_size: Maximum file size in bytes to process
+        """
         super().__init__(
             provider=provider,
             model=model,
             temperature=0
         )
+        self.max_file_size = max_file_size
+        
         # Initialize semantic tools
         self.extractor = SemanticExtract(provider=provider, model=model)
+        self.merger = SemanticMerge(provider=provider, model=model)
         
     def _get_agent_name(self) -> str:
         return "coder"
@@ -42,28 +64,109 @@ class Coder(BaseAgent):
         1. Analyze the change request carefully
         2. Identify exact files to modify
         3. Apply changes precisely
-        4. Maintain code style and functionality
-        5. Return results in the specified format
-        """
+        4. Return results in the specified format"""
     
-    async def _extract_change_details(self, content: Dict[str, Any]) -> Dict[str, Any]:
+    def _get_asset_type(self, file_path: str) -> AssetType:
+        """Determine asset type from file extension"""
+        ext = Path(file_path).suffix.lower()
+        
+        type_map = {
+            '.py': AssetType.PYTHON,
+            '.java': AssetType.JAVA,
+            '.js': AssetType.JAVASCRIPT,
+            '.ts': AssetType.TYPESCRIPT,
+            '.html': AssetType.HTML,
+            '.css': AssetType.CSS,
+            '.md': AssetType.MARKDOWN,
+            '.txt': AssetType.TEXT
+        }
+        
+        return type_map.get(ext, AssetType.UNKNOWN)
+    
+    def _validate_request(self, request: Dict[str, Any]) -> Optional[str]:
+        """Validate request parameters
+        Returns None if valid, error message if invalid"""
+        
+        if not isinstance(request, dict):
+            return "Invalid request format: must be a dictionary"
+            
+        # Required fields
+        if "file_path" not in request:
+            return "Missing required field: file_path"
+            
+        if "change_type" not in request:
+            return "Missing required field: change_type"
+            
+        if "instructions" not in request:
+            return "Missing required field: instructions"
+            
+        # Field validation
+        if not request["file_path"]:
+            return "Invalid file_path: cannot be empty"
+            
+        # Additional path validation
+        file_path = request["file_path"]
+        if file_path == "NOT_FOUND" or file_path == "null" or file_path == "None":
+            return "Invalid file_path: path not properly specified"
+            
+        # Check if path looks valid
+        if not any(c in file_path for c in ['/', '\\', '.']):
+            return f"Invalid file path format: {file_path}"
+            
+        if not request["change_type"] in ["create", "modify", "delete"]:
+            return f"Invalid change_type: {request['change_type']}"
+            
+        if not request["instructions"]:
+            return "Invalid instructions: cannot be empty"
+            
+        # File size check for existing files
+        try:
+            path = Path(file_path)
+            if path.exists() and path.stat().st_size > self.max_file_size:
+                return f"File exceeds maximum size of {self.max_file_size} bytes"
+        except Exception as e:
+            return f"Error checking file: {str(e)}"
+            
+        return None
+
+    async def _extract_change_details(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Extract file path and change details using semantic extract"""
         result = await self.extractor.extract(
-            content=content,
+            content=context,
             prompt="""Extract these details from the change request:
             1. Target file path
             2. Change type (create/modify/delete)
-            3. Complete change content or diff
-            Return as JSON with fields: file_path, change_type, content""",
+            3. Change instructions
+            Return as JSON with fields: file_path, change_type, instructions""",
             format_hint="json"
         )
         
         if not result.success:
             raise ValueError(f"Failed to extract change details: {result.error}")
+        
+        # Get response data
+        extract_data = result.value
+        if isinstance(extract_data, dict) and "raw_message" in extract_data:
+            extract_data = extract_data.get("raw_message", {})
+        
+        if not isinstance(extract_data, dict):
+            raise ValueError("Invalid extraction result format")
             
-        return result.value
+        required_fields = ["file_path", "change_type", "instructions"]
+        if not all(field in extract_data for field in required_fields):
+            raise ValueError(f"Missing required fields in extraction: {required_fields}")
+        
+        # Additional validation to prevent NOT_FOUND file creation
+        if extract_data["file_path"] == "NOT_FOUND":
+            raise ValueError("Invalid file path: path not found in request")
+            
+        # Validate it's a reasonable file path
+        if not any(c in extract_data["file_path"] for c in ['/', '\\', '.']):
+            raise ValueError(f"Invalid file path format: {extract_data['file_path']}")
+            
+        return extract_data
 
-    def _create_backup(self, file_path: Path) -> Path:
+    def _create_backup(self, file_path: Path) -> Optional[Path]:
         """Create numbered backup of existing file"""
         if not file_path.exists():
             return None
@@ -87,71 +190,92 @@ class Coder(BaseAgent):
         
         return backup_path
 
-    async def _merge_changes(self, file_path: Path, changes: Dict[str, Any],
-                           strategy: MergeStrategy) -> str:
-        """Merge changes into file using specified strategy"""
-        # Import semantic merge skill
-        from ..skills.semantic_merge import SemanticMerge
-        
-        merger = SemanticMerge(
-            provider=self.provider,
-            model=self.model
-        )
-        
-        if file_path.exists():
-            original_content = file_path.read_text()
-        else:
-            original_content = ""
-            
-        result = await merger.merge(
-            original=original_content,
-            changes=changes,
-            strategy=strategy
-        )
-        
-        if not result.success:
-            raise ValueError(f"Merge failed: {result.error}")
-            
-        return result.content
+    def _cleanup_backup(self, backup_path: Optional[Path]) -> None:
+        """Clean up backup file if it exists"""
+        if backup_path and backup_path.exists():
+            try:
+                backup_path.unlink()
+                logger.info("coder.backup_cleaned", backup=str(backup_path))
+            except Exception as e:
+                logger.warning("coder.backup_cleanup_failed",
+                             backup=str(backup_path),
+                             error=str(e))
 
-    async def apply_changes(self, change_request: Dict[str, Any], 
-                          strategy: MergeStrategy = MergeStrategy.INLINE) -> Dict[str, Any]:
-        """Apply code changes with backup and validation"""
+    async def transform(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply code changes with backup"""
         try:
-            # Extract change details
-            details = await self._extract_change_details(change_request)
+            # Validate request
+            error = self._validate_request(context)
+            if error:
+                logger.error("coder.invalid_request", error=error)
+                return {
+                    "status": "failed",
+                    "error": error
+                }
+
+            # Extract and validate change details
+            details = await self._extract_change_details(context)
             file_path = Path(details["file_path"])
             
             # Create backup if file exists
             backup_path = self._create_backup(file_path)
             
             try:
-                # Merge changes
-                merged_content = await self._merge_changes(
-                    file_path=file_path,
-                    changes=details,
-                    strategy=strategy
+                # Handle deletion
+                if details["change_type"] == "delete":
+                    if file_path.exists():
+                        file_path.unlink()
+                        logger.info("coder.file_deleted", file=str(file_path))
+                    return {
+                        "status": "success",
+                        "file_path": str(file_path),
+                        "backup_path": str(backup_path) if backup_path else None,
+                        "action": "deleted"
+                    }
+
+                # Get original content if file exists
+                original = file_path.read_text() if file_path.exists() else ""
+                
+                # For create/modify, merge changes
+                merge_result = await self.merger.merge(
+                    original=original,
+                    instructions=details["instructions"]
                 )
+                
+                if not merge_result.success:
+                    raise ValueError(f"Merge failed: {merge_result.error}")
                 
                 # Write merged content
                 file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(merged_content)
+                file_path.write_text(merge_result.content)
+                
+                # If successful creation/modification, clean up backup
+                if details["change_type"] == "create":
+                    self._cleanup_backup(backup_path)
+                    backup_path = None
                 
                 return {
                     "status": "success",
                     "file_path": str(file_path),
                     "backup_path": str(backup_path) if backup_path else None,
-                    "change_type": details["change_type"]
+                    "action": details["change_type"]
                 }
                 
             except Exception as e:
                 # Restore from backup on error
                 if backup_path and backup_path.exists():
-                    shutil.copy2(backup_path, file_path)
+                    try:
+                        shutil.copy2(backup_path, file_path)
+                        logger.info("coder.backup_restored", 
+                                  file=str(file_path),
+                                  backup=str(backup_path))
+                    except Exception as restore_error:
+                        logger.error("coder.backup_restore_failed",
+                                   error=str(restore_error))
                 raise
                 
         except Exception as e:
-            logger.error("coder.apply_changes_failed", error=str(e))
+            logger.error("coder.transform_failed", error=str(e))
             return {
                 "status": "failed",
                 "error": str(e)

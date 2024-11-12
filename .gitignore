@@ -38,6 +38,7 @@ ENV/
 data/assets/*
 !data/assets/.gitkeep
 workspaces/
+test_output/
 
 # Environment variables
 .env

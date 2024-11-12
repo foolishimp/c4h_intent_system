@@ -2,14 +2,9 @@
 
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
-from pathlib import Path
 import structlog
-from difflib import unified_diff
 import re
-
-from .semantic_extract import SemanticExtract
 from src.agents.base import BaseAgent, LLMProvider
-from src.agents.coder import MergeStrategy
 
 logger = structlog.get_logger()
 
@@ -19,10 +14,9 @@ class MergeResult:
     success: bool
     content: str
     error: Optional[str] = None
-    context: Dict[str, Any] = None
 
 class SemanticMerge(BaseAgent):
-    """Semantically-aware code merge tool"""
+    """Merges code changes using semantic understanding"""
     
     def __init__(self,
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
@@ -33,119 +27,104 @@ class SemanticMerge(BaseAgent):
             model=model,
             temperature=0
         )
-        self.extractor = SemanticExtract(provider=provider, model=model)
         
     def _get_agent_name(self) -> str:
         return "semantic_merge"
         
     def _get_system_message(self) -> str:
-        return """You are an expert code merger that combines changes intelligently.
-        When merging code changes:
-        1. Preserve existing functionality
-        2. Maintain code style consistency
-        3. Handle conflicts carefully
-        4. Consider code context and dependencies
-        5. Return clean, formatted results
-        """
-    
-    def _apply_gitdiff(self, original: str, diff: str) -> str:
-        """Apply git-style diff to content"""
-        # Parse diff hunks
-        hunks = []
-        current_hunk = []
+        return """You are a precise code merger. Given original code and change instructions,
+        your task is to apply the changes and return the modified code.
         
-        for line in diff.splitlines():
-            if line.startswith("@@"):
-                if current_hunk:
-                    hunks.append(current_hunk)
-                current_hunk = [line]
-            elif current_hunk:
-                current_hunk.append(line)
+        Important rules:
+        1. Return ONLY the modified code - no explanations or other text
+        2. Do not wrap the code in markdown code blocks or quotes
+        3. Return the complete file content, not just the changes
+        4. Preserve all existing functionality unless explicitly told to change it
+        5. Maintain code style, indentation, and formatting
         
-        if current_hunk:
-            hunks.append(current_hunk)
-            
-        # Apply hunks
-        lines = original.splitlines()
-        for hunk in hunks:
-            # Parse hunk header
-            header = hunk[0]
-            match = re.match(r"@@ -(\d+),?(\d+)? \+(\d+),?(\d+)? @@", header)
-            if not match:
-                continue
-                
-            start = int(match.group(3))
-            count = int(match.group(4)) if match.group(4) else 1
-            
-            # Apply changes
-            new_lines = []
-            for line in hunk[1:]:
-                if line.startswith(" "):
-                    new_lines.append(line[1:])
-                elif line.startswith("+"):
-                    new_lines.append(line[1:])
-                    
-            lines[start-1:start-1+count] = new_lines
-            
-        return "\n".join(lines)
-    
-    async def merge(self, original: str, changes: Dict[str, Any],
-                   strategy: MergeStrategy) -> MergeResult:
+        Example output format:
+        import logging
+        
+        class Example:
+            def method(self):
+                pass
+        
+        No additional text or formatting - just the code."""
+
+    def _extract_code_content(self, response: Dict[str, Any]) -> str:
+        """Extract code content from LLM response"""
+        if not response:
+            return ""
+
+        # Get raw response content
+        content = ""
+        if isinstance(response, dict):
+            if "response" in response:
+                content = str(response["response"])
+            elif "raw_message" in response:
+                content = str(response["raw_message"])
+            else:
+                content = str(response)
+        else:
+            content = str(response)
+
+        # Strip markdown code blocks if present
+        content = re.sub(r'^```\w*\n', '', content)
+        content = re.sub(r'\n```$', '', content)
+        
+        # Remove any leading/trailing whitespace
+        content = content.strip()
+        
+        return content
+
+    async def merge(self, original: str, instructions: str) -> MergeResult:
         """Merge changes into original content"""
         try:
-            if strategy == MergeStrategy.INLINE:
-                # Direct replacement
+            # Format request to emphasize code-only response
+            request = {
+                "original_code": original,
+                "instructions": instructions,
+                "format": "Return only the complete modified code without any additional text or formatting."
+            }
+            
+            # Get response from LLM
+            response = await self.process(request)
+            
+            if not response.success:
                 return MergeResult(
-                    success=True,
-                    content=changes["content"]
+                    success=False,
+                    content="",
+                    error=response.error
                 )
                 
-            elif strategy == MergeStrategy.GITDIFF:
-                # Apply git-style diff
-                merged = self._apply_gitdiff(original, changes["content"])
+            # Extract the code content
+            merged_content = self._extract_code_content(response.data)
+            
+            # Basic validation
+            if not merged_content or merged_content.isspace():
+                logger.error("semantic_merge.empty_content", 
+                           raw_response=str(response.data))
                 return MergeResult(
-                    success=True,
-                    content=merged
+                    success=False,
+                    content="",
+                    error="Empty or invalid merge result"
                 )
-                
-            elif strategy == MergeStrategy.PATCH:
-                # Use semantic extraction to understand patch
-                patch_result = await self.extractor.extract(
-                    content=changes,
-                    prompt="""Extract patch details:
-                    1. Location of changes
-                    2. New content
-                    3. Context lines
-                    Return as structured patch instructions."""
-                )
-                
-                if not patch_result.success:
-                    return MergeResult(
-                        success=False,
-                        content="",
-                        error=f"Failed to parse patch: {patch_result.error}"
-                    )
-                    
-                # Let LLM merge with context
-                response = await self.process({
-                    "original": original,
-                    "patch": patch_result.value
-                })
-                
-                if not response.success:
-                    return MergeResult(
-                        success=False,
-                        content="",
-                        error=f"Merge failed: {response.error}"
-                    )
-                    
+
+            # Verify it looks like Python code
+            if not any(keyword in merged_content 
+                      for keyword in ['class', 'def', 'import']):
+                logger.error("semantic_merge.invalid_python",
+                           content=merged_content[:100])
                 return MergeResult(
-                    success=True,
-                    content=response.data["merged_content"]
+                    success=False,
+                    content="",
+                    error="Response does not appear to be valid Python code"
                 )
                 
-            else:
-                raise ValueError(f"Unsupported merge strategy: {strategy}")
+            return MergeResult(
+                success=True,
+                content=merged_content
+            )
                 
         except Exception as e:
             logger.error("semantic_merge.failed", error=str(e))
