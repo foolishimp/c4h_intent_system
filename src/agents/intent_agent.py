@@ -3,317 +3,212 @@
 from typing import Dict, Any, Optional, List
 from pathlib import Path
 import structlog
-import asyncio
 from dataclasses import dataclass
-import os
 from datetime import datetime
 
 from src.models.intent import Intent, IntentStatus
-from src.agents.discovery import DiscoveryAgent 
+from src.agents.discovery import DiscoveryAgent
 from src.agents.solution_designer import SolutionDesigner
-from src.agents.coder import Coder
+from src.agents.coder import Coder, MergeMethod
 from src.agents.assurance import AssuranceAgent
-from src.skills.semantic_extract import SemanticExtract
 from src.skills.semantic_iterator import SemanticIterator
 from src.skills.shared.types import ExtractConfig, InterpretResult
 
 logger = structlog.get_logger()
 
 @dataclass
-class IntentContext:
-    """Context maintained between intent iterations"""
-    original_intent: Dict[str, Any]
-    iteration_count: int = 0
+class WorkflowState:
+    """Current state of the intent workflow"""
+    intent: Intent
+    iteration: int = 0
     max_iterations: int = 3
-    assurance_outputs: List[Dict[str, Any]] = None
-    sub_intent: Optional[Dict[str, Any]] = None
-    
-    def __post_init__(self):
-        """Initialize optional fields"""
-        if self.assurance_outputs is None:
-            self.assurance_outputs = []
-    
-    def increment(self) -> bool:
-        """Increment iteration count and check if max reached"""
-        self.iteration_count += 1
-        return self.iteration_count < self.max_iterations
-    
-    def update_from_assurance(self, assurance_result: Dict[str, Any]) -> None:
-        """Update context with assurance results"""
-        self.assurance_outputs.append(assurance_result)
-        
-        # Create focused sub-intent if needed
-        if not assurance_result.get('success'):
-            self.sub_intent = {
-                "type": "fix_validation",
-                "description": "Fix validation failures from previous attempt",
-                "validation_errors": assurance_result.get('error'),
-                "parent_intent": self.original_intent
-            }
-            logger.info("intent.sub_intent_created", 
-                       original=self.original_intent.get('description'),
-                       sub_intent=self.sub_intent['description'])
+    discovery_data: Optional[Dict[str, Any]] = None
+    solution_data: Optional[Dict[str, Any]] = None
+    implementation_data: Optional[Dict[str, Any]] = None
+    validation_data: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+
+    @property
+    def has_error(self) -> bool:
+        return self.error is not None
+
+    @property
+    def can_continue(self) -> bool:
+        return self.iteration < self.max_iterations and not self.has_error
 
 class IntentAgent:
-    """Orchestrates the complete intent processing workflow"""
+    """Orchestrates the intent workflow using semantic iteration"""
     
     def __init__(self, max_iterations: int = 3):
-        """Initialize intent agent with iteration limit"""
-        # Initialize basic LLM config
-        self.config_list = [{
+        """Initialize intent agent with semantic tools"""
+        self.max_iterations = max_iterations
+        
+        # Initialize base configuration
+        config_list = [{
             "model": "claude-3-sonnet-20240229",
             "api_key": os.getenv("ANTHROPIC_API_KEY"),
             "max_tokens": 4000,
             "temperature": 0
         }]
+
+        # Initialize semantic tools
+        self.semantic_iterator = SemanticIterator(config_list)
         
-        if not self.config_list[0]["api_key"]:
-            raise ValueError("ANTHROPIC_API_KEY environment variable not set")
-        
-        # Initialize specialized agents
+        # Initialize specialized agents 
         self.discovery = DiscoveryAgent()
-        self.architect = SolutionDesigner()
+        self.designer = SolutionDesigner() 
         self.coder = Coder()
         self.assurance = AssuranceAgent()
         
-        # Initialize semantic tools with config
-        self.extractor = SemanticExtract()
-        self.semantic_iterator = SemanticIterator(self.config_list)
-        
-        self.max_iterations = max_iterations
-        logger.info("intent_agent.initialized", 
+        logger.info("intent_agent.initialized",
                    max_iterations=max_iterations,
-                   model=self.config_list[0]["model"])
-
-    async def _execute_discovery(self, intent: Intent) -> Dict[str, Any]:
-        """Execute discovery/scope phase"""
-        logger.info("discovery.starting", 
-                   intent_id=str(intent.id),
-                   project_path=str(intent.project_path))
-        
-        intent.status = IntentStatus.ANALYZING
-        result = await self.discovery.process({
-            "project_path": str(intent.project_path),
-            "intent": intent.description
-        })
-        
-        if not result.success:
-            logger.error("discovery.failed", error=result.error)
-            raise ValueError(f"Discovery failed: {result.error}")
-            
-        logger.info("discovery.completed", files_found=len(result.data.get("files", {})))
-        return result.data
-
-    async def _execute_solution_planning(self, 
-                                      intent: Intent, 
-                                      discovery_data: Dict[str, Any],
-                                      context: Optional[IntentContext] = None) -> Dict[str, Any]:
-        """Execute solution design phase"""
-        logger.info("solution.planning", 
-                   intent_id=str(intent.id),
-                   intent_type=intent.description.get("type"))
-        
-        solution_context = {
-            "intent": intent.description,
-            "discovery_data": discovery_data
-        }
-        
-        # Include iteration context if available
-        if context:
-            solution_context["iteration"] = context.iteration_count
-            solution_context["previous_attempts"] = context.assurance_outputs
-            
-        result = await self.architect.process(solution_context)
-        
-        if not result.success:
-            logger.error("solution.failed", error=result.error)
-            raise ValueError(f"Solution planning failed: {result.error}")
-            
-        logger.info("solution.completed", 
-                   actions=len(result.data.get("actions", [])))
-        return result.data
-
-    async def _execute_implementation(self, intent: Intent, solution: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute implementation phase"""
-        logger.info("implementation.starting", intent_id=str(intent.id))
-        intent.status = IntentStatus.TRANSFORMING
-        
-        # Extract actions from solution
-        actions = await self._extract_actions(solution)
-        
-        results = {
-            "changes": [],
-            "successful_changes": [],
-            "failed_changes": []
-        }
-        
-        # Process each action
-        for action in actions:
-            try:
-                logger.info("implementation.applying_change", 
-                           file=action.get("file"),
-                           change_type=action.get("type"))
-                
-                coder_result = await self.coder.process(action)
-                
-                if coder_result.success:
-                    results["successful_changes"].append({
-                        "action": action,
-                        "result": coder_result.data
-                    })
-                else:
-                    results["failed_changes"].append({
-                        "action": action,
-                        "error": coder_result.error
-                    })
-                
-                results["changes"].append({
-                    "action": action,
-                    "result": coder_result.data if coder_result.success else None,
-                    "success": coder_result.success,
-                    "error": coder_result.error
-                })
-                
-            except Exception as e:
-                logger.error("implementation.change_failed",
-                           file=action.get("file"),
-                           error=str(e))
-                results["failed_changes"].append({
-                    "action": action,
-                    "error": str(e)
-                })
-        
-        logger.info("implementation.completed",
-                   total_changes=len(actions),
-                   successful=len(results["successful_changes"]),
-                   failed=len(results["failed_changes"]))
-                   
-        return results
-
-    async def _execute_assurance(self, intent: Intent, changes: Dict[str, Any]) -> Dict[str, Any]:
-        """Execute assurance phase"""
-        logger.info("assurance.starting", 
-                   intent_id=str(intent.id),
-                   changes_count=len(changes.get("changes", [])))
-        
-        intent.status = IntentStatus.VALIDATING
-        
-        result = await self.assurance.process({
-            "changes": changes,
-            "project_path": str(intent.project_path),
-            "intent": intent.description
-        })
-        
-        if result.success:
-            logger.info("assurance.passed")
-        else:
-            logger.warning("assurance.failed", error=result.error)
-            
-        return result.data
-
-    async def _extract_actions(self, solution: Dict[str, Any]) -> List[Dict[str, Any]]:
-        """Extract implementation actions from solution"""
-        extract_result = await self.extractor.extract(
-            content=solution,
-            prompt="Extract all concrete code change actions as a list of objects with file, type, and changes fields",
-            format_hint="json"
-        )
-        
-        if not extract_result.success:
-            logger.error("action_extraction.failed", error=extract_result.error)
-            raise ValueError(f"Failed to extract actions: {extract_result.error}")
-        
-        actions = extract_result.value.get("actions", [])
-        logger.info("actions.extracted", count=len(actions))
-        return actions
+                   model=config_list[0]["model"])
 
     async def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
-        """Process an intent through the complete workflow with retries"""
-        # Create initial intent and context
-        intent = Intent(
-            description=intent_desc,
-            project_path=str(project_path)
-        )
-        
-        context = IntentContext(
-            original_intent=intent_desc,
+        """Process an intent through complete workflow"""
+        # Create initial state
+        state = WorkflowState(
+            intent=Intent(
+                description=intent_desc,
+                project_path=str(project_path)
+            ),
             max_iterations=self.max_iterations
         )
-        
-        logger.info("intent.processing_started",
-                   intent_id=str(intent.id),
-                   project_path=str(project_path),
-                   max_iterations=self.max_iterations)
-        
-        while context.increment():
+
+        # Configure workflow iteration
+        workflow_config = ExtractConfig(
+            pattern="""Determine next workflow action based on current state. Output should be a JSON object with:
+            {
+                "action": "discovery" | "design" | "implement" | "validate" | "complete" | "error",
+                "details": { action specific details }
+            }""",
+            format="json",
+            validation={
+                "required_fields": ["action", "details"],
+                "allowed_actions": [
+                    "discovery",
+                    "design", 
+                    "implement",
+                    "validate",
+                    "complete",
+                    "error"
+                ]
+            }
+        )
+
+        logger.info("intent.process_started",
+                   intent_id=str(state.intent.id),
+                   project_path=str(project_path))
+
+        while state.can_continue:
+            state.iteration += 1
+            
             try:
-                logger.info("intent.iteration_starting",
-                           intent_id=str(intent.id),
-                           iteration=context.iteration_count)
-                
-                # Execute workflow phases
-                discovery_data = await self._execute_discovery(intent)
-                
-                solution = await self._execute_solution_planning(
-                    intent,
-                    discovery_data,
-                    context
+                # Get next workflow action
+                iterator = await self.semantic_iterator.iter_extract(
+                    content=state,
+                    config=workflow_config
                 )
-                
-                implementation_results = await self._execute_implementation(
-                    intent,
-                    solution
-                )
-                
-                assurance_results = await self._execute_assurance(
-                    intent,
-                    implementation_results
-                )
-                
-                # Update context with results
-                context.update_from_assurance(assurance_results)
-                
-                # Check if we succeeded
-                if assurance_results.get("success"):
-                    intent.status = IntentStatus.COMPLETED
-                    logger.info("intent.completed_successfully",
-                              intent_id=str(intent.id),
-                              iterations=context.iteration_count)
+
+                while iterator.has_next():
+                    action = next(iterator)
+                    state = await self._execute_action(state, action)
                     
-                    return {
-                        "status": "success",
-                        "intent_id": str(intent.id),
-                        "iterations": context.iteration_count,
-                        "changes": implementation_results["changes"],
-                        "assurance": assurance_results
-                    }
-                
-                # Update intent for next iteration
-                intent.description = context.sub_intent or intent_desc
-                logger.info("intent.preparing_next_iteration",
-                          iteration=context.iteration_count + 1,
-                          has_sub_intent=bool(context.sub_intent))
-                
+                    if state.has_error or not state.can_continue:
+                        break
+                        
+                    # Provide feedback to iterator
+                    iterator.update_context({
+                        "previous_state": state
+                    })
+
             except Exception as e:
+                state.error = str(e)
                 logger.error("intent.iteration_failed",
-                            intent_id=str(intent.id),
-                            iteration=context.iteration_count,
-                            error=str(e))
-                context.update_from_assurance({
-                    "success": False,
-                    "error": str(e)
-                })
-        
-        # If we get here, we hit max iterations
-        intent.status = IntentStatus.FAILED
-        logger.error("intent.max_iterations_reached",
-                    intent_id=str(intent.id),
-                    iterations=context.iteration_count)
+                           intent_id=str(state.intent.id),
+                           iteration=state.iteration,
+                           error=str(e))
+
+        # Return final result
+        success = not state.has_error and state.intent.status == IntentStatus.COMPLETED
         
         return {
-            "status": "failed",
-            "intent_id": str(intent.id),
-            "iterations": context.iteration_count,
-            "error": "Maximum iterations reached",
-            "last_assurance": context.assurance_outputs[-1] if context.assurance_outputs else None
+            "status": "success" if success else "failed",
+            "intent_id": str(state.intent.id),
+            "iterations": state.iteration,
+            "changes": state.implementation_data.get("changes", []) if success else [],
+            "validation": state.validation_data if success else None,
+            "error": state.error
         }
+
+    async def _execute_action(self, state: WorkflowState, action: Dict[str, Any]) -> WorkflowState:
+        """Execute a single workflow action"""
+        action_type = action["action"]
+        details = action["details"]
+        
+        logger.info("intent.execute_action",
+                   intent_id=str(state.intent.id),
+                   action=action_type,
+                   iteration=state.iteration)
+
+        try:
+            match action_type:
+                case "discovery":
+                    state.intent.status = IntentStatus.ANALYZING
+                    result = await self.discovery.process({
+                        "project_path": state.intent.project_path,
+                        "intent": state.intent.description
+                    })
+                    if result.success:
+                        state.discovery_data = result.data
+                    else:
+                        state.error = result.error
+
+                case "design":
+                    result = await self.designer.process({
+                        "intent": state.intent.description,
+                        "discovery_data": state.discovery_data,
+                        "iteration": state.iteration
+                    })
+                    if result.success:
+                        state.solution_data = result.data.get("response", {})
+                    else:
+                        state.error = result.error
+
+                case "implement":
+                    state.intent.status = IntentStatus.TRANSFORMING
+                    result = await self.coder.process(state.solution_data)
+                    if result.success:
+                        state.implementation_data = result.data
+                    else:
+                        state.error = result.error
+
+                case "validate":
+                    state.intent.status = IntentStatus.VALIDATING
+                    result = await self.assurance.process({
+                        "changes": state.implementation_data,
+                        "project_path": state.intent.project_path,
+                        "intent": state.intent.description
+                    })
+                    if result.success:
+                        state.validation_data = result.data
+                        if result.data.get("success"):
+                            state.intent.status = IntentStatus.COMPLETED
+                    else:
+                        state.error = result.error
+
+                case "complete":
+                    state.intent.status = IntentStatus.COMPLETED
+
+                case "error":
+                    state.error = details.get("error")
+                    state.intent.status = IntentStatus.FAILED
+
+        except Exception as e:
+            state.error = str(e)
+            logger.error("intent.action_failed",
+                       intent_id=str(state.intent.id),
+                       action=action_type,
+                       error=str(e))
+
+        return state
