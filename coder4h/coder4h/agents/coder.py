@@ -7,9 +7,9 @@ from enum import Enum
 import shutil
 import re
 
-from .base import BaseAgent, LLMProvider, AgentResponse
-from src.skills.semantic_extract import SemanticExtract
-from src.skills.semantic_merge import SemanticMerge
+from coder4h.base import BaseAgent, LLMProvider, AgentResponse
+from coder4h.skills.semantic_extract import SemanticExtract
+from coder4h.skills.semantic_merge import SemanticMerge
 
 logger = structlog.get_logger()
 

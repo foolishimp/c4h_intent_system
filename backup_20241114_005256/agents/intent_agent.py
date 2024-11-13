@@ -8,14 +8,14 @@ from dataclasses import dataclass
 import os
 from datetime import datetime
 
-from src.models.intent import Intent, IntentStatus
-from src.agents.discovery import DiscoveryAgent 
-from src.agents.solution_designer import SolutionDesigner
-from src.agents.coder import Coder
-from src.agents.assurance import AssuranceAgent
-from src.skills.semantic_extract import SemanticExtract
-from src.skills.semantic_iterator import SemanticIterator
-from src.skills.shared.types import ExtractConfig, InterpretResult
+from ..models.intent import Intent, IntentStatus
+from .discovery import DiscoveryAgent 
+from .solution_designer import SolutionDesigner
+from .coder import Coder
+from .assurance import AssuranceAgent
+from ..skills.semantic_extract import SemanticExtract
+from ..skills.semantic_iterator import SemanticIterator
+from ..skills.shared.types import ExtractConfig, InterpretResult
 
 logger = structlog.get_logger()
 

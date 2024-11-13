@@ -1,11 +1,13 @@
 # src/skills/semantic_merge.py
+
 from typing import Dict, Any, Optional
 from dataclasses import dataclass
 import structlog
 import re
-from src.agents.base import BaseAgent, LLMProvider  # Changed from .base
+from src.agents.base import BaseAgent, LLMProvider
 
 logger = structlog.get_logger()
+
 @dataclass
 class MergeResult:
     """Result of semantic merge operation"""

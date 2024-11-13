@@ -1,0 +1,9 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coder4h"
+version = "0.1.0"
+description = "AI-powered code refactoring tool"
+requires-python = ">=3.11"

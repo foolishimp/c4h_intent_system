@@ -8,8 +8,8 @@ import shutil
 import re
 
 from .base import BaseAgent, LLMProvider, AgentResponse
-from src.skills.semantic_extract import SemanticExtract
-from src.skills.semantic_merge import SemanticMerge
+from ..skills.semantic_extract import SemanticExtract
+from ..skills.semantic_merge import SemanticMerge
 
 logger = structlog.get_logger()
 

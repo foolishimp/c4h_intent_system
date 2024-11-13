@@ -1,4 +1,4 @@
-# src/__init__.py
-from . import models
+"""Code refactoring tool package."""
 from . import agents
+from . import models
 from . import skills

@@ -4,7 +4,7 @@ from typing import Dict, Any, Optional, Union, List
 import structlog
 import json
 from dataclasses import dataclass
-from src.agents.base import BaseAgent, LLMProvider, AgentResponse  # Changed from .base
+from src.agents.base import BaseAgent, LLMProvider, AgentResponse
 
 logger = structlog.get_logger()
 

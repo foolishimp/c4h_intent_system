@@ -11,8 +11,8 @@ import tempfile
 import shutil
 import os
 
-from .base import BaseAgent, LLMProvider, AgentResponse
-from src.skills.semantic_extract import SemanticExtract, ExtractResult
+from coder4h.base import BaseAgent, LLMProvider, AgentResponse
+from coder4h.skills.semantic_extract import SemanticExtract, ExtractResult
 
 logger = structlog.get_logger()
 

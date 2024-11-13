@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "coder4h"
+version = "0.1.0"
+description = "AI-powered code refactoring tool"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "litellm>=1.52.3",
+    "openai>=1.13.3",
+    "anthropic>=0.18.1",
+    "google-generativeai>=0.3.2",
+    "libcst>=1.2.0",
+    "pydantic>=2.6.3",
+    "structlog>=24.1.0",
+    "python-dotenv>=1.0.1",
+    "PyYAML>=6.0.1",
+]
+
+[project.scripts]
+coder4h = "coder4h.cli:main"

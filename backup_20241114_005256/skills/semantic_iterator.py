@@ -1,10 +1,11 @@
 # src/skills/semantic_iterator.py
+
 from typing import Dict, Any, List, Optional, Iterator, Iterable, TypeVar, Generic, Callable
 from collections.abc import Sequence
 import structlog
-from src.skills.semantic_extract import SemanticExtract
-from src.skills.shared.types import ExtractConfig, InterpretResult
-from src.agents.base import LLMProvider, AgentResponse  # Changed from .base
+from .semantic_extract import SemanticExtract
+from .shared.types import ExtractConfig, InterpretResult
+from src.agents.base import LLMProvider, AgentResponse
 
 logger = structlog.get_logger()
 
