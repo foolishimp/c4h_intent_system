@@ -1,8 +1,9 @@
 # src/agents/intent_agent.py
 
 from typing import Dict, Any, Optional, List
-from pathlib import Path
 import structlog
+from pathlib import Path
+import os
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -12,7 +13,7 @@ from src.agents.solution_designer import SolutionDesigner
 from src.agents.coder import Coder, MergeMethod
 from src.agents.assurance import AssuranceAgent
 from src.skills.semantic_iterator import SemanticIterator
-from src.skills.shared.types import ExtractConfig, InterpretResult
+from src.skills.shared.types import ExtractConfig
 
 logger = structlog.get_logger()
 
@@ -30,7 +31,7 @@ class WorkflowState:
 
     @property
     def has_error(self) -> bool:
-        return self.error is not None
+        return bool(self.error)
 
     @property
     def can_continue(self) -> bool:
@@ -40,29 +41,29 @@ class IntentAgent:
     """Orchestrates the intent workflow using semantic iteration"""
     
     def __init__(self, max_iterations: int = 3):
-        """Initialize intent agent with semantic tools"""
+        """Initialize intent agent"""
         self.max_iterations = max_iterations
         
-        # Initialize base configuration
-        config_list = [{
+        # Initialize base configuration for LLM
+        self.config = {
             "model": "claude-3-sonnet-20240229",
             "api_key": os.getenv("ANTHROPIC_API_KEY"),
             "max_tokens": 4000,
             "temperature": 0
-        }]
-
-        # Initialize semantic tools
-        self.semantic_iterator = SemanticIterator(config_list)
+        }
         
-        # Initialize specialized agents 
+        # Initialize semantic iterator with config
+        self.semantic_iterator = SemanticIterator([self.config])
+        
+        # Initialize specialized agents
         self.discovery = DiscoveryAgent()
-        self.designer = SolutionDesigner() 
+        self.designer = SolutionDesigner()
         self.coder = Coder()
         self.assurance = AssuranceAgent()
         
         logger.info("intent_agent.initialized",
                    max_iterations=max_iterations,
-                   model=config_list[0]["model"])
+                   model=self.config["model"])
 
     async def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
         """Process an intent through complete workflow"""
@@ -75,25 +76,14 @@ class IntentAgent:
             max_iterations=self.max_iterations
         )
 
-        # Configure workflow iteration
+        # Configure semantic iteration
         workflow_config = ExtractConfig(
-            pattern="""Determine next workflow action based on current state. Output should be a JSON object with:
+            pattern="""Determine next workflow action based on current state. Output should be:
             {
                 "action": "discovery" | "design" | "implement" | "validate" | "complete" | "error",
-                "details": { action specific details }
+                "details": { action specific parameters }
             }""",
-            format="json",
-            validation={
-                "required_fields": ["action", "details"],
-                "allowed_actions": [
-                    "discovery",
-                    "design", 
-                    "implement",
-                    "validate",
-                    "complete",
-                    "error"
-                ]
-            }
+            format="json"
         )
 
         logger.info("intent.process_started",
@@ -117,7 +107,7 @@ class IntentAgent:
                     if state.has_error or not state.can_continue:
                         break
                         
-                    # Provide feedback to iterator
+                    # Update iterator context
                     iterator.update_context({
                         "previous_state": state
                     })
@@ -129,7 +119,7 @@ class IntentAgent:
                            iteration=state.iteration,
                            error=str(e))
 
-        # Return final result
+        # Generate final result
         success = not state.has_error and state.intent.status == IntentStatus.COMPLETED
         
         return {
@@ -143,15 +133,20 @@ class IntentAgent:
 
     async def _execute_action(self, state: WorkflowState, action: Dict[str, Any]) -> WorkflowState:
         """Execute a single workflow action"""
-        action_type = action["action"]
-        details = action["details"]
-        
-        logger.info("intent.execute_action",
-                   intent_id=str(state.intent.id),
-                   action=action_type,
-                   iteration=state.iteration)
-
         try:
+            # Safely extract action type and details
+            action_type = action.get("action") if isinstance(action, dict) else None
+            details = action.get("details", {}) if isinstance(action, dict) else {}
+            
+            if not action_type:
+                state.error = "Invalid action format"
+                return state
+            
+            logger.info("intent.execute_action",
+                    intent_id=str(state.intent.id),
+                    action=action_type,
+                    iteration=state.iteration)
+
             match action_type:
                 case "discovery":
                     state.intent.status = IntentStatus.ANALYZING
@@ -165,6 +160,10 @@ class IntentAgent:
                         state.error = result.error
 
                 case "design":
+                    if not state.discovery_data:
+                        state.error = "Missing discovery data"
+                        return state
+                        
                     result = await self.designer.process({
                         "intent": state.intent.description,
                         "discovery_data": state.discovery_data,
@@ -176,6 +175,10 @@ class IntentAgent:
                         state.error = result.error
 
                 case "implement":
+                    if not state.solution_data:
+                        state.error = "Missing solution data"
+                        return state
+                        
                     state.intent.status = IntentStatus.TRANSFORMING
                     result = await self.coder.process(state.solution_data)
                     if result.success:
@@ -184,6 +187,10 @@ class IntentAgent:
                         state.error = result.error
 
                 case "validate":
+                    if not state.implementation_data:
+                        state.error = "Missing implementation data"
+                        return state
+                        
                     state.intent.status = IntentStatus.VALIDATING
                     result = await self.assurance.process({
                         "changes": state.implementation_data,
@@ -201,14 +208,18 @@ class IntentAgent:
                     state.intent.status = IntentStatus.COMPLETED
 
                 case "error":
-                    state.error = details.get("error")
+                    state.error = details.get("error", "Unknown error")
+                    state.intent.status = IntentStatus.FAILED
+
+                case _:
+                    state.error = f"Unknown action type: {action_type}"
                     state.intent.status = IntentStatus.FAILED
 
         except Exception as e:
             state.error = str(e)
             logger.error("intent.action_failed",
-                       intent_id=str(state.intent.id),
-                       action=action_type,
-                       error=str(e))
+                    intent_id=str(state.intent.id),
+                    action=action_type,
+                    error=str(e))
 
         return state

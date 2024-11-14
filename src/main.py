@@ -2,125 +2,98 @@
 
 import asyncio
 import sys
-import argparse
 from pathlib import Path
+import argparse
 import structlog
+import uuid
+from typing import Optional
+
+from src.cli.console_menu import ConsoleMenu
+from src.cli.workspace_manager import WorkspaceManager, WorkspaceState
 from src.agents.intent_agent import IntentAgent
 from src.agents.coder import MergeMethod
-import os
-import logging
 
 logger = structlog.get_logger()
+
+def setup_workspace(args: argparse.Namespace) -> WorkspaceState:
+    """Set up workspace from command line args"""
+    workspace_dir = Path("workspaces/current")
+    workspace_dir.parent.mkdir(parents=True, exist_ok=True)
+    
+    manager = WorkspaceManager(workspace_dir)
+    
+    # Generate unique ID for this intent
+    intent_id = str(uuid.uuid4())
+    
+    # Create or load workspace
+    state = manager.load_workspace(intent_id)
+    
+    # Update with CLI arguments
+    if args.project_path:
+        manager.set_project_path(state, args.project_path)
+    if args.intent:
+        manager.set_intent_description(state, args.intent)
+        
+    return state
 
 async def process_refactoring(args: argparse.Namespace) -> dict:
     """Process a refactoring request"""
     try:
-        # Validate project path
-        if not args.project_path.exists():
-            logger.error("Invalid project path", path=str(args.project_path))
-            return {"status": "error", "message": f"Project path does not exist: {args.project_path}"}
-
-        # Create intent agent
-        agent = IntentAgent(max_iterations=args.max_iterations)
+        # Initialize workspace
+        state = setup_workspace(args)
         
-        # Create intent description
-        intent_desc = {
-            "type": "refactor",
-            "description": args.intent,
-            "merge_strategy": args.merge_strategy
-        }
-
-        logger.info("processing_refactor_request",
-                   project=str(args.project_path),
-                   intent=args.intent)
-
-        # Process the intent
-        result = await agent.process(args.project_path, intent_desc)
-        
-        logger.info("refactoring_completed",
-                   status=result.get("status"),
-                   iterations=result.get("iterations", 0))
-                   
-        return result
-
+        if args.interactive:
+            # Start interactive menu
+            menu = ConsoleMenu(state)
+            menu.main_menu()
+            return {"status": "completed"}
+        else:
+            # Run automated flow
+            agent = IntentAgent(max_iterations=args.max_iterations)
+            result = await agent.process(args.project_path, {
+                "description": args.intent,
+                "merge_strategy": args.merge_strategy
+            })
+            return result
+            
     except Exception as e:
-        logger.exception("refactoring_failed", error=str(e))
-        return {"status": "error", "message": str(e)}
-
-def setup_logging(verbose: bool = False):
-    """Configure structured logging"""
-    # Set log level
-    level = logging.DEBUG if verbose else logging.INFO
-    
-    # Configure structlog
-    structlog.configure(
-        processors=[
-            structlog.contextvars.merge_contextvars,
-            structlog.processors.add_log_level,
-            structlog.processors.StackInfoRenderer(),
-            structlog.dev.set_exc_info,
-            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S"),
-            structlog.dev.ConsoleRenderer(colors=True)
-        ],
-        wrapper_class=structlog.make_filtering_bound_logger(level),
-        context_class=dict,
-        logger_factory=structlog.PrintLoggerFactory(),
-        cache_logger_on_first_use=True
-    )
-    
-    # Also configure standard logging
-    logging.basicConfig(
-        format="%(message)s",
-        level=level
-    )
+        logger.exception("refactoring.failed", error=str(e))
+        return {
+            "status": "error",
+            "error": str(e)
+        }
 
 def main():
     """CLI entry point"""
     parser = argparse.ArgumentParser(description="AI-powered code refactoring tool")
     parser.add_argument('command', choices=['refactor'])
-    parser.add_argument('project_path', type=Path)
-    parser.add_argument('intent', type=str)
+    parser.add_argument('project_path', type=Path, nargs='?')
+    parser.add_argument('intent', type=str, nargs='?')
     parser.add_argument('--merge-strategy', 
                        choices=[method.value for method in MergeMethod],
                        default=MergeMethod.SMART.value,
                        help="Strategy for merging code changes")
     parser.add_argument('--max-iterations', type=int, default=3,
                        help="Maximum number of refinement iterations")
-    parser.add_argument('-v', '--verbose', action='store_true',
-                       help="Enable verbose logging")
+    parser.add_argument('-i', '--interactive', action='store_true',
+                       help="Start interactive console menu")
     
     args = parser.parse_args()
-
-    # Setup logging
-    setup_logging(args.verbose)
-
-    # Verify API key
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        logger.error("Missing ANTHROPIC_API_KEY environment variable")
-        sys.exit(1)
-
+    
     try:
-        # Run the refactoring
+        # Validate args for non-interactive mode
+        if not args.interactive and (not args.project_path or not args.intent):
+            parser.error("project_path and intent are required in non-interactive mode")
+            
         result = asyncio.run(process_refactoring(args))
         
-        if result.get("status") == "success":
-            logger.info("Refactoring completed successfully", 
-                       changes=len(result.get("changes", [])))
-            
-            # Print changes if verbose
-            if args.verbose:
-                for change in result.get("changes", []):
-                    print(f"\nFile: {change.get('file')}")
-                    print(f"Type: {change.get('change_type')}")
-                    if change.get('error'):
-                        print(f"Error: {change.get('error')}")
-                    
-        else:
-            logger.error("Refactoring failed", 
-                        error=result.get("message", "Unknown error"))
+        if result["status"] == "error":
+            logger.error("refactoring.failed", error=result["error"])
             sys.exit(1)
-
+        else:
+            logger.info("refactoring.completed")
+            sys.exit(0)
+            
     except KeyboardInterrupt:
         logger.warning("Operation cancelled by user")
         sys.exit(1)
