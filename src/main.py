@@ -6,10 +6,10 @@ from pathlib import Path
 import argparse
 import structlog
 import uuid
-from typing import Optional
 
-from src.cli.console_menu import ConsoleMenu
-from src.cli.workspace_manager import WorkspaceManager, WorkspaceState
+from src.cli.console_menu import ConsoleMenu 
+from src.cli.workspace.manager import WorkspaceManager
+from src.cli.workspace.state import WorkspaceState
 from src.agents.intent_agent import IntentAgent
 from src.agents.coder import MergeMethod
 
@@ -21,34 +21,33 @@ def setup_workspace(args: argparse.Namespace) -> WorkspaceState:
     workspace_dir.parent.mkdir(parents=True, exist_ok=True)
     
     manager = WorkspaceManager(workspace_dir)
-    
-    # Generate unique ID for this intent
     intent_id = str(uuid.uuid4())
     
-    # Create or load workspace
-    state = manager.load_workspace(intent_id)
+    try:
+        state = manager.load_state(intent_id)
+        logger.info("workspace.loaded", path=str(workspace_dir), intent_id=intent_id)
+    except Exception as e:
+        logger.warning("workspace.load_failed", error=str(e))
+        state = manager.create_workspace(intent_id)
     
-    # Update with CLI arguments
     if args.project_path:
-        manager.set_project_path(state, args.project_path)
+        state.project_path = Path(args.project_path)
     if args.intent:
-        manager.set_intent_description(state, args.intent)
+        state.intent_description = args.intent
+    manager.save_state(state)
         
     return state
 
 async def process_refactoring(args: argparse.Namespace) -> dict:
     """Process a refactoring request"""
     try:
-        # Initialize workspace
         state = setup_workspace(args)
         
         if args.interactive:
-            # Start interactive menu
-            menu = ConsoleMenu(state)
-            menu.main_menu()
+            menu = ConsoleMenu(state.workspace_path)
+            await menu.main_menu()
             return {"status": "completed"}
         else:
-            # Run automated flow
             agent = IntentAgent(max_iterations=args.max_iterations)
             result = await agent.process(args.project_path, {
                 "description": args.intent,
@@ -85,6 +84,7 @@ def main():
         if not args.interactive and (not args.project_path or not args.intent):
             parser.error("project_path and intent are required in non-interactive mode")
             
+        # Run async event loop
         result = asyncio.run(process_refactoring(args))
         
         if result["status"] == "error":
