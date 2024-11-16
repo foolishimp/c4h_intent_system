@@ -20,8 +20,12 @@ class AgentState(BaseModel):
     status: str = "not_started"
     last_run: Optional[datetime] = None
     iterations: int = 0
+    last_action: Optional[str] = None  # Added this field
     error: Optional[str] = None
     response: Optional[Dict[str, Any]] = None
+
+    class Config:
+        extra = "allow"  # Allow extra fields for flexibility
 
 class Intent(BaseModel):
     """Intent model for code transformations"""
