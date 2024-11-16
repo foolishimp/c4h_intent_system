@@ -108,9 +108,14 @@ class DiscoveryAgent(BaseAgent):
                     data={},
                     error="No project path provided"
                 )
+            
+            project_path = Path(context["project_path"])
+            if not project_path.is_dir():
+                logger.error("discovery.not_directory", path=str(project_path))
+                return AgentResponse(success=False, error=f"Path is not a directory: {project_path}")
 
             # Validate path exists
-            if not Path(project_path).exists():
+            if not project_path.exists():
                 return AgentResponse(
                     success=False,
                     data={},
@@ -118,11 +123,11 @@ class DiscoveryAgent(BaseAgent):
                 )
 
             # Run discovery
-            result = await self._run_tartxt(project_path)
+            result = await self._run_tartxt(str(project_path))
             
             return AgentResponse(
                 success=True,
-                data=result
+                data={"project_path": str(project_path), "files": result["files"]}
             )
 
         except Exception as e:

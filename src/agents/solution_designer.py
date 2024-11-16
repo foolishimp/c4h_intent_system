@@ -1,5 +1,3 @@
-# src/agents/solution_designer.py
-
 from typing import Dict, Any, Optional
 import structlog
 from .base import BaseAgent, LLMProvider, AgentResponse
@@ -26,26 +24,40 @@ class SolutionDesigner(BaseAgent):
     
     def _get_system_message(self) -> str:
         return """You are a code modification expert that generates specific code changes.
-        When given source code and an intent, you must:
+    When given source code and an intent, you will:
 
-        1. First validate if changes are possible:
-           a. If code already has intended changes, return {"no_changes_needed": "explain why"}
-           b. If intent is missing or unclear, return {"needs_clarification": "specific question"}
-           c. If code is missing, return {"needs_information": ["missing items"]}
-           
-        2. For each required change, provide exact code modifications:
-        {
-            "changes": [
-                {
-                    "file_path": "exact/path/to/file",
-                    "change_type": "modify",
-                    "original_code": "...",
-                    "modified_code": "...",
-                    "description": "..."
-                }
-            ]
-        }"""
+    1. First validate if changes are possible:
+    a. If code already has intended changes, return {"no_changes_needed": "explain why"}
+    b. If intent is missing or unclear, return {"needs_clarification": "specific question"}
+    c. If code is missing, return {"needs_information": ["missing items"]}
 
+    2. For each required change, provide modifications in standard git diff format:
+
+    {
+        "changes": [
+            {
+                "file_path": "exact/path/to/file",
+                "type": "modify",
+                "description": "Brief description of the change",
+                "diff": "diff --git a/path/to/file b/path/to/file\\n--- a/path/to/file\\n+++ b/path/to/file\\n@@ -1,5 +1,6 @@\\n unchanged line\\n-removed line\\n+added line\\n+added line\\n unchanged line"
+            }
+        ]
+    }
+
+    Your response must be valid JSON. The diff section should use standard unified diff format with - for removed lines and + for added lines.
+
+    Example response for adding logging:
+    {
+        "changes": [
+            {
+                "file_path": "sample.py",
+                "type": "modify",
+                "description": "Add logging instead of print statements",
+                "diff": "diff --git a/sample.py b/sample.py\\n--- a/sample.py\\n+++ b/sample.py\\n@@ -1,6 +1,9 @@\\n+import logging\\n+\\n+logging.basicConfig(level=logging.INFO)\\n\\n def greet(name):\\n-    print(f\\"Hello, {name}!\\")\\n+    logging.info(f\\"Greeting user: {name}\\")\\n+    return f\\"Hello, {name}!\\"\\n"
+            }
+        ]
+    }"""
+    
     def _format_request(self, context: Optional[Dict[str, Any]]) -> str:
         """Format the solution design prompt using provided context"""
         if not context:
@@ -55,20 +67,23 @@ class SolutionDesigner(BaseAgent):
         file_count = len(context.get('discovery_data', {}).get('files', {}))
         
         self.logger.info("formatting_request",
-                        intent=context.get('intent', {}).get('description'),
-                        file_count=file_count)
+                         intent=context.get('intent', {}).get('description'),
+                         file_count=file_count)
 
-        return f"""Based on the following code context, design specific code changes to implement this intent.
+        return f"""Based on the following code context, design specific code changes to implement this intent. 
+        
+        IMPORTANT: Provide ALL code changes in git diff format using - for removed lines and + for added lines.
+        Include proper diff headers and chunk headers (@@ marks).
+        
+        INTENT:
+        {context.get('intent', {}).get('description', 'No description provided')}
 
-INTENT:
-{context.get('intent', {}).get('description', 'No description provided')}
+        SOURCE CODE:
+        {context.get('discovery_data', {}).get('files', {})}
 
-SOURCE CODE:
-{context.get('discovery_data', {}).get('files', {})}
-
-CONTEXT:
-- Iteration: {context.get('iteration', 0)}
-- Previous attempts: {context.get('previous_attempts', [])}"""
+        CONTEXT:
+        - Iteration: {context.get('iteration', 0)}
+        - Previous attempts: {context.get('previous_attempts', [])}"""
 
     def _validate_context(self, context: Optional[Dict[str, Any]]) -> Optional[str]:
         """Validate required context fields are present"""
@@ -112,8 +127,8 @@ CONTEXT:
 
             # Log request receipt
             self.logger.info("design_request_received",
-                           intent=context.get('intent', {}).get('description'),
-                           has_discovery=bool(context.get('discovery_data')))
+                             intent=context.get('intent', {}).get('description'),
+                             has_discovery=bool(context.get('discovery_data')))
 
             # Pass through to LLM for valid requests
             return await super().process(context)

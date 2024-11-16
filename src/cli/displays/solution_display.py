@@ -1,5 +1,3 @@
-# src/cli/displays/solution_display.py
-
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -19,7 +17,7 @@ class SolutionDisplay(BaseDisplay):
 
         if isinstance(data, dict) and 'changes' in data:
             self._show_changes_table(data['changes'])
-            self._show_change_details(data['changes'])
+            self._show_change_diffs(data['changes'])
         else:
             self.show_json_data(data, "Solution Design")
 
@@ -33,17 +31,20 @@ class SolutionDisplay(BaseDisplay):
         for change in changes:
             table.add_row(
                 change.get('file_path', ''),
-                change.get('change_type', ''),
+                change.get('type', ''),
                 change.get('description', '')
             )
         
         self.console.print(table)
 
-    def _show_change_details(self, changes: List[Dict[str, Any]]) -> None:
-        """Display detailed change instructions"""
+    def _show_change_diffs(self, changes: List[Dict[str, Any]]) -> None:
+        """Display detailed change diffs"""
         for i, change in enumerate(changes, 1):
+            diff = change.get('diff', 'No diff provided')
+            description = change.get('description', 'No description provided')
+            
             self.console.print(Panel(
-                change.get('instructions', 'No instructions provided'),
-                title=f"Change {i} Instructions",
-                border_style="yellow"
+                f"[bold]Description:[/]\n{description}\n\n[bold]Diff:[/]\n{diff}",
+                title=f"Change {i} Details",
+                border_style="blue"
             ))
