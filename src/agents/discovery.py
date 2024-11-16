@@ -1,4 +1,4 @@
-# src/agents/discovery.py
+"""Discovery agent using tartxt for project analysis."""
 
 from typing import Dict, Any, Optional
 import structlog
@@ -10,21 +10,11 @@ from .base import BaseAgent, LLMProvider, AgentResponse
 logger = structlog.get_logger()
 
 class DiscoveryAgent(BaseAgent):
-    """Agent responsible for project discovery using tartxt
-    
-    Note: Currently uses tartxt for discovery with no LLM dependency.
-    The base agent infrastructure is in place for future enhancements.
-    """
+    """Agent responsible for project discovery using tartxt"""
     
     def __init__(self,
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None):
-        """Initialize Discovery Agent
-        
-        Args:
-            provider: LLM provider for future enhancements
-            model: Specific model to use, or None for provider default
-        """
         super().__init__(
             provider=provider,
             model=model,
@@ -32,9 +22,11 @@ class DiscoveryAgent(BaseAgent):
         )
 
     def _get_agent_name(self) -> str:
+        """Get agent name - required by BaseAgent"""
         return "discovery_agent"
         
     def _get_system_message(self) -> str:
+        """Get system message - required by BaseAgent"""
         return """You are a project discovery agent.
         You analyze project structure and files to understand:
         1. Project organization
@@ -43,14 +35,7 @@ class DiscoveryAgent(BaseAgent):
         4. Available functionality"""
 
     def _parse_manifest(self, output: str) -> Dict[str, bool]:
-        """Parse manifest section from tartxt output to get file list
-        
-        Args:
-            output: Raw tartxt output
-            
-        Returns:
-            Dict mapping file paths to True
-        """
+        """Parse manifest section from tartxt output to get file list"""
         files = {}
         manifest_section = False
         
@@ -64,29 +49,16 @@ class DiscoveryAgent(BaseAgent):
                 break
                 
             if manifest_section and line:
-                # Skip any non-file lines
                 if not line.startswith(('==', 'Warning:', 'Error:')):
-                    # Convert Windows paths if present
                     norm_path = line.replace('\\', '/')
                     files[norm_path] = True
                     
         return files
 
     async def _run_tartxt(self, project_path: str) -> Dict[str, Any]:
-        """Run tartxt discovery on project
-        
-        Args:
-            project_path: Path to project to analyze
-            
-        Returns:
-            Dict containing tartxt discovery output and file list
-            
-        Raises:
-            subprocess.CalledProcessError: If tartxt execution fails
-            Exception: For other errors
-        """
+        """Run tartxt discovery on project getting streamed output"""
         try:
-            # Run tartxt discovery
+            # Run tartxt with -o for streamed output
             result = subprocess.run(
                 [sys.executable, "src/skills/tartxt.py", "-o", str(project_path)],
                 capture_output=True,
@@ -94,8 +66,11 @@ class DiscoveryAgent(BaseAgent):
                 check=True
             )
             
+            # Get complete output from stdout
+            output = result.stdout
+            
             # Extract file list from manifest
-            files = self._parse_manifest(result.stdout)
+            files = self._parse_manifest(output)
             
             if not files:
                 logger.warning("discovery.no_files_found",
@@ -103,11 +78,15 @@ class DiscoveryAgent(BaseAgent):
             
             discovery_result = {
                 "project_path": project_path,
-                "discovery_output": result.stdout,
-                "files": files
+                "discovery_output": output,  # Complete streamed output ready for solution designer
+                "files": files,
+                "stdout": result.stdout,  # Keep raw output too
+                "stderr": result.stderr,  # Keep any warnings/debug info
             }
             
-            logger.info("discovery.completed", file_count=len(files))
+            logger.info("discovery.completed", 
+                       file_count=len(files),
+                       output_size=len(output))
             return discovery_result
             
         except subprocess.CalledProcessError as e:
@@ -120,14 +99,7 @@ class DiscoveryAgent(BaseAgent):
             raise
 
     async def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process a project discovery request
-        
-        Args:
-            context: Must contain "project_path" key with path to analyze
-            
-        Returns:
-            AgentResponse containing discovery results or error
-        """
+        """Process a project discovery request"""
         try:
             project_path = context.get("project_path")
             if not project_path:

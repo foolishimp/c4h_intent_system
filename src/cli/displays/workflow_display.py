@@ -1,9 +1,7 @@
-# src/cli/displays/workflow_display.py
-
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from typing import Optional
+from typing import Optional, Dict, Any
 from datetime import datetime
 
 from src.cli.displays.base_display import BaseDisplay
@@ -13,6 +11,9 @@ from src.cli.workspace.state import WorkspaceState
 class WorkflowDisplay(BaseDisplay):
     """Handles display of workflow state and progress"""
     
+    def __init__(self, console: Console):
+        self.console = console
+
     def show_header(self) -> None:
         """Show application header"""
         self.console.print("[bold cyan]Refactoring Workflow Manager[/]\n")
@@ -27,11 +28,11 @@ class WorkflowDisplay(BaseDisplay):
 
     def show_workflow_state(self, state: WorkflowState) -> None:
         """Display current workflow state"""
-        # Create agent status table
+        # Create workflow status table
         table = Table(title="Workflow Status")
         table.add_column("Agent", style="cyan", justify="left", width=15)
         table.add_column("Status", style="green", justify="left", width=20)
-        table.add_column("Last Action", style="yellow", justify="left")
+        table.add_column("Details", style="yellow", justify="left")
         table.add_column("Last Run", style="magenta", justify="left", width=20)
 
         agents = ["discovery", "solution_design", "coder", "assurance"]
@@ -41,7 +42,6 @@ class WorkflowDisplay(BaseDisplay):
             agent_state = state.get_agent_state(agent)
             self._add_agent_row(table, agent, agent_state, current_agent)
 
-        # Show progress information
         self._show_progress_panel(state)
         self.console.print(table)
 
@@ -49,7 +49,7 @@ class WorkflowDisplay(BaseDisplay):
             self.show_error(state.error)
 
     def _add_agent_row(self, table: Table, agent: str, 
-                      agent_state: any, current_agent: Optional[str]) -> None:
+                       agent_state: Any, current_agent: Optional[str]) -> None:
         """Add agent row to status table"""
         # Determine status display
         if agent_state.status == "completed":
@@ -80,3 +80,21 @@ class WorkflowDisplay(BaseDisplay):
             f"[bold]Current Agent:[/] {state.get_current_agent() or 'None'}",
             title="Workflow Progress"
         ))
+
+    def _get_stage_details(self, stage: str, data: Dict[str, Any]) -> str:
+        """Get friendly display of stage details"""
+        if stage == "discovery":
+            file_count = len(data.get('files', {}))
+            return f"Found {file_count} files"
+        elif stage == "solution_design":
+            return "Solution designed"
+        elif stage == "coder":
+            changes = len(data.get('changes', []))
+            return f"{changes} changes applied"
+        elif stage == "assurance":
+            return "Validation complete"
+        return "-"
+
+    def show_error(self, error: str) -> None:
+        """Display error message"""
+        self.console.print(Panel(f"[red]{error}[/]", title="Error"))
