@@ -20,16 +20,16 @@ class SolutionDisplay(BaseDisplay):
     def display_data(self, data: Dict[str, Any]) -> None:
         """Display solution design data"""
         try:
-            # Handle response wrapper
-            if isinstance(data, dict) and 'response' in data:
-                data = data['response']
-
-            if isinstance(data, dict) and 'changes' in data:
-                self._show_changes_table(data['changes'])
-                self._show_change_diffs(data['changes'])
-            else:
-                self.show_json_data(data, "Solution Design")
-
+            self.console.print("\n=== Raw Input ===")
+            self.show_json_data(data.get('input', {}), "Solution Design Input")
+            
+            self.console.print("\n=== Raw Response ===")
+            self.show_json_data(data.get('response', {}), "LLM Response")
+            
+            if 'changes' in data.get('response', {}):
+                self._show_changes_table(data['response']['changes'])
+                self._show_change_diffs(data['response']['changes'])
+                
         except Exception as e:
             logger.error("solution_display.error", error=str(e))
             self.show_error(f"Error displaying solution: {str(e)}")

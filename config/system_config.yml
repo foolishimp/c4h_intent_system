@@ -40,8 +40,8 @@ llm_config:
       temperature: 0
 
 project:
-  default_path: "src/"
-  default_intent: "Add type hints and docstrings"
+  default_path: "tests/test_projects/"
+  default_intent: "Add logging to every function, replace all prints with logs"
   workspace_root: "workspaces"
   max_file_size: 1048576
 
