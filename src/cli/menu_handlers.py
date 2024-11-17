@@ -1,25 +1,24 @@
+# src/cli/menu_handlers.py
 """
 Menu handlers for the refactoring workflow management system.
-Handles menu choice actions and displays.
+Handles user interaction and menu choices in the console interface.
 """
 
 from typing import Optional
 import structlog
 from pathlib import Path
-import json
 from rich.panel import Panel
 from src.cli.displays.solution_display import SolutionDisplay
 from src.cli.displays.discovery_display import DiscoveryDisplay
 from src.cli.displays.impl_display import ImplementationDisplay
 from src.cli.displays.validation_display import ValidationDisplay
-from src.cli.base_menu import BaseMenu
 
 logger = structlog.get_logger()
 
 class MenuHandlers:
     """Handles menu interactions"""
 
-    def __init__(self, menu: 'BaseMenu'):
+    def __init__(self, menu: 'ConsoleMenu'):
         self.menu = menu
 
     async def handle_menu_choice(self, choice: str) -> None:
@@ -42,7 +41,7 @@ class MenuHandlers:
                     
         except Exception as e:
             logger.error("menu.handler_failed", choice=choice, error=str(e))
-            self.menu.console.print(f"[red]Error:[/] {str(e)}")
+            self.menu.show_error(str(e))
 
     async def _handle_set_path(self) -> None:
         """Handle setting project path"""
@@ -56,12 +55,11 @@ class MenuHandlers:
             path = Path(path_str)
             if not path.exists():
                 raise ValueError(f"Path does not exist: {path}")
-            self.menu.workspace.project_path = path
-            self.menu.workspace_manager.save_state(self.menu.workspace)
+            self.menu.project_path = path
             logger.info("menu.path_set", path=str(path))
         except Exception as e:
             logger.error("menu.path_error", error=str(e))
-            self.menu.console.print(f"[red]Invalid path:[/] {str(e)}")
+            self.menu.show_error(f"Invalid path: {str(e)}")
 
     async def _handle_set_intent(self) -> None:
         """Handle setting intent description"""
@@ -71,8 +69,7 @@ class MenuHandlers:
         if not description:
             return
             
-        self.menu.workspace.intent_description = description
-        self.menu.workspace_manager.save_state(self.menu.workspace)
+        self.menu.intent_description = description
         logger.info("menu.intent_set", description=description)
 
     async def _handle_step(self) -> None:
@@ -82,14 +79,14 @@ class MenuHandlers:
             if result:
                 status = result.get('status', 'unknown')
                 if status == 'error':
-                    self.menu.console.print(f"[red]Error:[/] {result.get('error')}")
+                    self.menu.show_error(result.get('error'))
                 else:
-                    self.menu.console.print(f"[green]Step completed successfully[/]")
+                    self.menu.console.print("[green]Step completed successfully[/]")
                     
                 logger.info("menu.step_completed", status=status)
         except Exception as e:
             logger.error("menu.step_error", error=str(e))
-            self.menu.console.print(f"[red]Error executing step:[/] {str(e)}")
+            self.menu.show_error(f"Error executing step: {str(e)}")
 
     async def _handle_view_data(self, stage: str) -> None:
         """Handle viewing stage data"""
@@ -110,24 +107,22 @@ class MenuHandlers:
                 case 'validation':
                     ValidationDisplay(self.menu.console).display_data(data)
                 case _:
-                    # Fallback to generic JSON display
+                    # Fallback to simple JSON display
                     self.menu.console.print(Panel(
-                        json.dumps(data, indent=2),
+                        str(data),
                         title=f"{stage.title()} Data",
                         border_style="blue"
                     ))
 
         except Exception as e:
             logger.error("menu.view_error", stage=stage, error=str(e))
-            self.menu.console.print(f"[red]Error viewing {stage} data:[/] {str(e)}")
+            self.menu.show_error(f"Error viewing {stage} data: {str(e)}")
 
     async def _handle_reset(self) -> None:
         """Handle resetting workflow"""
         try:
-            self.menu.workflow_data = {}
-            self.menu.workspace_manager.clean_workspace()
-            self.menu.console.print("[green]Workflow reset successfully[/]")
+            self.menu.reset_workflow()
             logger.info("menu.workflow_reset")
         except Exception as e:
             logger.error("menu.reset_error", error=str(e))
-            self.menu.console.print(f"[red]Error resetting workflow:[/] {str(e)}")
+            self.menu.show_error(f"Error resetting workflow: {str(e)}")

@@ -4,12 +4,14 @@ Workflow display handling for refactoring workflow management system.
 Provides rich terminal UI for displaying workflow state and progress.
 """
 
-from rich.console import Console
-from rich.panel import Panel
-from rich.table import Table
 from typing import Optional, Dict, Any
 from datetime import datetime
 import structlog
+from rich.console import Console
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+from rich.box import ROUNDED
 
 logger = structlog.get_logger()
 
@@ -18,44 +20,63 @@ class WorkflowDisplay:
     
     def __init__(self, console: Console):
         self.console = console
+        self.agents = ["discovery", "solution_design", "coder", "assurance"]
+        self.agent_names = {
+            "discovery": "Discovery",
+            "solution_design": "Solution Design",
+            "coder": "Code Implementation",
+            "assurance": "Validation"
+        }
 
-    def show_header(self) -> None:
-        """Show application header"""
-        self.console.print("[bold cyan]Refactoring Workflow Manager[/]\n")
-
-    def show_configuration(self, workspace: 'WorkspaceState') -> None:
+    def show_configuration(self, workspace: Any) -> None:
         """Display current configuration"""
+        config_table = Table.grid(padding=(0, 2))
+        config_table.add_row(
+            Text("Project Path:", style="bold"),
+            Text(str(getattr(workspace, 'project_path', 'Not set')), 
+                style="green" if getattr(workspace, 'project_path', None) else "red")
+        )
+        config_table.add_row(
+            Text("Intent Description:", style="bold"),
+            Text(getattr(workspace, 'intent_description', 'Not set'),
+                style="green" if getattr(workspace, 'intent_description', None) else "red")
+        )
+        
         self.console.print(Panel(
-            f"[bold]Project Path:[/] {workspace.project_path or 'Not set'}\n"
-            f"[bold]Intent Description:[/] {workspace.intent_description or 'Not set'}",
-            title="Current Configuration"
+            config_table,
+            title="Current Configuration",
+            border_style="blue"
         ))
 
     def show_workflow_state(self, state: Dict[str, Any]) -> None:
-        """Display current workflow state"""
+        """Display current workflow state with detailed agent status"""
         try:
             # Create workflow status table
-            table = Table(title="Workflow Status")
-            table.add_column("Agent", style="cyan", justify="left", width=15)
-            table.add_column("Status", style="green", justify="left", width=20)
-            table.add_column("Details", style="yellow", justify="left")
-            table.add_column("Last Run", style="magenta", justify="left", width=20)
+            table = Table(
+                title="Workflow Status",
+                box=ROUNDED,
+                title_style="bold cyan",
+                border_style="blue"
+            )
+            
+            table.add_column("Agent", style="cyan", justify="left")
+            table.add_column("Status", justify="center")
+            table.add_column("Last Action", style="yellow")
+            table.add_column("Time", style="dim")
 
-            agents = ["discovery", "solution_design", "coder", "assurance"]
             current_agent = self._get_current_agent(state)
 
-            for agent in agents:
+            # Add rows for each agent
+            for agent in self.agents:
                 agent_state = self._get_agent_state(state, agent)
                 self._add_agent_row(table, agent, agent_state, current_agent)
 
-            self._show_progress_panel(state)
             self.console.print(table)
+            self._show_progress_panel(state)
 
-            if error := state.get('error'):
-                self.show_error(error)
-                
         except Exception as e:
-            self.show_error(f"Display error: {str(e)}")
+            logger.error("workflow_display.error", error=str(e))
+            self.console.print(f"[red]Error displaying workflow state: {str(e)}[/]")
 
     def _get_current_agent(self, state: Dict[str, Any]) -> Optional[str]:
         """Determine current active agent from state"""
@@ -91,9 +112,9 @@ class WorkflowDisplay:
 
     def _add_agent_row(self, table: Table, agent: str, 
                       agent_state: Dict[str, Any], current_agent: Optional[str]) -> None:
-        """Add agent row to status table"""
-        # Format status display
-        status = self._get_status_display(agent, agent_state, current_agent)
+        """Add agent row to status table with rich formatting"""
+        # Get display name
+        display_name = self.agent_names.get(agent, agent.title())
         
         # Format timestamp
         timestamp = agent_state.get('timestamp')
@@ -106,48 +127,63 @@ class WorkflowDisplay:
         else:
             timestamp_display = "-"
 
-        # Add row with arrow indicator for current agent
+        # Determine status style and symbol
+        status_style = self._get_status_style(agent_state)
+        status_symbol = self._get_status_symbol(agent_state, agent == current_agent)
+
+        # Add row with agent indicator
         table.add_row(
-            f"{'→ ' if agent == current_agent else ''}{agent}",
-            status,
+            f"{'→ ' if agent == current_agent else '  '}{display_name}",
+            Text(status_symbol, style=status_style),
             agent_state.get('last_action', '-'),
             timestamp_display
         )
 
-    def _get_status_display(self, agent: str, agent_state: Dict[str, Any], 
-                          current_agent: Optional[str]) -> str:
-        """Get formatted status display"""
-        if agent_state.get('status') == "completed":
-            return "[green]✓ Complete[/]"
-        elif agent_state.get('error'):
-            return "[red]✗ Failed[/]"
-        elif agent == current_agent:
-            return "[yellow]⟳ Active[/]"
-        return "[blue]Pending[/]"
+    def _get_status_style(self, agent_state: Dict[str, Any]) -> str:
+        """Get style for status based on state"""
+        status = agent_state.get('status', '').lower()
+        if status == 'completed':
+            return "green"
+        elif status == 'failed' or agent_state.get('error'):
+            return "red"
+        elif status == 'in_progress':
+            return "yellow"
+        return "blue"
+
+    def _get_status_symbol(self, agent_state: Dict[str, Any], is_current: bool) -> str:
+        """Get status symbol based on state"""
+        status = agent_state.get('status', '').lower()
+        if status == 'completed':
+            return "✓ Complete"
+        elif status == 'failed' or agent_state.get('error'):
+            return "✗ Failed"
+        elif is_current:
+            return "⟳ Active"
+        return "• Pending"
 
     def _show_progress_panel(self, state: Dict[str, Any]) -> None:
-        """Show workflow progress panel"""
+        """Show overall workflow progress panel"""
         current_stage = state.get('current_stage')
         error = state.get('error')
         
+        # Calculate progress
+        completed = sum(1 for agent in self.agents 
+                       if self._get_agent_state(state, agent).get('status') == 'completed')
+        total = len(self.agents)
+        progress = f"{completed}/{total} stages complete"
+
+        # Determine overall status
         if error:
             status = "[red]Failed[/]"
         elif current_stage:
             status = "[yellow]In Progress[/]"
         else:
-            status = "[green]Completed[/]"
+            status = "[green]Completed[/]" if completed == total else "[blue]Pending[/]"
 
         self.console.print(Panel(
             f"[bold]Status:[/] {status}\n"
-            f"[bold]Current Stage:[/] {current_stage or 'None'}",
+            f"[bold]Progress:[/] {progress}\n"
+            f"[bold]Current Stage:[/] {self.agent_names.get(current_stage, current_stage) if current_stage else 'None'}",
             title="Workflow Progress",
             border_style="blue"
-        ))
-
-    def show_error(self, error: str) -> None:
-        """Display error message"""
-        self.console.print(Panel(
-            f"[red]{error}[/]",
-            title="Error",
-            border_style="red"
         ))
