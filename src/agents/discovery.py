@@ -1,4 +1,4 @@
-"""Discovery agent using tartxt for project analysis."""
+# src/agents/discovery.py
 
 from typing import Dict, Any, Optional
 import structlog
@@ -15,12 +15,18 @@ class DiscoveryAgent(BaseAgent):
     
     def __init__(self,
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
-                 model: Optional[str] = None):
+                 model: Optional[str] = None,
+                 workspace_root: Optional[Path] = None):
         super().__init__(
             provider=provider,
             model=model,
             temperature=0
         )
+        
+        # Optional workspace for persistent storage
+        if workspace_root:
+            self.workspace_root = workspace_root
+            self.workspace_root.mkdir(parents=True, exist_ok=True)
 
     def _get_agent_name(self) -> str:
         """Get agent name - required by BaseAgent"""
@@ -83,7 +89,13 @@ class DiscoveryAgent(BaseAgent):
                 "files": files,
                 "stdout": result.stdout,  # Keep raw output too
                 "stderr": result.stderr,  # Keep any warnings/debug info
+                "timestamp": datetime.utcnow().isoformat()
             }
+            
+            # If workspace configured, store output
+            if hasattr(self, 'workspace_root'):
+                data_file = self.workspace_root / f"discovery_{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
+                data_file.write_text(json.dumps(discovery_result, indent=2))
             
             logger.info("discovery.completed", 
                        file_count=len(files),
@@ -126,13 +138,13 @@ class DiscoveryAgent(BaseAgent):
             # Run discovery
             result = await self._run_tartxt(str(project_path))
             
-            # Fix: Return complete discovery result including discovery_output
+            # Return complete discovery result including discovery_output
             return AgentResponse(
                 success=True,
                 data={
                     "project_path": str(project_path),
                     "files": result["files"],
-                    "discovery_output": result["discovery_output"],  # Add this back
+                    "discovery_output": result["discovery_output"],  # Complete output for solution designer
                     "timestamp": datetime.utcnow().isoformat()
                 }
             )
