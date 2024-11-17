@@ -247,8 +247,10 @@ class IntentAgent:
         self.current_state.discovery_data = {
             "files": result.data.get("files", {}),
             "project_path": result.data.get("project_path"),
+            "discovery_output": result.data.get("discovery_output"),  # Preserve full output
+            "raw_output": result.data.get("raw_output"),  # Preserve raw output
             "timestamp": datetime.utcnow().isoformat(),
-            "status": "completed" if result.success else "failed",
+            "status": "completed" if result.success else "failed", 
             "error": result.error
         }
 
