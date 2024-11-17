@@ -366,57 +366,35 @@ class Coder(BaseAgent):
         try:
             logger.info("coder.processing_request", context_keys=list(context.keys()))
             
-            # Handle special cases from architect
-            if 'needs_clarification' in context:
-                logger.info("coder.needs_clarification", question=context['needs_clarification'])
+            # Safety check for empty context
+            if not context:
+                logger.warning("coder.empty_context")
                 return AgentResponse(
-                    success=False,
-                    data={},
-                    error=f"Need clarification: {context['needs_clarification']}"
-                )
-                
-            if 'needs_information' in context:
-                logger.info("coder.needs_information", missing=context['needs_information'])
-                return AgentResponse(
-                    success=False,
-                    data={},
-                    error=f"Insufficient information: {', '.join(context['needs_information'])}"
-                )
-                
-            if 'no_changes_needed' in context:
-                logger.info("coder.no_changes_needed", reason=context['no_changes_needed'])
-                return AgentResponse(
-                    success=True,
-                    data={"message": f"No changes needed: {context['no_changes_needed']}"},
+                    success=True,  # Return success but indicate no action needed
+                    data={"message": "No changes to implement"},
                     error=None
                 )
             
-            # Handle architect suggestions format
-            if 'suggestions' in context:
-                suggestions = context['suggestions']
-                if not suggestions:
-                    logger.info("coder.no_suggestions")
-                    return AgentResponse(
-                        success=True,
-                        data={"message": "No changes suggested"},
-                        error=None
-                    )
-                actions = [self._map_suggestion_to_action(s) for s in suggestions]
-            else:
-                actions = context.get('actions', [])
-                if not actions:
-                    logger.info("coder.no_actions")
-                    return AgentResponse(
-                        success=True,
-                        data={"message": "No actions provided"},
-                        error=None
-                    )
+            # Handle changes from solution designer
+            changes = []
+            if "changes" in context:
+                changes = context["changes"]
+            elif "response" in context and "changes" in context["response"]:
+                changes = context["response"]["changes"]
+            
+            if not changes:
+                logger.info("coder.no_changes")
+                return AgentResponse(
+                    success=True,
+                    data={"message": "No changes specified"},
+                    error=None
+                )
 
-            # Process each action
+            # Process each change
             results = []
-            for action in actions:
+            for change in changes:
                 try:
-                    result = await self.transform(action)
+                    result = await self.transform(change)
                     if result.success:
                         results.append({
                             "status": "success",
@@ -425,12 +403,12 @@ class Coder(BaseAgent):
                             "action": result.action
                         })
                         logger.info("coder.change_succeeded", 
-                                  file=action.get('file_path'),
-                                  type=action.get('change_type'))
+                                file=change.get('file_path'),
+                                type=change.get('change_type'))
                     else:
                         logger.warning("coder.change_failed",
-                                     file=action.get('file_path'),
-                                     error=result.error)
+                                    file=change.get('file_path'),
+                                    error=result.error)
                         results.append({
                             "status": "failed",
                             "file_path": result.file_path,
@@ -439,11 +417,11 @@ class Coder(BaseAgent):
 
                 except Exception as e:
                     logger.error("coder.action_failed",
-                               action=action,
-                               error=str(e))
+                            action=change,
+                            error=str(e))
                     results.append({
                         "status": "failed",
-                        "file_path": action.get('file_path'),
+                        "file_path": change.get('file_path'),
                         "error": str(e)
                     })
 
@@ -451,7 +429,8 @@ class Coder(BaseAgent):
                 success=any(r["status"] == "success" for r in results),
                 data={
                     "changes": results,
-                    "message": f"Implemented {len([r for r in results if r['status'] == 'success'])} changes"
+                    "message": f"Implemented {len([r for r in results if r['status'] == 'success'])} changes",
+                    "status": "completed"  # Add explicit completion status
                 },
                 error=None if results else "No changes were processed"
             )
@@ -460,6 +439,6 @@ class Coder(BaseAgent):
             logger.error("coder.process_failed", error=str(e))
             return AgentResponse(
                 success=False,
-                data={},
+                data={"status": "failed"},
                 error=str(e)
             )
