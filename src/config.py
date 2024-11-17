@@ -1,4 +1,7 @@
-# src/config.py
+"""
+System configuration handling.
+Path: src/config.py
+"""
 
 from pathlib import Path
 from typing import Dict, Any, Optional
@@ -19,6 +22,14 @@ class AgentLLMConfig(BaseModel):
     @property
     def provider_enum(self) -> LLMProvider:
         return LLMProvider(self.provider)
+    
+    def dict(self, *args, **kwargs) -> Dict[str, Any]:
+        """Override dict to ensure all fields are included"""
+        base_dict = super().dict(*args, **kwargs)
+        # Ensure temperature is always included
+        if 'temperature' not in base_dict:
+            base_dict['temperature'] = 0
+        return base_dict
 
 class SystemConfig(BaseModel):
     """System-wide configuration"""

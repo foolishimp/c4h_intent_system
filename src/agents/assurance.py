@@ -30,22 +30,27 @@ class AssuranceAgent(BaseAgent):
     def __init__(self,
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None,
-                 workspace_root: Optional[Path] = None):
-        """Initialize assurance agent with semantic tools"""
+                 workspace_root: Optional[Path] = None,
+                 **kwargs):  # Added **kwargs to handle extra config params
+        """Initialize assurance agent with semantic tools.
+        
+        Args:
+            provider: LLM provider to use
+            model: Specific model to use
+            workspace_root: Optional workspace directory
+            **kwargs: Additional configuration parameters including temperature
+        """
         super().__init__(
             provider=provider,
             model=model,
-            temperature=0
+            temperature=kwargs.get('temperature', 0)  # Get temperature from kwargs with default
         )
         
-        self.extractor = SemanticExtract(provider=provider, model=model)
-        
-        # Ensure unique workspace
+        # Optional workspace for persistent storage
         if workspace_root:
             self.workspace_root = workspace_root
         else:
-            tmp_dir = tempfile.mkdtemp(prefix="validation_")
-            self.workspace_root = Path(tmp_dir).resolve()
+            self.workspace_root = Path(tempfile.mkdtemp(prefix="validation_")).resolve()
             
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         logger.info("workspace.created", path=str(self.workspace_root))

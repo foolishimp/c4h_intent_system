@@ -1,3 +1,8 @@
+"""
+Solution designer agent implementation.
+Path: src/agents/solution_designer.py
+"""
+
 from typing import Dict, Any, Optional
 import structlog
 from .base import BaseAgent, LLMProvider, AgentResponse
@@ -10,12 +15,18 @@ class SolutionDesigner(BaseAgent):
     def __init__(self, 
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None,
-                 temperature: float = 0):
-        """Initialize with specified provider"""
+                 **kwargs):  # Added **kwargs to handle extra config params
+        """Initialize with specified provider.
+        
+        Args:
+            provider: LLM provider to use
+            model: Specific model to use
+            **kwargs: Additional configuration parameters
+        """
         super().__init__(
             provider=provider,
             model=model,
-            temperature=temperature
+            temperature=kwargs.get('temperature', 0)  # Get temperature from kwargs with default
         )
         self.logger = structlog.get_logger(agent="solution_designer")
 

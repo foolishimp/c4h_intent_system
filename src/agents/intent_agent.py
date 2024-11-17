@@ -81,36 +81,49 @@ class IntentAgent:
     """Orchestrates the intent workflow."""
     
     def __init__(self, config: SystemConfig, max_iterations: int = 3):
-            """Initialize intent agent"""
-            self.max_iterations = max_iterations
-            self.config = config
-            
-            # Initialize agents with specific configurations
-            self.discovery = DiscoveryAgent(
-                **config.get_agent_config("discovery").dict()
-            )
-            
-            self.designer = SolutionDesigner(
-                **config.get_agent_config("solution_designer").dict()
-            )
-            
-            self.coder = Coder(
-                **config.get_agent_config("coder").dict()
-            )
-            
-            self.assurance = AssuranceAgent(
-                **config.get_agent_config("assurance").dict()
-            )
-            
-            self.current_state: Optional[WorkflowState] = None
-            self.backup_dir: Optional[Path] = None
+        """Initialize intent agent"""
+        self.max_iterations = max_iterations
+        self.config = config
+        
+        # Initialize agents with specific configurations
+        discovery_config = config.get_agent_config("discovery")
+        self.discovery = DiscoveryAgent(
+            provider=discovery_config.provider_enum,
+            model=discovery_config.model,
+            temperature=discovery_config.temperature
+        )
+        
+        designer_config = config.get_agent_config("solution_designer")
+        self.designer = SolutionDesigner(
+            provider=designer_config.provider_enum,
+            model=designer_config.model,
+            temperature=designer_config.temperature
+        )
+        
+        coder_config = config.get_agent_config("coder")
+        self.coder = Coder(
+            provider=coder_config.provider_enum,
+            model=coder_config.model,
+            temperature=coder_config.temperature
+        )
+        
+        assurance_config = config.get_agent_config("assurance")
+        self.assurance = AssuranceAgent(
+            provider=assurance_config.provider_enum,
+            model=assurance_config.model,
+            temperature=assurance_config.temperature
+        )
+        
+        self.current_state: Optional[WorkflowState] = None
+        self.backup_dir: Optional[Path] = None
 
-            logger.info("intent_agent.initialized", 
-                    max_iterations=max_iterations,
-                    discovery_model=self.discovery.model,
-                    designer_model=self.designer.model,
-                    coder_model=self.coder.model,
-                    assurance_model=self.assurance.model)
+        logger.info("intent_agent.initialized", 
+                max_iterations=max_iterations,
+                discovery_model=self.discovery.model,
+                designer_model=self.designer.model,
+                coder_model=self.coder.model,
+                assurance_model=self.assurance.model)
+
 
     async def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
         """Process an intent through the complete workflow"""

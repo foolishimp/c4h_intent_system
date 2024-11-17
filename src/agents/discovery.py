@@ -17,11 +17,20 @@ class DiscoveryAgent(BaseAgent):
     def __init__(self,
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None,
-                 workspace_root: Optional[Path] = None):
+                 workspace_root: Optional[Path] = None,
+                 **kwargs):  # Added kwargs to handle extra config params
+        """Initialize discovery agent.
+        
+        Args:
+            provider: LLM provider to use
+            model: Specific model to use
+            workspace_root: Optional workspace directory
+            **kwargs: Additional configuration parameters
+        """
         super().__init__(
             provider=provider,
             model=model,
-            temperature=0
+            temperature=kwargs.get('temperature', 0)  # Get temperature from kwargs with default
         )
         
         # Optional workspace for persistent storage

@@ -1,5 +1,10 @@
 # src/agents/coder.py
 
+"""
+Code modification agent implementation.
+Path: src/agents/coder.py
+"""
+
 from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
 import structlog
@@ -57,18 +62,27 @@ class Coder(BaseAgent):
     def __init__(self, 
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None,
-                 max_file_size: int = 1024 * 1024):
-        """Initialize coder with specified provider"""
+                 max_file_size: int = 1024 * 1024,
+                 **kwargs):  # Added **kwargs to handle extra config params
+        """Initialize coder with specified provider.
+        
+        Args:
+            provider: LLM provider to use
+            model: Specific model to use
+            max_file_size: Maximum file size to process
+            **kwargs: Additional configuration parameters including temperature
+        """
         super().__init__(
             provider=provider,
             model=model,
-            temperature=0
+            temperature=kwargs.get('temperature', 0)  # Get temperature from kwargs with default
         )
         self.max_file_size = max_file_size
         
         try:
             # Get complete model configuration
             config = _get_model_config(provider, model)
+            config['temperature'] = kwargs.get('temperature', 0)  # Use provided temperature
             
             # Initialize semantic tools with consistent configuration
             self.extractor = SemanticExtract(provider=provider, model=config["model"])
@@ -87,6 +101,7 @@ class Coder(BaseAgent):
         except Exception as e:
             logger.error("coder.initialization_failed", error=str(e))
             raise
+
         
     def _get_agent_name(self) -> str:
         return "coder"
