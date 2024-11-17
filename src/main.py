@@ -5,6 +5,7 @@ import sys
 from pathlib import Path
 import argparse
 import structlog
+from typing import Optional
 import uuid
 
 from src.cli.console_menu import ConsoleMenu 
@@ -12,8 +13,30 @@ from src.cli.workspace.manager import WorkspaceManager
 from src.cli.workspace.state import WorkspaceState
 from src.agents.intent_agent import IntentAgent
 from src.agents.coder import MergeMethod
+from src.config import SystemConfig
 
 logger = structlog.get_logger()
+
+def load_config(config_path: Optional[Path] = None) -> SystemConfig:
+    """Load system configuration"""
+    if config_path is None:
+        # Look in standard locations
+        locations = [
+            Path("config/system_config.yml"),
+            Path("../config/system_config.yml"),
+            Path(__file__).parent.parent / "config" / "system_config.yml"
+        ]
+        
+        for path in locations:
+            if path.exists():
+                config_path = path
+                break
+        else:
+            logger.warning("config.not_found", searched_paths=[str(p) for p in locations])
+            raise ValueError("No system_config.yml found in standard locations")
+    
+    logger.info("config.loading", path=str(config_path))
+    return SystemConfig.load(config_path)
 
 def setup_workspace(args: argparse.Namespace) -> WorkspaceState:
     """Set up workspace from command line args"""
@@ -41,14 +64,17 @@ def setup_workspace(args: argparse.Namespace) -> WorkspaceState:
 async def process_refactoring(args: argparse.Namespace) -> dict:
     """Process a refactoring request"""
     try:
+        # Load configuration first
+        config = load_config(args.config if hasattr(args, 'config') else None)
+        
         state = setup_workspace(args)
         
         if args.interactive:
-            menu = ConsoleMenu(state.workspace_path)
+            menu = ConsoleMenu(state.workspace_path, config=config)
             await menu.main_menu()
             return {"status": "completed"}
         else:
-            agent = IntentAgent(max_iterations=args.max_iterations)
+            agent = IntentAgent(config=config, max_iterations=args.max_iterations)
             result = await agent.process(args.project_path, {
                 "description": args.intent,
                 "merge_strategy": args.merge_strategy
@@ -76,6 +102,8 @@ def main():
                        help="Maximum number of refinement iterations")
     parser.add_argument('-i', '--interactive', action='store_true',
                        help="Start interactive console menu")
+    parser.add_argument('--config', type=Path,
+                       help="Path to custom configuration file")
     
     args = parser.parse_args()
     

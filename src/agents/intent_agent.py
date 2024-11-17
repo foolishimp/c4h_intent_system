@@ -13,6 +13,7 @@ from src.agents.discovery import DiscoveryAgent
 from src.agents.solution_designer import SolutionDesigner
 from src.agents.coder import Coder
 from src.agents.assurance import AssuranceAgent
+from src.config import SystemConfig
 
 import structlog
 logger = structlog.get_logger()
@@ -30,14 +31,6 @@ class WorkflowState:
     error: Optional[str] = None
     last_action: Optional[str] = None
     action_history: List[str] = field(default_factory=list)
-    
-    @property
-    def has_error(self) -> bool:
-        return bool(self.error)
-    
-    @property
-    def can_continue(self) -> bool:
-        return self.iteration < self.max_iterations and not self.has_error
 
     def get_current_agent(self) -> Optional[str]:
         """Get currently active agent"""
@@ -49,29 +42,75 @@ class WorkflowState:
         
         # Find first incomplete agent
         for agent in agents:
-            if not getattr(self, f"{agent}_data", None):
+            data_key = f"{agent}_data"
+            data = getattr(self, data_key, None)
+            
+            # Add detailed logging for debugging
+            logger.debug("checking_agent_status", 
+                        agent=agent,
+                        has_data=bool(data),
+                        data_status=data.get("status") if data else None)
+                
+            if not data or data.get("status") != "completed":
                 return agent
                 
         return None
 
+    async def update_agent_state(self, agent: str, result: Dict[str, Any]) -> None:
+        """Update agent state with result"""
+        data_key = f"{agent}_data"
+        
+        # Format the state data consistently
+        state_data = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "completed" if result.get("success", False) else "failed",
+            "error": result.get("error"),
+            **result  # Include the rest of the result data
+        }
+        
+        setattr(self, data_key, state_data)
+        self.action_history.append(agent)
+        self.last_action = agent
+
+        logger.info("workflow.agent_completed", 
+                   agent=agent,
+                   status=state_data["status"],
+                   error=state_data.get("error"))
+
 class IntentAgent:
     """Orchestrates the intent workflow."""
     
-    def __init__(self, max_iterations: int = 3):
-        """Initialize intent agent"""
-        self.max_iterations = max_iterations
-        
-        # Initialize agents - no more semantic iterator here
-        self.discovery = DiscoveryAgent()
-        self.designer = SolutionDesigner()
-        self.coder = Coder()
-        self.assurance = AssuranceAgent()
-        
-        self.current_state: Optional[WorkflowState] = None
-        self.backup_dir: Optional[Path] = None
-        
-        logger.info("intent_agent.initialized", 
-                   max_iterations=max_iterations)
+    def __init__(self, config: SystemConfig, max_iterations: int = 3):
+            """Initialize intent agent"""
+            self.max_iterations = max_iterations
+            self.config = config
+            
+            # Initialize agents with specific configurations
+            self.discovery = DiscoveryAgent(
+                **config.get_agent_config("discovery").dict()
+            )
+            
+            self.designer = SolutionDesigner(
+                **config.get_agent_config("solution_designer").dict()
+            )
+            
+            self.coder = Coder(
+                **config.get_agent_config("coder").dict()
+            )
+            
+            self.assurance = AssuranceAgent(
+                **config.get_agent_config("assurance").dict()
+            )
+            
+            self.current_state: Optional[WorkflowState] = None
+            self.backup_dir: Optional[Path] = None
+
+            logger.info("intent_agent.initialized", 
+                    max_iterations=max_iterations,
+                    discovery_model=self.discovery.model,
+                    designer_model=self.designer.model,
+                    coder_model=self.coder.model,
+                    assurance_model=self.assurance.model)
 
     async def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
         """Process an intent through the complete workflow"""
@@ -156,22 +195,30 @@ class IntentAgent:
                 "error": "Discovery data required for solution design"
             }
 
-        result = await self.designer.process({
-            "intent": self.current_state.intent.description,
-            "discovery_data": self.current_state.discovery_data,
-            "iteration": self.current_state.iteration
-        })
+        try:
+            result = await self.designer.process({
+                "intent": self.current_state.intent.description,
+                "discovery_data": self.current_state.discovery_data,
+                "iteration": self.current_state.iteration
+            })
 
-        self.current_state.solution_data = {
-            "changes": result.data.get("response", {}).get("changes", []),
-            "timestamp": datetime.utcnow().isoformat(),
-            "status": "completed" if result.success else "failed",
-            "error": result.error
-        }
+            # Update workflow state
+            await self.current_state.update_agent_state("solution_design", {
+                "success": result.success,
+                "changes": result.data.get("response", {}).get("changes", []),
+                "error": result.error
+            })
 
+            return {
+                "success": result.success,
+                "error": result.error
+            }
+
+        except Exception as e:
+            logger.error("solution_design.failed", error=str(e))
         return {
-            "success": result.success,
-            "error": result.error
+            "success": False,
+            "error": str(e)
         }
 
     async def _execute_code_changes(self) -> Dict[str, Any]:
@@ -238,6 +285,12 @@ class IntentAgent:
                 result = await self._execute_assurance()
             
             if result:
+                # Log the transition
+                logger.info("workflow.agent_transition",
+                        agent=agent_type,
+                        success=result.get("success", False),
+                        next_agent=self.current_state.get_current_agent())
+                
                 if not result["success"]:
                     self.current_state.error = result["error"]
                 else:

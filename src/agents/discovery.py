@@ -4,6 +4,7 @@ from typing import Dict, Any, Optional
 import structlog
 import subprocess
 import sys
+import json
 from pathlib import Path
 from datetime import datetime
 from .base import BaseAgent, LLMProvider, AgentResponse

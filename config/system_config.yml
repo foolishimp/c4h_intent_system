@@ -1,40 +1,35 @@
-# Minimal configuration for MVP
+# config/system_config.yml
 
-# OpenAI Configuration
-openai:
-  api_key_env: OPENAI_API_KEY
-  model: gpt-4o
-  temperature: 0
-  timeout: 120
+llm_config:
+  default_provider: "anthropic"
+  default_model: "claude-3-opus-20240229"
+  
+  agents:
+    discovery:
+      provider: "anthropic"
+      model: "claude-3-haiku-20240307"  # Fastest for file analysis
+      temperature: 0
+      
+    solution_designer:
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"  # Most capable for complex decisions
+      temperature: 0
+    
+    coder:
+      provider: "anthropic"
+      model: "claude-3.5-sonnet-20241022"  # Balance of speed and capability
+      temperature: 0
+      
+    assurance:
+      provider: "anthropic"
+      model: "claude-3-haiku-20240307"  # Fast for validation checks
+      temperature: 0
 
-# Agent Configuration
-agents:
-  discovery:
-    name: discovery_agent
-    model: gpt-4o
-    temperature: 0
-  
-  analysis:
-    name: analysis_agent
-    model: gpt-4o
-    temperature: 0
-  
-  refactor:
-    name: refactor_agent
-    model: gpt-4o
-    temperature: 0
-  
-  assurance:
-    name: assurance_agent
-    model: gpt-4o
-    temperature: 0
+backup:
+  enabled: true
+  path: "workspaces/backups"
+  max_backups: 5
 
-# Skill Configuration
-skills:
-  tartxt:
-    path: src/skills/tartxt.py
-    exclude_patterns:
-      - "*.pyc"
-      - "__pycache__"
-      - "*.DS_Store"
-    max_file_size: 10485760
+logging:
+  level: "INFO"
+  format: "structured"

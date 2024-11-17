@@ -1,11 +1,9 @@
-# src/cli/menu_handlers.py
 """
 Menu handlers for the refactoring workflow management system.
-Handles user interaction and menu choices in the console interface.
+Handles menu choice actions and displays.
 """
 
 from typing import Optional
-import inquirer
 import structlog
 from pathlib import Path
 import json
@@ -14,36 +12,15 @@ from src.cli.displays.solution_display import SolutionDisplay
 from src.cli.displays.discovery_display import DiscoveryDisplay
 from src.cli.displays.impl_display import ImplementationDisplay
 from src.cli.displays.validation_display import ValidationDisplay
+from src.cli.base_menu import BaseMenu
 
 logger = structlog.get_logger()
 
 class MenuHandlers:
     """Handles menu interactions"""
 
-    def __init__(self, menu: 'ConsoleMenu'):
+    def __init__(self, menu: 'BaseMenu'):
         self.menu = menu
-
-    async def get_menu_choice(self) -> Optional[str]:
-        """Get user's menu selection"""
-        choices = [
-            ('Set Project Path', 'path'),
-            ('Set Intent Description', 'intent'),
-            ('Execute Next Step', 'step'),
-            ('View Discovery Data', 'view_discovery'),
-            ('View Solution Design', 'view_solution'),
-            ('View Implementation', 'view_implementation'),
-            ('View Validation', 'view_validation'),
-            ('Reset Workflow', 'reset'),
-            ('Quit', 'quit')
-        ]
-
-        answer = inquirer.prompt([
-            inquirer.List('choice',
-                message="Choose an option",
-                choices=choices)
-        ])
-        
-        return answer.get('choice') if answer else None
 
     async def handle_menu_choice(self, choice: str) -> None:
         """Handle menu selection"""
@@ -53,7 +30,7 @@ class MenuHandlers:
                     await self._handle_set_path()
                 case 'intent':
                     await self._handle_set_intent()
-                case 'step':
+                case 'next':
                     await self._handle_step()
                 case 'view_discovery' | 'view_solution' | \
                      'view_implementation' | 'view_validation':
@@ -66,18 +43,15 @@ class MenuHandlers:
         except Exception as e:
             logger.error("menu.handler_failed", choice=choice, error=str(e))
             self.menu.console.print(f"[red]Error:[/] {str(e)}")
-            
-        if choice != 'quit':
-            input("\nPress Enter to continue...")
 
     async def _handle_set_path(self) -> None:
         """Handle setting project path"""
-        path_str = inquirer.prompt([
-            inquirer.Text('path',
-                message='Enter project path',
-                default=str(self.menu.workspace.project_path or ''))
-        ])['path']
+        self.menu.console.print("\nEnter project path (or press Enter to cancel):")
+        path_str = input("> ").strip()
         
+        if not path_str:
+            return
+            
         try:
             path = Path(path_str)
             if not path.exists():
@@ -91,12 +65,12 @@ class MenuHandlers:
 
     async def _handle_set_intent(self) -> None:
         """Handle setting intent description"""
-        description = inquirer.prompt([
-            inquirer.Text('intent',
-                message='Enter intent description',
-                default=self.menu.workspace.intent_description or '')
-        ])['intent']
+        self.menu.console.print("\nEnter intent description (or press Enter to cancel):")
+        description = input("> ").strip()
         
+        if not description:
+            return
+            
         self.menu.workspace.intent_description = description
         self.menu.workspace_manager.save_state(self.menu.workspace)
         logger.info("menu.intent_set", description=description)
