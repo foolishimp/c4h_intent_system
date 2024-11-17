@@ -14,6 +14,9 @@ from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
 from rich.style import Style
+from rich.box import ROUNDED
+from rich.padding import Padding
+from rich.align import Align
 
 from src.agents.intent_agent import IntentAgent
 from src.cli.displays.workflow_display import WorkflowDisplay
@@ -44,7 +47,13 @@ class ConsoleMenu(BaseMenu):
         
         self.config = config
         self.intent_agent = IntentAgent(config=self.config, max_iterations=3)
-        self.workflow_data: Dict[str, Any] = {}
+        self.workflow_data: Dict[str, Any] = {
+            'current_stage': None,
+            'discovery_data': {},
+            'solution_data': {},
+            'implementation_data': {},
+            'validation_data': {}
+        }
         self.project_path: Optional[Path] = None
         self.intent_description: Optional[str] = None
 
@@ -67,51 +76,59 @@ class ConsoleMenu(BaseMenu):
         ]
 
     def show_menu_items(self, items: List[MenuItem], current: int) -> None:
-        """Display menu items with current selection highlighted"""
-        menu_table = Table(box=None, show_header=False, show_edge=False)
+        """Display menu items with current selection and shortcuts, left-justified"""
+        table = Table(box=None, show_header=False, show_edge=False, padding=(0, 2))
         
         for i, item in enumerate(items):
-            # Style for the current selection
-            style = "cyan bold" if i == current else ""
+            # Create row style based on selection
+            style = "bold cyan" if i == current else ""
             prefix = "→ " if i == current else "  "
             
-            # Format shortcut key if present
+            # Format shortcut if present
             shortcut_text = f" ({item.shortcut})" if item.shortcut else ""
+            
+            # Build menu text with consistent formatting
             menu_text = Text.assemble(
                 (prefix, style),
                 (item.display, style),
-                (shortcut_text, "dim " + style)
+                (shortcut_text, "dim " + style if style else "dim")
             )
-            menu_table.add_row(menu_text)
+            
+            table.add_row(menu_text)
         
-        self.console.print(menu_table)
+        # Print table directly without centering
+        self.console.print(table)
 
     def show_configuration(self) -> None:
-        """Display current configuration"""
-        config_table = Table.grid(padding=(0, 2))
-        config_table.add_row(
+        """Display current configuration status"""
+        config_text = Table(show_header=False, box=None, padding=(0, 1))
+        config_text.add_row(
             Text("Project Path:", style="bold"),
             Text(str(self.project_path or "Not set"), 
                 style="green" if self.project_path else "red")
         )
-        config_table.add_row(
+        config_text.add_row(
             Text("Intent Description:", style="bold"),
             Text(self.intent_description or "Not set",
                 style="green" if self.intent_description else "red")
         )
         
-        self.console.print(Panel(
-            config_table,
+        panel = Panel(
+            Padding(config_text, (1, 2)),
             title="Current Configuration",
-            border_style="blue"
-        ))
+            border_style="blue",
+            box=ROUNDED
+        )
+        self.console.print(panel)
 
     def show_header(self) -> None:
-        """Show application header with status"""
+        """Show application header with styling"""
+        title = Text("Refactoring Workflow Manager", justify="center")
+        border = Text("═" * 40, style="blue")
         header = Table.grid(padding=(0, 2))
-        header.add_row(Text("═" * 40, style="blue bold"))
-        header.add_row(Text("Refactoring Workflow Manager", style="cyan bold", justify="center"))
-        header.add_row(Text("═" * 40, style="blue bold"))
+        header.add_row(Align.center(border))
+        header.add_row(Align.center(title, style="bold cyan"))
+        header.add_row(Align.center(border))
         self.console.print(header)
         self.console.print()
 
@@ -120,7 +137,8 @@ class ConsoleMenu(BaseMenu):
         self.console.print(Panel(
             Text(error, style="red"),
             title="Error",
-            border_style="red bold"
+            border_style="red bold",
+            box=ROUNDED
         ))
 
     async def main_menu(self) -> None:
@@ -135,11 +153,12 @@ class ConsoleMenu(BaseMenu):
                 self.show_header()
                 self.show_configuration()
                 
-                # Show current workflow state with detailed agent status
-                if self.workflow_data:
-                    self.display.show_workflow_state(self.workflow_data)
+                # Always show workflow state
+                self.display.show_workflow_state(self.workflow_data)
                 
                 self.show_menu_items(items, current)
+                
+                # Left-align navigation help
                 self.console.print("\n[cyan]Navigation:[/] Use ↑↓ to move, Enter to select, or press shortcut key")
                 
                 # Get keyboard input
@@ -163,6 +182,7 @@ class ConsoleMenu(BaseMenu):
                     break
                     
                 await self.handlers.handle_menu_choice(choice)
+                await self._pause()
                 
             except Exception as e:
                 self.show_error(str(e))
@@ -184,8 +204,16 @@ class ConsoleMenu(BaseMenu):
                     {"description": self.intent_description}
                 )
 
-            # Update workflow data
-            self.workflow_data = result.get("workflow_data", {})
+            # Update workflow data with proper structure
+            workflow_data = result.get("workflow_data", {})
+            self.workflow_data = {
+                'current_stage': workflow_data.get("current_stage"),
+                'discovery_data': workflow_data.get("discovery_data", {}),
+                'solution_data': workflow_data.get("solution_data", {}),
+                'implementation_data': workflow_data.get("implementation_data", {}),
+                'validation_data': workflow_data.get("validation_data", {}),
+                'error': workflow_data.get("error")
+            }
 
             if result.get("status") == "error":
                 self.show_error(result.get("error", "Unknown error"))
@@ -208,7 +236,13 @@ class ConsoleMenu(BaseMenu):
         readchar.readkey()
 
     def reset_workflow(self) -> None:
-        """Reset the workflow state"""
-        self.workflow_data = {}
+        """Reset the workflow state with proper structure"""
+        self.workflow_data = {
+            'current_stage': None,
+            'discovery_data': {},
+            'solution_data': {},
+            'implementation_data': {},
+            'validation_data': {}
+        }
         self.intent_agent = IntentAgent(config=self.config, max_iterations=3)
         self.console.print("[green]Workflow reset successfully[/]")
