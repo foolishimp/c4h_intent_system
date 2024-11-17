@@ -1,17 +1,28 @@
 # src/agents/coder.py
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List, Union
 from pathlib import Path
 import structlog
 from enum import Enum
 import shutil
 import re
+from dataclasses import dataclass
 
-from .base import BaseAgent, LLMProvider, AgentResponse
-from src.skills.semantic_extract import SemanticExtract
+from .base import BaseAgent, LLMProvider, AgentResponse, ModelConfig
+from src.skills.semantic_extract import SemanticExtract, ExtractResult
 from src.skills.semantic_merge import SemanticMerge
+from src.skills.semantic_iterator import SemanticIterator
 
 logger = structlog.get_logger()
+
+def _get_model_config(provider: LLMProvider, model: Optional[str] = None) -> Dict[str, Any]:
+    """Get complete model configuration"""
+    return {
+        "model": model or ModelConfig.MODELS[provider],
+        "api_base": ModelConfig.PROVIDER_CONFIG[provider]["api_base"],
+        "temperature": 0,
+        "context_length": ModelConfig.PROVIDER_CONFIG[provider]["context_length"]
+    }
 
 class MergeMethod(str, Enum):
     """Available merge methods"""
@@ -30,20 +41,24 @@ class AssetType(str, Enum):
     TEXT = "text"
     UNKNOWN = "unknown"
 
+@dataclass
+class TransformResult:
+    """Result of a code transformation"""
+    success: bool
+    file_path: str
+    backup_path: Optional[str] = None
+    action: Optional[str] = None
+    error: Optional[str] = None
+    changes: Optional[List[Dict[str, Any]]] = None
+
 class Coder(BaseAgent):
     """Code modification agent using semantic tools"""
     
     def __init__(self, 
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None,
-                 max_file_size: int = 1024 * 1024):  # 1MB default
-        """Initialize coder with specified provider
-        
-        Args:
-            provider: LLM provider to use
-            model: Specific model to use, or None for provider default
-            max_file_size: Maximum file size in bytes to process
-        """
+                 max_file_size: int = 1024 * 1024):
+        """Initialize coder with specified provider"""
         super().__init__(
             provider=provider,
             model=model,
@@ -51,9 +66,27 @@ class Coder(BaseAgent):
         )
         self.max_file_size = max_file_size
         
-        # Initialize semantic tools
-        self.extractor = SemanticExtract(provider=provider, model=model)
-        self.merger = SemanticMerge(provider=provider, model=model)
+        try:
+            # Get complete model configuration
+            config = _get_model_config(provider, model)
+            
+            # Initialize semantic tools with consistent configuration
+            self.extractor = SemanticExtract(provider=provider, model=config["model"])
+            self.merger = SemanticMerge(provider=provider, model=config["model"])
+            self.iterator = SemanticIterator([config])
+            
+            logger.info("coder.initialized", 
+                       provider=provider.value,
+                       model=config["model"],
+                       max_file_size=max_file_size)
+                       
+        except KeyError as e:
+            logger.error("coder.initialization_failed", 
+                        error=f"Missing configuration: {str(e)}")
+            raise ValueError(f"Invalid configuration: missing {str(e)}")
+        except Exception as e:
+            logger.error("coder.initialization_failed", error=str(e))
+            raise
         
     def _get_agent_name(self) -> str:
         return "coder"
@@ -112,7 +145,7 @@ class Coder(BaseAgent):
         # Check if path looks valid
         if not any(c in file_path for c in ['/', '\\', '.']):
             return f"Invalid file path format: {file_path}"
-            
+
         if not request["change_type"] in ["create", "modify", "delete"]:
             return f"Invalid change_type: {request['change_type']}"
             
@@ -131,13 +164,15 @@ class Coder(BaseAgent):
 
     async def _extract_change_details(self, context: Dict[str, Any]) -> Dict[str, Any]:
         """Extract file path and change details using semantic extract"""
+        prompt = """Extract these details from the change request:
+        1. Target file path
+        2. Change type (create/modify/delete)
+        3. Change instructions
+        Return as JSON with fields: file_path, change_type, instructions"""
+        
         result = await self.extractor.extract(
             content=context,
-            prompt="""Extract these details from the change request:
-            1. Target file path
-            2. Change type (create/modify/delete)
-            3. Change instructions
-            Return as JSON with fields: file_path, change_type, instructions""",
+            prompt=prompt,
             format_hint="json"
         )
         
@@ -201,17 +236,39 @@ class Coder(BaseAgent):
                              backup=str(backup_path),
                              error=str(e))
 
-    async def transform(self, context: Dict[str, Any]) -> Dict[str, Any]:
+    async def _process_changes(self, content: str, instructions: str) -> str:
+        """Process changes using semantic iterator"""
+        changes_config = {
+            "pattern": "Extract each change from the instructions",
+            "format": "json",
+            "validation": {
+                "requires_fields": ["type", "content", "location"]
+            }
+        }
+        
+        iterator = await self.iterator.iter_extract(instructions, changes_config)
+        modified_content = content
+        
+        while iterator.has_next():
+            change = next(iterator)
+            merge_result = await self.merger.merge(modified_content, change["content"])
+            if merge_result.success:
+                modified_content = merge_result.content
+                
+        return modified_content
+
+    async def transform(self, context: Dict[str, Any]) -> TransformResult:
         """Apply code changes with backup"""
         try:
             # Validate request
             error = self._validate_request(context)
             if error:
                 logger.error("coder.invalid_request", error=error)
-                return {
-                    "status": "failed",
-                    "error": error
-                }
+                return TransformResult(
+                    success=False,
+                    file_path=context.get("file_path", ""),
+                    error=error
+                )
 
             # Extract and validate change details
             details = await self._extract_change_details(context)
@@ -226,40 +283,34 @@ class Coder(BaseAgent):
                     if file_path.exists():
                         file_path.unlink()
                         logger.info("coder.file_deleted", file=str(file_path))
-                    return {
-                        "status": "success",
-                        "file_path": str(file_path),
-                        "backup_path": str(backup_path) if backup_path else None,
-                        "action": "deleted"
-                    }
+                    return TransformResult(
+                        success=True,
+                        file_path=str(file_path),
+                        backup_path=str(backup_path) if backup_path else None,
+                        action="deleted"
+                    )
 
                 # Get original content if file exists
                 original = file_path.read_text() if file_path.exists() else ""
                 
-                # For create/modify, merge changes
-                merge_result = await self.merger.merge(
-                    original=original,
-                    instructions=details["instructions"]
-                )
+                # Process changes using semantic iterator and merger
+                modified_content = await self._process_changes(original, details["instructions"])
                 
-                if not merge_result.success:
-                    raise ValueError(f"Merge failed: {merge_result.error}")
-                
-                # Write merged content
+                # Write modified content
                 file_path.parent.mkdir(parents=True, exist_ok=True)
-                file_path.write_text(merge_result.content)
+                file_path.write_text(modified_content)
                 
                 # If successful creation/modification, clean up backup
                 if details["change_type"] == "create":
                     self._cleanup_backup(backup_path)
                     backup_path = None
                 
-                return {
-                    "status": "success",
-                    "file_path": str(file_path),
-                    "backup_path": str(backup_path) if backup_path else None,
-                    "action": details["change_type"]
-                }
+                return TransformResult(
+                    success=True,
+                    file_path=str(file_path),
+                    backup_path=str(backup_path) if backup_path else None,
+                    action=details["change_type"]
+                )
                 
             except Exception as e:
                 # Restore from backup on error
@@ -276,36 +327,22 @@ class Coder(BaseAgent):
                 
         except Exception as e:
             logger.error("coder.transform_failed", error=str(e))
-            return {
-                "status": "failed",
-                "error": str(e)
-            }
+            return TransformResult(
+                success=False,
+                file_path=context.get("file_path", ""),
+                error=str(e)
+            )
 
     def _map_suggestion_to_action(self, suggestion: Dict[str, Any]) -> Dict[str, Any]:
-        """Map architect suggestions to concrete actions
-        
-        Args:
-            suggestion: Suggestion from architect containing change details
-            
-        Returns:
-            Dictionary with standardized action format
-        """
+        """Map architect suggestions to concrete actions"""
         return {
             "file_path": suggestion.get("file_path"),
             "change_type": suggestion.get("change_type", "modify"),
-            "instructions": suggestion.get("suggested_approach"),  # Maps to instructions field
+            "instructions": suggestion.get("suggested_approach")
         }
 
     async def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process a change request with proper validation
-        
-        Args:
-            context: Dictionary containing either suggestions from architect
-                    or direct actions to perform
-                    
-        Returns:
-            AgentResponse with results or error
-        """
+        """Process a change request with proper validation"""
         try:
             logger.info("coder.processing_request", context_keys=list(context.keys()))
             
@@ -337,17 +374,15 @@ class Coder(BaseAgent):
             # Handle architect suggestions format
             if 'suggestions' in context:
                 suggestions = context['suggestions']
-                if not suggestions:  # Empty suggestions list
+                if not suggestions:
                     logger.info("coder.no_suggestions")
                     return AgentResponse(
                         success=True,
                         data={"message": "No changes suggested"},
                         error=None
                     )
-                # Map suggestions to actions
                 actions = [self._map_suggestion_to_action(s) for s in suggestions]
             else:
-                # Check for direct actions format
                 actions = context.get('actions', [])
                 if not actions:
                     logger.info("coder.no_actions")
@@ -358,32 +393,47 @@ class Coder(BaseAgent):
                     )
 
             # Process each action
-            changes_made = []
+            results = []
             for action in actions:
                 try:
-                    # Transform handles detailed validation
                     result = await self.transform(action)
-                    if result.get("status") == "success":
-                        changes_made.append(result)
+                    if result.success:
+                        results.append({
+                            "status": "success",
+                            "file_path": result.file_path,
+                            "backup_path": result.backup_path,
+                            "action": result.action
+                        })
                         logger.info("coder.change_succeeded", 
                                   file=action.get('file_path'),
                                   type=action.get('change_type'))
                     else:
                         logger.warning("coder.change_failed",
                                      file=action.get('file_path'),
-                                     error=result.get('error'))
+                                     error=result.error)
+                        results.append({
+                            "status": "failed",
+                            "file_path": result.file_path,
+                            "error": result.error
+                        })
 
                 except Exception as e:
                     logger.error("coder.action_failed",
                                action=action,
                                error=str(e))
+                    results.append({
+                        "status": "failed",
+                        "file_path": action.get('file_path'),
+                        "error": str(e)
+                    })
 
             return AgentResponse(
-                success=True,
+                success=any(r["status"] == "success" for r in results),
                 data={
-                    "changes": changes_made,
-                    "message": f"Implemented {len(changes_made)} changes"
-                }
+                    "changes": results,
+                    "message": f"Implemented {len([r for r in results if r['status'] == 'success'])} changes"
+                },
+                error=None if results else "No changes were processed"
             )
                 
         except Exception as e:

@@ -3,9 +3,6 @@
 import os
 import shutil
 import asyncio
-import sys
-import json
-import structlog
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, Any, Optional, List
@@ -16,8 +13,8 @@ from src.agents.discovery import DiscoveryAgent
 from src.agents.solution_designer import SolutionDesigner
 from src.agents.coder import Coder
 from src.agents.assurance import AssuranceAgent
-from src.skills.semantic_iterator import SemanticIterator
 
+import structlog
 logger = structlog.get_logger()
 
 @dataclass
@@ -58,24 +55,13 @@ class WorkflowState:
         return None
 
 class IntentAgent:
-    """Orchestrates the intent workflow using semantic iteration."""
+    """Orchestrates the intent workflow."""
     
     def __init__(self, max_iterations: int = 3):
         """Initialize intent agent"""
         self.max_iterations = max_iterations
         
-        api_key = os.getenv("ANTHROPIC_API_KEY")
-        if not api_key:
-            raise ValueError("ANTHROPIC_API_KEY environment variable not set")
-            
-        self.config = {
-            "model": "claude-3-sonnet-20240229",
-            "api_key": api_key,
-            "max_tokens": 4000,
-            "temperature": 0
-        }
-        
-        self.semantic_iterator = SemanticIterator([self.config])
+        # Initialize agents - no more semantic iterator here
         self.discovery = DiscoveryAgent()
         self.designer = SolutionDesigner()
         self.coder = Coder()
@@ -83,10 +69,9 @@ class IntentAgent:
         
         self.current_state: Optional[WorkflowState] = None
         self.backup_dir: Optional[Path] = None
-
+        
         logger.info("intent_agent.initialized", 
-                   max_iterations=max_iterations,
-                   model=self.config["model"])
+                   max_iterations=max_iterations)
 
     async def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
         """Process an intent through the complete workflow"""
@@ -120,7 +105,6 @@ class IntentAgent:
             if not current_agent:
                 return self._create_result_response()
 
-            # Execute agent
             result = await self._execute_agent(current_agent)
             
             if not result.get("success", False) and self.backup_dir:
@@ -141,135 +125,103 @@ class IntentAgent:
 
     async def _execute_discovery(self) -> Dict[str, Any]:
         """Execute discovery stage"""
-        try:
-            if not self.current_state or not self.current_state.intent.project_path:
-                return {
-                    "success": False,
-                    "error": "No project path specified"
-                }
-
-            result = await self.discovery.process({
-                "project_path": self.current_state.intent.project_path
-            })
-
-            self.current_state.discovery_data = {
-                "files": result.data.get("files", {}),
-                "project_path": result.data.get("project_path"),
-                "timestamp": datetime.utcnow().isoformat(),
-                "status": "completed" if result.success else "failed",
-                "error": result.error
-            }
-
-            return {
-                "success": result.success,
-                "error": result.error
-            }
-
-        except Exception as e:
-            logger.error("discovery.execution_failed", error=str(e))
+        if not self.current_state or not self.current_state.intent.project_path:
             return {
                 "success": False,
-                "error": str(e)
+                "error": "No project path specified"
             }
+
+        result = await self.discovery.process({
+            "project_path": self.current_state.intent.project_path
+        })
+
+        self.current_state.discovery_data = {
+            "files": result.data.get("files", {}),
+            "project_path": result.data.get("project_path"),
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "completed" if result.success else "failed",
+            "error": result.error
+        }
+
+        return {
+            "success": result.success,
+            "error": result.error
+        }
 
     async def _execute_solution_design(self) -> Dict[str, Any]:
         """Execute solution design stage"""
-        try:
-            if not self.current_state or not self.current_state.discovery_data:
-                return {
-                    "success": False,
-                    "error": "Discovery data required for solution design"
-                }
-
-            result = await self.designer.process({
-                "intent": self.current_state.intent.description,
-                "discovery_data": self.current_state.discovery_data,
-                "iteration": self.current_state.iteration
-            })
-
-            self.current_state.solution_data = {
-                "changes": result.data.get("response", {}).get("changes", []),
-                "timestamp": datetime.utcnow().isoformat(),
-                "status": "completed" if result.success else "failed",
-                "error": result.error
-            }
-
-            return {
-                "success": result.success,
-                "error": result.error
-            }
-
-        except Exception as e:
-            logger.error("solution_design.execution_failed", error=str(e))
+        if not self.current_state or not self.current_state.discovery_data:
             return {
                 "success": False,
-                "error": str(e)
+                "error": "Discovery data required for solution design"
             }
+
+        result = await self.designer.process({
+            "intent": self.current_state.intent.description,
+            "discovery_data": self.current_state.discovery_data,
+            "iteration": self.current_state.iteration
+        })
+
+        self.current_state.solution_data = {
+            "changes": result.data.get("response", {}).get("changes", []),
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "completed" if result.success else "failed",
+            "error": result.error
+        }
+
+        return {
+            "success": result.success,
+            "error": result.error
+        }
 
     async def _execute_code_changes(self) -> Dict[str, Any]:
         """Execute code changes stage"""
-        try:
-            if not self.current_state or not self.current_state.solution_data:
-                return {
-                    "success": False,
-                    "error": "Solution design required for code changes"
-                }
-
-            result = await self.coder.process({
-                "changes": self.current_state.solution_data.get("changes", [])
-            })
-
-            self.current_state.implementation_data = {
-                "changes": result.data.get("changes", []),
-                "timestamp": datetime.utcnow().isoformat(),
-                "status": "completed" if result.success else "failed",
-                "error": result.error
-            }
-
-            return {
-                "success": result.success,
-                "error": result.error
-            }
-
-        except Exception as e:
-            logger.error("code_changes.execution_failed", error=str(e))
+        if not self.current_state or not self.current_state.solution_data:
             return {
                 "success": False,
-                "error": str(e)
+                "error": "Solution design required for code changes"
             }
+
+        result = await self.coder.process({
+            "changes": self.current_state.solution_data.get("changes", [])
+        })
+
+        self.current_state.implementation_data = {
+            "changes": result.data.get("changes", []),
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "completed" if result.success else "failed",
+            "error": result.error
+        }
+
+        return {
+            "success": result.success,
+            "error": result.error
+        }
 
     async def _execute_assurance(self) -> Dict[str, Any]:
         """Execute assurance stage"""
-        try:
-            if not self.current_state or not self.current_state.implementation_data:
-                return {
-                    "success": False,
-                    "error": "Implementation required for assurance"
-                }
-
-            result = await self.assurance.process({
-                "changes": self.current_state.implementation_data.get("changes", []),
-                "intent": self.current_state.intent.description
-            })
-
-            self.current_state.validation_data = {
-                "results": result.data,
-                "timestamp": datetime.utcnow().isoformat(),
-                "status": "completed" if result.success else "failed",
-                "error": result.error
-            }
-
-            return {
-                "success": result.success,
-                "error": result.error
-            }
-
-        except Exception as e:
-            logger.error("assurance.execution_failed", error=str(e))
+        if not self.current_state or not self.current_state.implementation_data:
             return {
                 "success": False,
-                "error": str(e)
+                "error": "Implementation required for assurance"
             }
+
+        result = await self.assurance.process({
+            "changes": self.current_state.implementation_data.get("changes", []),
+            "intent": self.current_state.intent.description
+        })
+
+        self.current_state.validation_data = {
+            "results": result.data,
+            "timestamp": datetime.utcnow().isoformat(),
+            "status": "completed" if result.success else "failed",
+            "error": result.error
+        }
+
+        return {
+            "success": result.success,
+            "error": result.error
+        }
 
     async def _execute_agent(self, agent_type: str) -> Dict[str, Any]:
         """Execute specific agent"""

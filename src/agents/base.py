@@ -1,12 +1,13 @@
 # src/agents/base.py
 
-from typing import Dict, Any, Optional, List, Literal
 from abc import ABC, abstractmethod
 import structlog
 from dataclasses import dataclass
 from litellm import acompletion
 import json
+from typing import Dict, Any, Optional
 from enum import Enum
+import structlog
 import os
 
 logger = structlog.get_logger()
@@ -20,9 +21,19 @@ class LLMProvider(str, Enum):
 class ModelConfig:
     """Model configuration and defaults"""
     MODELS = {
-        LLMProvider.ANTHROPIC: "claude-3-sonnet-20240229",
+        LLMProvider.ANTHROPIC: "claude-3-opus-20240229",  # Most capable model
+        # Alternative Claude models:
+        # "claude-3-sonnet-20240229" - Good balance of intelligence and speed
+        # "claude-3-haiku-20240307" - Fastest response times
         LLMProvider.OPENAI: "gpt-4-turbo-preview",
-        LLMProvider.GEMINI: "gemini-1.5-flash-001"
+        LLMProvider.GEMINI: "gemini-1.5-pro"  # Updated to pro version
+    }
+    
+    # You can specify a specific model by setting alternate defaults:
+    CLAUDE_MODELS = {
+        "opus": "claude-3-opus-20240229",     # Most intelligent, best for complex tasks
+        "sonnet": "claude-3.5-sonnet-20241022", # Balanced performance
+        "haiku": "claude-3-haiku-20240307"    # Fastest, good for simple tasks
     }
     
     ENV_VARS = {
@@ -34,7 +45,7 @@ class ModelConfig:
     PROVIDER_CONFIG = {
         LLMProvider.ANTHROPIC: {
             "api_base": "https://api.anthropic.com",
-            "context_length": 100000
+            "context_length": 200000  # Updated context length for Claude 3
         },
         LLMProvider.OPENAI: {
             "api_base": "https://api.openai.com/v1",
@@ -45,6 +56,11 @@ class ModelConfig:
             "context_length": 32000
         }
     }
+
+    @classmethod
+    def get_claude_model(cls, type: str = "opus") -> str:
+        """Get specific Claude model by type"""
+        return cls.CLAUDE_MODELS.get(type, cls.CLAUDE_MODELS["opus"])
 
 @dataclass
 class AgentResponse:
