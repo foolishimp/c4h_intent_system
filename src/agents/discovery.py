@@ -5,6 +5,7 @@ import structlog
 import subprocess
 import sys
 from pathlib import Path
+from datetime import datetime
 from .base import BaseAgent, LLMProvider, AgentResponse
 
 logger = structlog.get_logger()
@@ -125,9 +126,15 @@ class DiscoveryAgent(BaseAgent):
             # Run discovery
             result = await self._run_tartxt(str(project_path))
             
+            # Fix: Return complete discovery result including discovery_output
             return AgentResponse(
                 success=True,
-                data={"project_path": str(project_path), "files": result["files"]}
+                data={
+                    "project_path": str(project_path),
+                    "files": result["files"],
+                    "discovery_output": result["discovery_output"],  # Add this back
+                    "timestamp": datetime.utcnow().isoformat()
+                }
             )
 
         except Exception as e:

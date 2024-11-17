@@ -8,6 +8,12 @@ from typing import Optional
 import inquirer
 import structlog
 from pathlib import Path
+import json
+from rich.panel import Panel
+from src.cli.displays.solution_display import SolutionDisplay
+from src.cli.displays.discovery_display import DiscoveryDisplay
+from src.cli.displays.impl_display import ImplementationDisplay
+from src.cli.displays.validation_display import ValidationDisplay
 
 logger = structlog.get_logger()
 
@@ -114,13 +120,29 @@ class MenuHandlers:
     async def _handle_view_data(self, stage: str) -> None:
         """Handle viewing stage data"""
         try:
-            if stage_data := self.menu.workflow_data.get(f"{stage}_data"):
-                self.menu.console.print(Panel(
-                    json.dumps(stage_data, indent=2),
-                    title=f"{stage.title()} Data"
-                ))
-            else:
-                self.menu.console.print(f"[yellow]No {stage} data available[/]")
+            data = self.menu.workflow_data.get(f"{stage}_data")
+            if not data:
+                self.menu.console.print(f"[yellow]No {stage} data available yet[/]")
+                return
+
+            # Use appropriate display handler for each stage
+            match stage:
+                case 'discovery':
+                    DiscoveryDisplay(self.menu.console).display_data(data)
+                case 'solution':
+                    SolutionDisplay(self.menu.console).display_data(data)
+                case 'implementation':
+                    ImplementationDisplay(self.menu.console).display_data(data)
+                case 'validation':
+                    ValidationDisplay(self.menu.console).display_data(data)
+                case _:
+                    # Fallback to generic JSON display
+                    self.menu.console.print(Panel(
+                        json.dumps(data, indent=2),
+                        title=f"{stage.title()} Data",
+                        border_style="blue"
+                    ))
+
         except Exception as e:
             logger.error("menu.view_error", stage=stage, error=str(e))
             self.menu.console.print(f"[red]Error viewing {stage} data:[/] {str(e)}")

@@ -1,3 +1,4 @@
+# src/cli/displays/discovery_display.py
 """Discovery data display handler."""
 from rich.console import Console
 from rich.panel import Panel
@@ -5,23 +6,34 @@ from rich.table import Table
 from rich.syntax import Syntax
 from rich.tree import Tree
 from pathlib import Path
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+import structlog
 
 from src.cli.displays.base_display import BaseDisplay
+
+logger = structlog.get_logger()
 
 class DiscoveryDisplay(BaseDisplay):
     """Handles display of discovery results"""
 
     def display_data(self, data: Dict[str, Any]) -> None:
         """Display discovery stage data"""
-        # Show overall summary first
-        self._show_summary(data)
-        
-        # Show files table
-        self._show_files_table(data.get('files', {}))
-        
-        # Show detailed file contents
-        self._show_file_contents(data.get('discovery_output', ''))
+        try:
+            # Show overall summary first
+            self._show_summary(data)
+            
+            # Show files table
+            self._show_files_table(data.get('files', {}))
+            
+            # Show detailed file contents - this was missing/broken
+            if 'discovery_output' in data:
+                self._show_file_contents(data['discovery_output'])
+            else:
+                logger.warning("discovery.no_content", reason="discovery_output missing from data")
+
+        except Exception as e:
+            logger.error("discovery_display.error", error=str(e))
+            self.show_error(f"Error displaying discovery data: {str(e)}")
 
     def _show_summary(self, data: Dict[str, Any]) -> None:
         """Show discovery summary"""
@@ -45,17 +57,19 @@ class DiscoveryDisplay(BaseDisplay):
         table = Table(title="Discovered Files")
         table.add_column("File Path", style="cyan")
         table.add_column("Type", style="green")
-        table.add_column("Status", style="yellow")
+        table.add_column("Size", style="yellow")
+        table.add_column("Status", style="blue")
         
         for file_path in sorted(files.keys()):
             path = Path(file_path)
             file_type = self._get_file_type(path)
-            status = "✓ Analyzed"
-
+            size = path.stat().st_size if path.exists() else 0
+            
             table.add_row(
                 str(path),
                 file_type,
-                status
+                f"{size:,} bytes",
+                "✓ Analyzed"
             )
 
         self.console.print(table)
@@ -67,7 +81,7 @@ class DiscoveryDisplay(BaseDisplay):
 
         self.console.print("\n[bold cyan]Detailed Analysis:[/]")
         
-        # Split output into sections
+        # Split output into sections by file
         sections = discovery_output.split("== Start of File ==")
         for section in sections[1:]:  # Skip the first empty section
             try:
@@ -76,6 +90,7 @@ class DiscoveryDisplay(BaseDisplay):
                 content_started = False
                 content_lines = []
                 
+                # Parse section
                 for line in lines:
                     if line.startswith("File:"):
                         file_info['path'] = line.split("File:", 1)[1].strip()
@@ -83,6 +98,8 @@ class DiscoveryDisplay(BaseDisplay):
                         file_info['type'] = line.split("File Type:", 1)[1].strip()
                     elif line.startswith("Size:"):
                         file_info['size'] = line.split("Size:", 1)[1].strip()
+                    elif line.startswith("Last Modified:"):
+                        file_info['modified'] = line.split("Last Modified:", 1)[1].strip()
                     elif line == "Contents:":
                         content_started = True
                     elif content_started and line != "== End of File ==":
@@ -94,6 +111,7 @@ class DiscoveryDisplay(BaseDisplay):
                     info_table.add_row("[bold]Path:[/]", file_info.get('path', 'Unknown'))
                     info_table.add_row("[bold]Type:[/]", file_info.get('type', 'Unknown'))
                     info_table.add_row("[bold]Size:[/]", file_info.get('size', 'Unknown'))
+                    info_table.add_row("[bold]Modified:[/]", file_info.get('modified', 'Unknown'))
                     
                     self.console.print(Panel(
                         info_table,
@@ -101,8 +119,9 @@ class DiscoveryDisplay(BaseDisplay):
                         border_style="blue"
                     ))
 
-                    # Show content with syntax highlighting
-                    if content_lines:
+                    # Show content with syntax highlighting if it's a text file
+                    if content_lines and not any(skip in file_info.get('type', '').lower() 
+                                               for skip in ['binary', 'image', 'octet-stream']):
                         content = '\n'.join(content_lines)
                         self.console.print(Syntax(
                             content,
@@ -115,7 +134,10 @@ class DiscoveryDisplay(BaseDisplay):
                     self.console.print("\n" + "─" * 80 + "\n")  # Section separator
 
             except Exception as e:
-                self.console.print(f"[red]Error displaying section: {str(e)}[/]")
+                logger.error("file_content_display.error", 
+                           file=file_info.get('path', 'Unknown'),
+                           error=str(e))
+                self.show_error(f"Error displaying file content: {str(e)}")
 
     def _get_file_type(self, path: Path) -> str:
         """Get friendly file type name"""
@@ -145,4 +167,4 @@ class DiscoveryDisplay(BaseDisplay):
             'text': 'text',
             'json': 'json',
             'yaml': 'yaml'
-        }.get(file_type.lower(), 'text')
+        }.get(file_type.lower().split('/')[-1], 'text')

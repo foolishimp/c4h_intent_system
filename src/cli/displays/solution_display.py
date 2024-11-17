@@ -1,27 +1,40 @@
+# src/cli/displays/solution_display.py
+"""
+Display handler for solution design stage output.
+Provides formatted display of code change solutions.
+"""
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from rich.syntax import Syntax
-import json
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any
+import structlog
 from src.cli.displays.base_display import BaseDisplay
+
+logger = structlog.get_logger()
 
 class SolutionDisplay(BaseDisplay):
     """Handles display of solution design data"""
 
     def display_data(self, data: Dict[str, Any]) -> None:
         """Display solution design data"""
-        # Handle response wrapper
-        if isinstance(data, dict) and 'response' in data:
-            data = data['response']
+        try:
+            # Handle response wrapper
+            if isinstance(data, dict) and 'response' in data:
+                data = data['response']
 
-        if isinstance(data, dict) and 'changes' in data:
-            self._show_changes_table(data['changes'])
-            self._show_change_diffs(data['changes'])
-        else:
-            self.show_json_data(data, "Solution Design")
+            if isinstance(data, dict) and 'changes' in data:
+                self._show_changes_table(data['changes'])
+                self._show_change_diffs(data['changes'])
+            else:
+                self.show_json_data(data, "Solution Design")
 
-    def _show_changes_table(self, changes: List[Dict[str, Any]]) -> None:
+        except Exception as e:
+            logger.error("solution_display.error", error=str(e))
+            self.show_error(f"Error displaying solution: {str(e)}")
+
+    def _show_changes_table(self, changes: list[Dict[str, Any]]) -> None:
         """Display planned changes table"""
         table = Table(title="Planned Changes")
         table.add_column("File", style="cyan")
@@ -37,14 +50,19 @@ class SolutionDisplay(BaseDisplay):
         
         self.console.print(table)
 
-    def _show_change_diffs(self, changes: List[Dict[str, Any]]) -> None:
+    def _show_change_diffs(self, changes: list[Dict[str, Any]]) -> None:
         """Display detailed change diffs"""
         for i, change in enumerate(changes, 1):
             diff = change.get('diff', 'No diff provided')
             description = change.get('description', 'No description provided')
             
             self.console.print(Panel(
-                f"[bold]Description:[/]\n{description}\n\n[bold]Diff:[/]\n{diff}",
-                title=f"Change {i} Details",
+                Syntax(
+                    diff,
+                    "diff",
+                    theme="monokai",
+                    line_numbers=True
+                ),
+                title=f"Change {i}: {description}",
                 border_style="blue"
             ))
