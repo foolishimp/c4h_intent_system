@@ -18,14 +18,17 @@ class SemanticMerge(BaseAgent):
     
     def __init__(self,
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
-                 model: Optional[str] = None):
+                 model: Optional[str] = None, 
+                 config: Optional[Dict[str, Any]] = None,
+                 temperature: float = 0):
         """Initialize merger with specified provider"""
         super().__init__(
             provider=provider,
             model=model,
-            temperature=0
+            temperature=temperature,
+            config=config
         )
-        
+    
     def _get_agent_name(self) -> str:
         return "semantic_merge"
         

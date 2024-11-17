@@ -1,4 +1,7 @@
-# src/agents/base.py
+"""
+Base agent implementation.
+Path: src/agents/base.py
+"""
 
 from abc import ABC, abstractmethod
 import structlog
@@ -7,7 +10,6 @@ from litellm import acompletion
 import json
 from typing import Dict, Any, Optional
 from enum import Enum
-import structlog
 import os
 
 logger = structlog.get_logger()
@@ -17,50 +19,6 @@ class LLMProvider(str, Enum):
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     GEMINI = "gemini"
-
-class ModelConfig:
-    """Model configuration and defaults"""
-    MODELS = {
-        LLMProvider.ANTHROPIC: "claude-3-opus-20240229",  # Most capable model
-        # Alternative Claude models:
-        # "claude-3-sonnet-20240229" - Good balance of intelligence and speed
-        # "claude-3-haiku-20240307" - Fastest response times
-        LLMProvider.OPENAI: "gpt-4-turbo-preview",
-        LLMProvider.GEMINI: "gemini-1.5-pro"  # Updated to pro version
-    }
-    
-    # You can specify a specific model by setting alternate defaults:
-    CLAUDE_MODELS = {
-        "opus": "claude-3-opus-20240229",     # Most intelligent, best for complex tasks
-        "sonnet": "claude-3.5-sonnet-20241022", # Balanced performance
-        "haiku": "claude-3-haiku-20240307"    # Fastest, good for simple tasks
-    }
-    
-    ENV_VARS = {
-        LLMProvider.ANTHROPIC: "ANTHROPIC_API_KEY",
-        LLMProvider.OPENAI: "OPENAI_API_KEY",
-        LLMProvider.GEMINI: "GEMINI_API_KEY"
-    }
-
-    PROVIDER_CONFIG = {
-        LLMProvider.ANTHROPIC: {
-            "api_base": "https://api.anthropic.com",
-            "context_length": 200000  # Updated context length for Claude 3
-        },
-        LLMProvider.OPENAI: {
-            "api_base": "https://api.openai.com/v1",
-            "context_length": 128000
-        },
-        LLMProvider.GEMINI: {
-            "api_base": "https://generativelanguage.googleapis.com/v1beta",
-            "context_length": 32000
-        }
-    }
-
-    @classmethod
-    def get_claude_model(cls, type: str = "opus") -> str:
-        """Get specific Claude model by type"""
-        return cls.CLAUDE_MODELS.get(type, cls.CLAUDE_MODELS["opus"])
 
 @dataclass
 class AgentResponse:
@@ -76,30 +34,35 @@ class BaseAgent(ABC):
                  provider: LLMProvider,
                  model: Optional[str] = None,
                  temperature: float = 0,
-                 max_retries: int = 3):
+                 max_retries: int = 3,
+                 config: Optional[Dict[str, Any]] = None):
         """Initialize agent with provider configuration"""
         self.provider = provider
-        self.model = model or ModelConfig.MODELS[provider]
+        self.model = model
         self.temperature = temperature
         self.max_retries = max_retries
         
+        # Validate config
+        if not config:
+            raise ValueError("Provider configuration required - config is None")
+        if 'providers' not in config:
+            raise ValueError("Provider configuration required - no providers section")
+            
+        self.config = config
+        provider_config = config.get('providers', {}).get(provider.value)
+        if not provider_config:
+            raise ValueError(f"Configuration missing for provider: {provider.value}")
+        
         # Verify API key availability
-        self._verify_api_key(provider)
+        env_var = provider_config.get('env_var')
+        if not env_var or not os.getenv(env_var):
+            raise ValueError(f"Missing API key environment variable: {env_var}")
         
-        # Get provider configuration
-        self.provider_config = ModelConfig.PROVIDER_CONFIG[provider]
-        
-        # Initialize logger
+        # Initialize logger 
         self.logger = structlog.get_logger(
             agent=self._get_agent_name(),
             provider=provider.value
         )
-
-    def _verify_api_key(self, provider: LLMProvider) -> None:
-        """Verify required API key is available"""
-        env_var = ModelConfig.ENV_VARS[provider]
-        if not os.getenv(env_var):
-            raise ValueError(f"Missing required API key: {env_var}")
 
     @abstractmethod
     def _get_system_message(self) -> str:
@@ -151,6 +114,8 @@ class BaseAgent(ABC):
                 error="Invalid input: intent must be a dictionary"
             )
 
+        provider_config = self.config['providers'][self.provider.value]
+
         for attempt in range(self.max_retries):
             try:
                 self.logger.info("request.sending", 
@@ -165,7 +130,7 @@ class BaseAgent(ABC):
                         {"role": "user", "content": self._format_request(intent)}
                     ],
                     temperature=self.temperature,
-                    api_base=self.provider_config["api_base"]
+                    api_base=provider_config["api_base"]
                 )
 
                 if response and response.choices:

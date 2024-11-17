@@ -80,11 +80,14 @@ class SemanticIterator:
         if not config_list or not isinstance(config_list, list):
             raise ValueError("Config list must be a non-empty list of configurations")
         
+        first_config = config_list[0]
         provider = LLMProvider.ANTHROPIC  # Default to Anthropic
         model = None
+        temperature = first_config.get('temperature', 0)
+        config = first_config.get('config')
         
-        if config_list[0].get('model'):
-            model = config_list[0]['model']
+        if first_config.get('model'):
+            model = first_config['model']
             if 'gpt' in model.lower():
                 provider = LLMProvider.OPENAI
             elif 'claude' in model.lower():
@@ -95,7 +98,8 @@ class SemanticIterator:
         self.extractor = SemanticExtract(
             provider=provider,
             model=model,
-            temperature=0
+            temperature=temperature,
+            config=config
         )
         
         self.logger = structlog.get_logger(component="semantic_iterator")

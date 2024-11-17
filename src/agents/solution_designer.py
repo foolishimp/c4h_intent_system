@@ -5,6 +5,7 @@ Path: src/agents/solution_designer.py
 
 from typing import Dict, Any, Optional
 import structlog
+from datetime import datetime
 from .base import BaseAgent, LLMProvider, AgentResponse
 
 logger = structlog.get_logger()
@@ -15,18 +16,14 @@ class SolutionDesigner(BaseAgent):
     def __init__(self, 
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None,
-                 **kwargs):  # Added **kwargs to handle extra config params
-        """Initialize with specified provider.
-        
-        Args:
-            provider: LLM provider to use
-            model: Specific model to use
-            **kwargs: Additional configuration parameters
-        """
+                 temperature: float = 0,
+                 config: Optional[Dict[str, Any]] = None):
+        """Initialize designer with specified provider."""
         super().__init__(
             provider=provider,
             model=model,
-            temperature=kwargs.get('temperature', 0)  # Get temperature from kwargs with default
+            temperature=temperature,
+            config=config  # Pass config directly
         )
         self.logger = structlog.get_logger(agent="solution_designer")
 
@@ -113,8 +110,7 @@ class SolutionDesigner(BaseAgent):
         return None
 
     async def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
-        """Process solution design request.
-        Follows single responsibility principle - only designs solutions."""
+        """Process solution design request with proper response handling"""
         try:
             # Handle None or empty context as needs_clarification
             if not context:
@@ -138,12 +134,63 @@ class SolutionDesigner(BaseAgent):
 
             # Log request receipt
             self.logger.info("design_request_received",
-                             intent=context.get('intent', {}).get('description'),
-                             has_discovery=bool(context.get('discovery_data')))
+                            intent=context.get('intent', {}).get('description'),
+                            has_discovery=bool(context.get('discovery_data')))
 
-            # Pass through to LLM for valid requests
-            return await super().process(context)
+            # Get LLM response
+            response = await self.llm.process(self._format_request(context))
+
+            if not response.success:
+                return response
+
+            # Ensure response is properly structured
+            processed_response = self._process_llm_response(response.data)
+            
+            # Return complete response with status
+            return AgentResponse(
+                success=True,
+                data={
+                    "response": processed_response,
+                    "status": "completed",
+                    "timestamp": datetime.utcnow().isoformat()
+                }
+            )
 
         except Exception as e:
             self.logger.error("design_process_failed", error=str(e))
-            raise
+            return AgentResponse(
+                success=False,
+                data={},
+                error=str(e)
+            )
+
+    def _process_llm_response(self, response_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Process and validate LLM response"""
+        if not isinstance(response_data, dict):
+            return {
+                "needs_clarification": "Invalid response format from LLM"
+            }
+
+        # Handle special cases
+        if "needs_clarification" in response_data:
+            return response_data
+
+        if "no_changes_needed" in response_data:
+            return response_data
+
+        # Process normal change response
+        if "changes" not in response_data:
+            return {
+                "needs_clarification": "No changes specified in response"
+            }
+
+        # Ensure changes is a list
+        changes = response_data["changes"]
+        if not isinstance(changes, list):
+            changes = [changes]
+
+        # Return properly formatted response
+        return {
+            "changes": changes,
+            "message": f"Generated {len(changes)} change(s)"
+        }

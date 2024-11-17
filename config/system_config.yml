@@ -1,5 +1,19 @@
 # config/system_config.yml
 
+providers:
+  anthropic:
+    api_base: "https://api.anthropic.com"
+    context_length: 200000
+    env_var: "ANTHROPIC_API_KEY"
+  openai:
+    api_base: "https://api.openai.com/v1"
+    context_length: 128000
+    env_var: "OPENAI_API_KEY"
+  gemini:
+    api_base: "https://generativelanguage.googleapis.com/v1beta"
+    context_length: 32000
+    env_var: "GEMINI_API_KEY"
+
 llm_config:
   default_provider: "anthropic"
   default_model: "claude-3-opus-20240229"
@@ -7,23 +21,29 @@ llm_config:
   agents:
     discovery:
       provider: "anthropic"
-      model: "claude-3-haiku-20240307"  # Fastest for file analysis
+      model: "claude-3-haiku-20240307"
       temperature: 0
       
     solution_designer:
       provider: "anthropic"
-      model: "claude-3-opus-20240229"  # Most capable for complex decisions
+      model: "claude-3-opus-20240229"
       temperature: 0
     
     coder:
       provider: "anthropic"
-      model: "claude-3.5-sonnet-20241022"  # Balance of speed and capability
+      model: "claude-3.5-sonnet-20241022"
       temperature: 0
       
     assurance:
       provider: "anthropic"
-      model: "claude-3-haiku-20240307"  # Fast for validation checks
+      model: "claude-3-haiku-20240307"
       temperature: 0
+
+project:
+  default_path: "src/"
+  default_intent: "Add type hints and docstrings"
+  workspace_root: "workspaces"
+  max_file_size: 1048576
 
 backup:
   enabled: true

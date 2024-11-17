@@ -22,12 +22,14 @@ class SemanticExtract(BaseAgent):
     def __init__(self,
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None,
-                 temperature: float = 0):
+                 temperature: float = 0,
+                 config: Optional[Dict[str, Any]] = None):
         """Initialize extractor with specified provider"""
         super().__init__(
             provider=provider,
             model=model,
-            temperature=temperature
+            temperature=temperature,
+            config=config  # Pass config to parent
         )
 
     def _get_agent_name(self) -> str:

@@ -13,21 +13,12 @@ import shutil
 import re
 from dataclasses import dataclass
 
-from .base import BaseAgent, LLMProvider, AgentResponse, ModelConfig
+from .base import BaseAgent, LLMProvider, AgentResponse
 from src.skills.semantic_extract import SemanticExtract, ExtractResult
 from src.skills.semantic_merge import SemanticMerge
 from src.skills.semantic_iterator import SemanticIterator
 
 logger = structlog.get_logger()
-
-def _get_model_config(provider: LLMProvider, model: Optional[str] = None) -> Dict[str, Any]:
-    """Get complete model configuration"""
-    return {
-        "model": model or ModelConfig.MODELS[provider],
-        "api_base": ModelConfig.PROVIDER_CONFIG[provider]["api_base"],
-        "temperature": 0,
-        "context_length": ModelConfig.PROVIDER_CONFIG[provider]["context_length"]
-    }
 
 class MergeMethod(str, Enum):
     """Available merge methods"""
@@ -63,45 +54,59 @@ class Coder(BaseAgent):
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None,
                  max_file_size: int = 1024 * 1024,
-                 **kwargs):  # Added **kwargs to handle extra config params
+                 temperature: float = 0,
+                 config: Optional[Dict[str, Any]] = None):
         """Initialize coder with specified provider.
         
         Args:
             provider: LLM provider to use
             model: Specific model to use
             max_file_size: Maximum file size to process
-            **kwargs: Additional configuration parameters including temperature
+            temperature: Model temperature
+            config: System configuration
         """
         super().__init__(
             provider=provider,
             model=model,
-            temperature=kwargs.get('temperature', 0)  # Get temperature from kwargs with default
+            temperature=temperature,
+            config=config
         )
         self.max_file_size = max_file_size
         
         try:
-            # Get complete model configuration
-            config = _get_model_config(provider, model)
-            config['temperature'] = kwargs.get('temperature', 0)  # Use provided temperature
+            # Initialize semantic tools with same configuration
+            self.extractor = SemanticExtract(
+                provider=provider,
+                model=model,
+                config=config,
+                temperature=temperature
+            )
             
-            # Initialize semantic tools with consistent configuration
-            self.extractor = SemanticExtract(provider=provider, model=config["model"])
-            self.merger = SemanticMerge(provider=provider, model=config["model"])
-            self.iterator = SemanticIterator([config])
+            self.merger = SemanticMerge(
+                provider=provider,
+                model=model,
+                config=config,
+                temperature=temperature
+            )
+            
+            # Pass full configuration to iterator
+            tool_config = {
+                'provider': provider.value,
+                'model': model,
+                'temperature': temperature,
+                'config': config
+            }
+            self.iterator = SemanticIterator([tool_config])
             
             logger.info("coder.initialized", 
                        provider=provider.value,
-                       model=config["model"],
+                       model=model,
                        max_file_size=max_file_size)
                        
-        except KeyError as e:
-            logger.error("coder.initialization_failed", 
-                        error=f"Missing configuration: {str(e)}")
-            raise ValueError(f"Invalid configuration: missing {str(e)}")
         except Exception as e:
             logger.error("coder.initialization_failed", error=str(e))
-            raise
-
+            raise ValueError(f"Failed to initialize coder: {str(e)}")
+        
         
     def _get_agent_name(self) -> str:
         return "coder"

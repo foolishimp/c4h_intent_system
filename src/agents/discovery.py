@@ -30,7 +30,8 @@ class DiscoveryAgent(BaseAgent):
         super().__init__(
             provider=provider,
             model=model,
-            temperature=kwargs.get('temperature', 0)  # Get temperature from kwargs with default
+            temperature=kwargs.get('temperature', 0), # Get temperature from kwargs
+            config=kwargs.get('config')  # Pass through the config
         )
         
         # Optional workspace for persistent storage

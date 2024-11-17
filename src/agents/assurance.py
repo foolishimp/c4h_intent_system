@@ -31,19 +31,22 @@ class AssuranceAgent(BaseAgent):
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None,
                  workspace_root: Optional[Path] = None,
-                 **kwargs):  # Added **kwargs to handle extra config params
+                 temperature: float = 0,
+                 config: Optional[Dict[str, Any]] = None):
         """Initialize assurance agent with semantic tools.
         
         Args:
             provider: LLM provider to use
             model: Specific model to use
             workspace_root: Optional workspace directory
-            **kwargs: Additional configuration parameters including temperature
+            temperature: Model temperature
+            config: Configuration dictionary
         """
         super().__init__(
             provider=provider,
             model=model,
-            temperature=kwargs.get('temperature', 0)  # Get temperature from kwargs with default
+            temperature=temperature,
+            config=config
         )
         
         # Optional workspace for persistent storage
