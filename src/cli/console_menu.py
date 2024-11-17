@@ -47,7 +47,7 @@ class ConsoleMenu(BaseMenu):
         
         self.config = config
         self.intent_agent = IntentAgent(config=self.config, max_iterations=3)
-        self.workflow_data: Dict[str, Any] = {
+        self.workflow_data = {
             'current_stage': None,
             'discovery_data': {},
             'solution_data': {},
@@ -141,6 +141,11 @@ class ConsoleMenu(BaseMenu):
             box=ROUNDED
         ))
 
+    async def pause(self) -> None:
+        """Pause for user input"""
+        self.console.print("\n[cyan]Press any key to continue...[/]")
+        readchar.readkey()
+
     async def main_menu(self) -> None:
         """Display and handle main menu with keyboard navigation"""
         items = self.get_menu_items()
@@ -182,12 +187,12 @@ class ConsoleMenu(BaseMenu):
                     break
                     
                 await self.handlers.handle_menu_choice(choice)
-                await self._pause()
+                await self.pause()
                 
             except Exception as e:
                 self.show_error(str(e))
                 logger.error("menu.error", error=str(e))
-                await self._pause()
+                await self.pause()
 
     async def _step_workflow(self) -> Optional[Dict[str, Any]]:
         """Execute next workflow step via intent agent"""
@@ -197,14 +202,14 @@ class ConsoleMenu(BaseMenu):
             if not self.intent_description:
                 raise ValueError("Intent description must be set before executing workflow")
 
-            # Show progress indicator
+            # Just pass strings directly
             with self.console.status("[yellow]Executing workflow step...[/]", spinner="dots"):
                 result = await self.intent_agent.process(
                     self.project_path,
-                    {"description": self.intent_description}
+                    self.intent_description  # Just pass the string directly
                 )
 
-            # Update workflow data with proper structure
+            # Update workflow data
             workflow_data = result.get("workflow_data", {})
             self.workflow_data = {
                 'current_stage': workflow_data.get("current_stage"),
@@ -229,11 +234,6 @@ class ConsoleMenu(BaseMenu):
                 "status": "error",
                 "error": str(e)
             }
-
-    async def _pause(self) -> None:
-        """Pause for user input"""
-        self.console.print("\n[cyan]Press any key to continue...[/]")
-        readchar.readkey()
 
     def reset_workflow(self) -> None:
         """Reset the workflow state with proper structure"""

@@ -30,7 +30,7 @@ class AgentState(BaseModel):
 class Intent(BaseModel):
     """Intent model for code transformations"""
     id: UUID = Field(default_factory=uuid4)
-    description: Dict[str, Any]  # Structured intent
+    description: str  # Changed from Dict to str
     project_path: str
     status: IntentStatus = IntentStatus.CREATED
     context: Dict[str, Any] = Field(default_factory=dict)

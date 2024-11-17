@@ -183,15 +183,15 @@ class IntentAgent:
                         error=str(e))
             raise
 
-    async def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
+    async def process(self, project_path: Path, intent_desc: str) -> Dict[str, Any]:
         """Process an intent through the complete workflow"""
         try:
-            # Ensure we have a valid workflow state
+            # Initialize workflow state - keep description as simple string
             if not self.current_state:
                 logger.info("workflow.initializing_state", 
                            project_path=str(project_path))
                 intent = Intent(
-                    description=json.dumps(intent_desc),
+                    description=intent_desc,  # Just use the string
                     project_path=str(project_path)
                 )
                 self.current_state = WorkflowState(
@@ -225,7 +225,7 @@ class IntentAgent:
             if self.current_state:
                 self.current_state.error = str(e)
             return self._create_error_response(str(e))
-
+            
     async def _execute_discovery(self) -> Dict[str, Any]:
         """Execute discovery stage"""
         if not self.current_state or not self.current_state.intent.project_path:
