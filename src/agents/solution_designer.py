@@ -55,7 +55,6 @@ class SolutionDesigner(BaseAgent):
         if not context:
             return "No context provided. Please specify intent and code to modify."
 
-        # Get the discovery output directly - no transformation
         discovery_data = context.get('discovery_data', {})
         raw_output = discovery_data.get('raw_output', '')
 
@@ -71,33 +70,43 @@ class SolutionDesigner(BaseAgent):
         """
 
     async def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
-        """Process solution design request"""
+        """Process solution design request exactly like discovery processes files"""
         try:
             # Check for discovery output
-            if not context.get('discovery_data', {}).get('discovery_output'):
+            discovery_data = context.get('discovery_data', {})
+            raw_output = discovery_data.get('raw_output')
+            
+            if not raw_output:
                 logger.warning("solution_design.missing_discovery_output")
                 return AgentResponse(
                     success=False,
-                    data={"status": "failed"},
+                    data={},
                     error="Missing discovery output data - cannot analyze code"
                 )
 
-            # Pass through to LLM
+            # Pass to LLM like discovery does
             response = await super().process(context)
             
-            # Add minimal state tracking without modifying response content
+            # Return data in same format as discovery
             if response.success:
-                response.data["status"] = "completed"
+                return AgentResponse(
+                    success=True,
+                    data={
+                        "response": response.data.get("response", {}),
+                        "changes": response.data.get("response", {}).get("changes", [])
+                    }
+                )
             else:
-                response.data["status"] = "failed"
-
-            logger.info("solution_design.response_received", response=response.data)
-            return response
+                return AgentResponse(
+                    success=False,
+                    data={},
+                    error=response.error
+                )
 
         except Exception as e:
             logger.error("solution_design.failed", error=str(e))
             return AgentResponse(
                 success=False,
-                data={"status": "failed"},
+                data={},
                 error=str(e)
             )

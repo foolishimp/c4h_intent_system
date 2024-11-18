@@ -86,39 +86,31 @@ class WorkflowState:
         if not data_key:
             logger.error("workflow.invalid_agent", agent=agent)
             return
+
+        # Structure matches the discovery data format
+        state_data = result.get("data", {})
+        if not state_data:
+            state_data = {
+                "timestamp": datetime.utcnow().isoformat(),
+                "status": "failed",
+                "error": result.get("error")
+            }
             
-        # Create state data PRESERVING all input data
-        state_data = {
-            "timestamp": datetime.utcnow().isoformat(),
-            "status": "completed" if result.get("success", False) else "failed",
-            "error": result.get("error"),
-        }
+        # Log state update
+        logger.debug(f"workflow.updating_{agent}_state",
+                    data_keys=list(state_data.keys()),
+                    status=state_data.get("status"))
 
-        # Add agent-specific data
-        if agent_data := result.get("data"):
-            # Preserve complete data structure
-            state_data.update(agent_data)
-            logger.debug(f"workflow.storing_{agent}_data", 
-                        data_keys=list(agent_data.keys()),
-                        has_raw_output=bool(agent_data.get("raw_output")))
-        
-        # Set state ONCE
-        current_data = getattr(self, data_key, None)
-        if not current_data or current_data.get("status") != "completed":
-            setattr(self, data_key, state_data)
-            self.action_history.append(agent)
-            self.last_action = agent
+        # Update state
+        setattr(self, data_key, state_data)
+        self.action_history.append(agent)
+        self.last_action = agent
 
-            logger.info("workflow.state_updated",
-                       agent=agent,
-                       status=state_data["status"],
-                       stored_keys=list(state_data.keys()))
-
-        if not result.get("success", False):
-            self.error = result.get("error")
-            logger.error("workflow.agent_failed",
-                        agent=agent,
-                        error=result.get("error"))
+        # Log completion
+        logger.info("workflow.state_updated",
+                   agent=agent, 
+                   status=state_data.get("status"),
+                   success=result.get("success", False))
 
 """
 Intent agent implementation.
@@ -281,15 +273,30 @@ class IntentAgent:
                     has_data=bool(result.data),
                     raw_output_size=len(result.data.get("raw_output", "")) if result.data else 0)
 
-        # Return complete result including all discovery data
+        # Format discovery state directly - this was working before
+        discovery_data = {
+            "success": result.success,
+            "data": {
+                "files": result.data.get("files", {}),
+                "project_path": result.data.get("project_path"),
+                "discovery_output": result.data.get("discovery_output"),
+                "raw_output": result.data.get("raw_output"),
+                "timestamp": datetime.utcnow().isoformat(),
+                "status": "completed" if result.success else "failed"
+            }
+        }
+
+        # Update state with proper structure
+        await self.current_state.update_agent_state("discovery", discovery_data)
+
+        # Return control flow result
         return {
             "success": result.success,
-            "error": result.error,
-            "data": result.data  # Pass ALL discovery data
+            "error": result.error
         }
 
     async def _execute_solution_design(self) -> Dict[str, Any]:
-        """Execute solution design stage"""
+        """Execute solution design stage - mirror discovery pattern exactly"""
         if not self.current_state or not self.current_state.discovery_data:
             return {
                 "success": False,
@@ -297,16 +304,33 @@ class IntentAgent:
             }
 
         try:
-            # Access discovery_data through current_state
+            # Format request just like discovery
             result = await self.designer.process({
                 "intent": self.current_state.intent.description,
-                "discovery_data": self.current_state.discovery_data,  # Access through state
+                "discovery_data": self.current_state.discovery_data,
                 "iteration": self.current_state.iteration
             })
 
-            # Store solution data
-            self.current_state.solution_design_data = result.data
+            logger.debug("solution_design.result_received", 
+                        success=result.success,
+                        has_data=bool(result.data),
+                        has_response=bool(result.data.get("response")))
 
+            # Format solution state exactly like discovery
+            solution_data = {
+                "success": result.success,
+                "data": {
+                    "response": result.data.get("response", {}),
+                    "changes": result.data.get("response", {}).get("changes", []),
+                    "timestamp": datetime.utcnow().isoformat(),
+                    "status": "completed" if result.success else "failed"
+                }
+            }
+
+            # Update state exactly like discovery
+            await self.current_state.update_agent_state("solution_design", solution_data)
+
+            # Return control flow result like discovery
             return {
                 "success": result.success,
                 "error": result.error
@@ -383,18 +407,16 @@ class IntentAgent:
                 result = await self._execute_assurance()
             
             if result:
-                # Log the transition BEFORE updating state
+                # Log the transition before state changes
                 logger.info("workflow.agent_transition",
                         agent=agent_type,
                         success=result.get("success", False),
                         next_agent=self.current_state.get_current_agent())
                 
-                if not result["success"]:
-                    self.current_state.error = result["error"]
-                else:
-                    # ONLY update state once
-                    await self.current_state.update_agent_state(agent_type, result)
+                if result["success"]:
                     self.current_state.iteration += 1
+                else:
+                    self.current_state.error = result["error"]
                     
             return result or {"success": False, "error": "Invalid agent type"}
 
