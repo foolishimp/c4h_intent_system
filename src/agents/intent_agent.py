@@ -28,7 +28,7 @@ class WorkflowState:
     iteration: int = 0
     max_iterations: int = 3
     discovery_data: Optional[Dict[str, Any]] = None
-    solution_data: Optional[Dict[str, Any]] = None
+    solution_design_data: Optional[Dict[str, Any]] = None  # Changed from solution_data
     implementation_data: Optional[Dict[str, Any]] = None
     validation_data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -68,8 +68,19 @@ class WorkflowState:
 
     async def update_agent_state(self, agent: str, result: Dict[str, Any]) -> None:
         """Update agent state with result"""
-        data_key = f"{agent}_data"
+        # Map agent names to their data fields
+        data_map = {
+            "discovery": "discovery_data",
+            "solution_design": "solution_design_data",  # Updated
+            "coder": "implementation_data",
+            "assurance": "validation_data"
+        }
         
+        data_key = data_map.get(agent)
+        if not data_key:
+            logger.error("workflow.invalid_agent", agent=agent)
+            return
+            
         # Format the state data consistently
         state_data = {
             "timestamp": datetime.utcnow().isoformat(),
@@ -260,7 +271,7 @@ class IntentAgent:
         }
 
     async def _execute_solution_design(self) -> Dict[str, Any]:
-        """Execute solution design stage with proper data capture"""
+        """Execute solution design stage"""
         if not self.current_state or not self.current_state.discovery_data:
             return {
                 "success": False,
@@ -268,27 +279,14 @@ class IntentAgent:
             }
 
         try:
-            # Format request with full context
             result = await self.designer.process({
                 "intent": self.current_state.intent.description,
                 "discovery_data": self.current_state.discovery_data,
                 "iteration": self.current_state.iteration
             })
 
-            # Properly capture solution data
-            solution_data = {
-                "success": result.success,
-                "status": "completed" if result.success else "failed",
-                "timestamp": datetime.utcnow().isoformat(),
-                "changes": result.data.get("response", {}).get("changes", []),
-                "response": result.data.get("response", {}),  # Store full response
-                "error": result.error
-            }
+            self.current_state.solution_design_data = result.data  # Updated reference
 
-            # Update workflow state
-            self.current_state.solution_data = solution_data
-
-            # Return simplified result for state machine
             return {
                 "success": result.success,
                 "error": result.error
@@ -436,14 +434,14 @@ class IntentAgent:
 
     def _get_workflow_data(self) -> Dict[str, Any]:
         """Get current workflow data for display"""
-        if not self.current_state:
+        if not self:
             return {}
             
         return {
-            "current_stage": self.current_state.get_current_agent(),
-            "discovery_data": self.current_state.discovery_data,
-            "solution_data": self.current_state.solution_data,
-            "implementation_data": self.current_state.implementation_data,
-            "validation_data": self.current_state.validation_data,
-            "error": self.current_state.error
+            "current_stage": self.get_current_agent(),
+            "discovery_data": self.discovery_data,
+            "solution_data": self.solution_design_data,  # Updated reference
+            "implementation_data": self.implementation_data,
+            "validation_data": self.validation_data,
+            "error": self.error
         }

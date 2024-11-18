@@ -1,8 +1,10 @@
-# src/agents/solution_designer.py
+"""
+Solution designer implementation for orchestrating code modifications.
+Path: src/agents/solution_designer.py
+"""
 
 from typing import Dict, Any, Optional
 import structlog
-import json
 from datetime import datetime
 from .base import BaseAgent, LLMProvider, AgentResponse
 
@@ -81,27 +83,26 @@ class SolutionDesigner(BaseAgent):
                 logger.warning("solution_design.missing_discovery_output")
                 return AgentResponse(
                     success=False,
-                    data={},
+                    data={"status": "failed"},
                     error="Missing discovery output data - cannot analyze code"
                 )
-
-            # Log raw input first
-            logger.info("solution_design.request_received", 
-                       intent=context.get('intent', {}).get('description'),
-                       has_discovery_output=bool(context.get('discovery_data', {}).get('discovery_output')))
 
             # Pass through to LLM
             response = await super().process(context)
             
-            # Log raw response
-            logger.info("solution_design.response_received", response=response.data)
+            # Add minimal state tracking without modifying response content
+            if response.success:
+                response.data["status"] = "completed"
+            else:
+                response.data["status"] = "failed"
 
+            logger.info("solution_design.response_received", response=response.data)
             return response
 
         except Exception as e:
             logger.error("solution_design.failed", error=str(e))
             return AgentResponse(
                 success=False,
-                data={},
+                data={"status": "failed"},
                 error=str(e)
             )
