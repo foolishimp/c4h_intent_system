@@ -18,23 +18,24 @@ class DiscoveryDisplay(BaseDisplay):
     
     def display_data(self, data: Dict[str, Any]) -> None:
         """Display all discovery data"""
-        # First show the manifest summary
-        self.console.print("\n=== Discovery Summary ===")
-        self.show_json_data(data, "Manifest Data")
-        
-        # Then show the actual file contents
-        self.console.print("\n=== File Contents ===")
-        if 'discovery_output' in data:
-            self.console.print(Panel(
-                data['discovery_output'],
-                title="Raw Discovery Output",
-                border_style="blue"
-            ))
-        elif 'raw_contents' in data:
-            self.console.print(Panel(
-                data['raw_contents'],
-                title="Raw File Contents",
-                border_style="blue" 
-            ))
-        else:
-            self.console.print("[red]No file contents found in discovery data[/]")
+        try:
+            # First show the manifest summary
+            self.console.print("\n=== Discovery Summary ===")
+            self.show_json_data(data, "Manifest Data")
+            
+            # Then show the actual file contents
+            self.console.print("\n=== File Contents ===")
+            if raw_output := data.get('raw_output'):
+                self.console.print(Panel(
+                    raw_output,
+                    title="Raw Discovery Output",
+                    border_style="blue"
+                ))
+            else:
+                logger.warning("discovery.missing_raw_output", 
+                             data_keys=list(data.keys()))
+                self.console.print("[red]No file contents found in discovery data[/]")
+
+        except Exception as e:
+            logger.error("discovery_display.error", error=str(e))
+            self.show_error(f"Error displaying discovery data: {str(e)}")

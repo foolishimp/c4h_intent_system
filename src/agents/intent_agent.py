@@ -24,16 +24,24 @@ logger = structlog.get_logger()
 @dataclass
 class WorkflowState:
     """Current state of the intent workflow"""
-    intent: Intent
+    intent_description: Dict[str, Any]
+    project_path: str
     iteration: int = 0
     max_iterations: int = 3
     discovery_data: Optional[Dict[str, Any]] = None
-    solution_design_data: Optional[Dict[str, Any]] = None  # Changed from solution_data
+    solution_design_data: Optional[Dict[str, Any]] = None
     implementation_data: Optional[Dict[str, Any]] = None
     validation_data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
     last_action: Optional[str] = None
     action_history: List[str] = field(default_factory=list)
+
+    def __post_init__(self):
+        """Initialize intent model after dataclass initialization"""
+        self.intent = Intent(
+            description=self.intent_description,
+            project_path=self.project_path
+        )
 
     @property
     def has_error(self) -> bool:
@@ -54,24 +62,22 @@ class WorkflowState:
             data_key = f"{agent}_data"
             data = getattr(self, data_key, None)
             
-            # Add detailed logging for debugging
             logger.debug("checking_agent_status", 
                         agent=agent,
                         has_data=bool(data),
                         data_status=data.get("status") if data else None)
                 
-            # Explicit status check
             if not data or data.get("status") != "completed":
                 return agent
                 
         return None
+    
 
     async def update_agent_state(self, agent: str, result: Dict[str, Any]) -> None:
         """Update agent state with result"""
-        # Map agent names to their data fields
         data_map = {
             "discovery": "discovery_data",
-            "solution_design": "solution_design_data",  # Updated
+            "solution_design": "solution_design_data",
             "coder": "implementation_data",
             "assurance": "validation_data"
         }
@@ -81,28 +87,38 @@ class WorkflowState:
             logger.error("workflow.invalid_agent", agent=agent)
             return
             
-        # Format the state data consistently
+        # Create state data PRESERVING all input data
         state_data = {
             "timestamp": datetime.utcnow().isoformat(),
             "status": "completed" if result.get("success", False) else "failed",
             "error": result.get("error"),
-            **result  # Include the rest of the result data
         }
-        
-        setattr(self, data_key, state_data)
-        self.action_history.append(agent)
-        self.last_action = agent
 
-        # Set workflow error if agent failed
+        # Add agent-specific data
+        if agent_data := result.get("data"):
+            # Preserve complete data structure
+            state_data.update(agent_data)
+            logger.debug(f"workflow.storing_{agent}_data", 
+                        data_keys=list(agent_data.keys()),
+                        has_raw_output=bool(agent_data.get("raw_output")))
+        
+        # Set state ONCE
+        current_data = getattr(self, data_key, None)
+        if not current_data or current_data.get("status") != "completed":
+            setattr(self, data_key, state_data)
+            self.action_history.append(agent)
+            self.last_action = agent
+
+            logger.info("workflow.state_updated",
+                       agent=agent,
+                       status=state_data["status"],
+                       stored_keys=list(state_data.keys()))
+
         if not result.get("success", False):
             self.error = result.get("error")
             logger.error("workflow.agent_failed",
                         agent=agent,
                         error=result.get("error"))
-        else:
-            logger.info("workflow.agent_completed", 
-                       agent=agent,
-                       status=state_data["status"])
 
 """
 Intent agent implementation.
@@ -194,10 +210,8 @@ class IntentAgent:
         try:
             if not self.current_state:
                 self.current_state = WorkflowState(
-                    intent=Intent(
-                        description=intent_desc,
-                        project_path=str(project_path)
-                    ),
+                    intent_description=intent_desc,
+                    project_path=str(project_path),
                     max_iterations=self.max_iterations
                 )
 
@@ -257,23 +271,21 @@ class IntentAgent:
                 "error": "No project path specified"
             }
 
+        # Get discovery result
         result = await self.discovery.process({
             "project_path": self.current_state.intent.project_path
         })
 
-        self.current_state.discovery_data = {
-            "files": result.data.get("files", {}),
-            "project_path": result.data.get("project_path"),
-            "discovery_output": result.data.get("discovery_output"),  # Preserve full output
-            "raw_output": result.data.get("raw_output"),  # Preserve raw output
-            "timestamp": datetime.utcnow().isoformat(),
-            "status": "completed" if result.success else "failed", 
-            "error": result.error
-        }
+        logger.debug("discovery.result_received", 
+                    success=result.success,
+                    has_data=bool(result.data),
+                    raw_output_size=len(result.data.get("raw_output", "")) if result.data else 0)
 
+        # Return complete result including all discovery data
         return {
             "success": result.success,
-            "error": result.error
+            "error": result.error,
+            "data": result.data  # Pass ALL discovery data
         }
 
     async def _execute_solution_design(self) -> Dict[str, Any]:
@@ -371,7 +383,7 @@ class IntentAgent:
                 result = await self._execute_assurance()
             
             if result:
-                # Log the transition
+                # Log the transition BEFORE updating state
                 logger.info("workflow.agent_transition",
                         agent=agent_type,
                         success=result.get("success", False),
@@ -380,7 +392,7 @@ class IntentAgent:
                 if not result["success"]:
                     self.current_state.error = result["error"]
                 else:
-                    # Update the state after successful execution
+                    # ONLY update state once
                     await self.current_state.update_agent_state(agent_type, result)
                     self.current_state.iteration += 1
                     

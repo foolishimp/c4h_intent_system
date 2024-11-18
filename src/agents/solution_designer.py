@@ -55,14 +55,9 @@ class SolutionDesigner(BaseAgent):
         if not context:
             return "No context provided. Please specify intent and code to modify."
 
-        # Log raw input for debugging
-        logger.debug("solution_design.input", 
-                   context=context,
-                   has_discovery=bool(context.get('discovery_data')))
-
-        # Get the discovery output which contains file contents
+        # Get the discovery output directly - no transformation
         discovery_data = context.get('discovery_data', {})
-        discovery_output = discovery_data.get('discovery_output', '')
+        raw_output = discovery_data.get('raw_output', '')
 
         return f"""Based on the following source code, design specific code changes to implement this intent.
         
@@ -70,7 +65,7 @@ class SolutionDesigner(BaseAgent):
         {context.get('intent', {}).get('description', 'No description provided')}
 
         SOURCE FILES:
-        {discovery_output}
+        {raw_output}
 
         ITERATION: {context.get('iteration', 0)}
         """

@@ -67,20 +67,17 @@ class DiscoveryAgent(BaseAgent):
         try:
             # Run tartxt with stdout capture
             result = subprocess.run(
-                [sys.executable, "src/skills/tartxt.py", "-o", str(project_path)],
+                [sys.executable, "src/skills/tartxt.py", "-o", project_path],
                 capture_output=True,
                 text=True,
                 check=True
             )
 
-            # Return discovery data with raw output preserved
+            # Pass through the complete output
             return {
                 "project_path": project_path,
                 "files": self._parse_manifest(result.stdout),
-                "raw_output": result.stdout,  # Complete tartxt output including file contents
-                "discovery_output": result.stdout,  # Add this for backwards compatibility
-                "timestamp": datetime.utcnow().isoformat(),
-                "status": "completed"
+                "raw_output": result.stdout  # Keep complete tartxt output
             }
 
         except subprocess.CalledProcessError as e:
@@ -88,12 +85,11 @@ class DiscoveryAgent(BaseAgent):
                         error=str(e),
                         stderr=e.stderr)
             raise
-        except Exception as e:
-            logger.error("discovery.failed", error=str(e))
-            raise
 
     async def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process a project discovery request"""
+        """Process a project discovery request.
+        Simply runs tartxt and returns raw output.
+        """
         try:
             project_path = context.get("project_path")
             if not project_path:
@@ -103,7 +99,7 @@ class DiscoveryAgent(BaseAgent):
                     error="No project path provided"
                 )
             
-            project_path = Path(context["project_path"])
+            project_path = Path(project_path)
             if not project_path.exists():
                 return AgentResponse(
                     success=False,
@@ -111,12 +107,17 @@ class DiscoveryAgent(BaseAgent):
                     error=f"Project path does not exist: {project_path}"
                 )
 
-            # Run discovery and return results
+            # Run discovery - let tartxt do the work
             result = await self._run_tartxt(str(project_path))
             
+            # Pass through the raw output - minimize processing
             return AgentResponse(
                 success=True,
-                data=result
+                data={
+                    "raw_output": result["raw_output"],  # Complete tartxt output
+                    "files": result["files"],  # Just the file list
+                    "project_path": result["project_path"]
+                }
             )
 
         except Exception as e:
