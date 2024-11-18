@@ -183,6 +183,12 @@ class IntentAgent:
                         config_keys=list(config_dict.keys()))
             raise ValueError(f"Failed to initialize intent agent: {str(e)}")
     
+    def get_current_agent(self) -> Optional[str]:
+        """Get current agent from workflow state"""
+        if self.current_state:
+            return self.current_state.get_current_agent()
+        return None
+
     async def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
         """Process an intent through the complete workflow"""
         try:
@@ -212,7 +218,7 @@ class IntentAgent:
                     intent_id=str(self.current_state.intent.id),
                     project_path=str(project_path))
 
-            # Get next agent to execute
+            # Get next agent to execute from workflow state
             current_agent = self.current_state.get_current_agent()
             if not current_agent:
                 return self._create_result_response()
@@ -279,13 +285,15 @@ class IntentAgent:
             }
 
         try:
+            # Access discovery_data through current_state
             result = await self.designer.process({
                 "intent": self.current_state.intent.description,
-                "discovery_data": self.current_state.discovery_data,
+                "discovery_data": self.current_state.discovery_data,  # Access through state
                 "iteration": self.current_state.iteration
             })
 
-            self.current_state.solution_design_data = result.data  # Updated reference
+            # Store solution data
+            self.current_state.solution_design_data = result.data
 
             return {
                 "success": result.success,
@@ -372,6 +380,8 @@ class IntentAgent:
                 if not result["success"]:
                     self.current_state.error = result["error"]
                 else:
+                    # Update the state after successful execution
+                    await self.current_state.update_agent_state(agent_type, result)
                     self.current_state.iteration += 1
                     
             return result or {"success": False, "error": "Invalid agent type"}
@@ -390,8 +400,21 @@ class IntentAgent:
 
     def _create_result_response(self) -> Dict[str, Any]:
         """Create standardized result response"""
-        # Get current workflow state
-        workflow_data = self._get_workflow_data()
+        if not self.current_state:
+            return {
+                "status": "error",
+                "error": "No workflow state"
+            }
+
+        # Get workflow data through state
+        workflow_data = {
+            "current_stage": self.current_state.get_current_agent(),
+            "discovery_data": self.current_state.discovery_data,
+            "solution_design_data": self.current_state.solution_design_data,
+            "implementation_data": self.current_state.implementation_data,
+            "validation_data": self.current_state.validation_data,
+            "error": self.current_state.error
+        }
         
         # Check if we have any agent failures
         has_failures = any(
@@ -409,17 +432,11 @@ class IntentAgent:
 
         # Determine overall success status
         success = (
-            not self.current_state.has_error 
+            not self.current_state.error 
             and not has_failures
             and stages_complete
             and self.current_state.intent.status == IntentStatus.COMPLETED
         )
-
-        logger.debug("workflow.status_check",
-                    has_failures=has_failures,
-                    stages_complete=stages_complete,
-                    has_error=self.current_state.has_error,
-                    success=success)
 
         return {
             "status": "success" if success else "failed",
