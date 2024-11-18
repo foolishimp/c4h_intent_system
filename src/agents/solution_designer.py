@@ -91,10 +91,7 @@ class SolutionDesigner(BaseAgent):
             if response.success:
                 return AgentResponse(
                     success=True,
-                    data={
-                        "response": response.data.get("response", {}),
-                        "changes": response.data.get("response", {}).get("changes", [])
-                    }
+                    data=response.data.get("response", {})  # Direct pass-through of LLM response
                 )
             else:
                 return AgentResponse(

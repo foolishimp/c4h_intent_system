@@ -20,16 +20,24 @@ class SolutionDisplay(BaseDisplay):
     def display_data(self, data: Dict[str, Any]) -> None:
         """Display solution design data"""
         try:
-            self.console.print("\n=== Raw Input ===")
-            self.show_json_data(data.get('input', {}), "Solution Design Input")
+            logger.debug("solution_display.input", data_keys=list(data.keys()) if data else None)
+
+            if not data:
+                self.console.print("[yellow]No solution data available yet[/]")
+                return
+
+            # Show the complete solution data
+            self.console.print("\n=== Solution Design Data ===")
+            self.show_json_data(data, "Solution Design Output")
             
-            self.console.print("\n=== Raw Response ===")
-            self.show_json_data(data.get('response', {}), "LLM Response")
-            
-            if 'changes' in data.get('response', {}):
-                self._show_changes_table(data['response']['changes'])
-                self._show_change_diffs(data['response']['changes'])
-                
+            # Show changes if available
+            changes = data.get('response', {}).get('changes', [])
+            if changes:
+                self._show_changes_table(changes)
+                self._show_change_diffs(changes)
+            else:
+                self.console.print("[yellow]No changes proposed[/]")
+
         except Exception as e:
             logger.error("solution_display.error", error=str(e))
             self.show_error(f"Error displaying solution: {str(e)}")
@@ -49,20 +57,3 @@ class SolutionDisplay(BaseDisplay):
             )
         
         self.console.print(table)
-
-    def _show_change_diffs(self, changes: list[Dict[str, Any]]) -> None:
-        """Display detailed change diffs"""
-        for i, change in enumerate(changes, 1):
-            diff = change.get('diff', 'No diff provided')
-            description = change.get('description', 'No description provided')
-            
-            self.console.print(Panel(
-                Syntax(
-                    diff,
-                    "diff",
-                    theme="monokai",
-                    line_numbers=True
-                ),
-                title=f"Change {i}: {description}",
-                border_style="blue"
-            ))

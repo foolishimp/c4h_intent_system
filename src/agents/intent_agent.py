@@ -62,55 +62,53 @@ class WorkflowState:
             data_key = f"{agent}_data"
             data = getattr(self, data_key, None)
             
+            # Log complete state data
             logger.debug("checking_agent_status", 
                         agent=agent,
-                        has_data=bool(data),
-                        data_status=data.get("status") if data else None)
+                        data=data,
+                        has_data=bool(data))
                 
-            if not data or data.get("status") != "completed":
+            # Success if we have data with some content
+            is_complete = (data is not None )
+
+            if not is_complete:
                 return agent
                 
         return None
-    
 
     async def update_agent_state(self, agent: str, result: Dict[str, Any]) -> None:
-        """Update agent state with result"""
-        data_map = {
-            "discovery": "discovery_data",
-            "solution_design": "solution_design_data",
-            "coder": "implementation_data",
-            "assurance": "validation_data"
-        }
-        
-        data_key = data_map.get(agent)
-        if not data_key:
-            logger.error("workflow.invalid_agent", agent=agent)
-            return
-
-        # Structure matches the discovery data format
-        state_data = result.get("data", {})
-        if not state_data:
-            state_data = {
-                "timestamp": datetime.utcnow().isoformat(),
-                "status": "failed",
-                "error": result.get("error")
+        """Update agent state with status from agent"""
+        try:
+            data_map = {
+                "discovery": "discovery_data",
+                "solution_design": "solution_design_data",
+                "coder": "implementation_data",
+                "assurance": "validation_data"
             }
             
-        # Log state update
-        logger.debug(f"workflow.updating_{agent}_state",
-                    data_keys=list(state_data.keys()),
-                    status=state_data.get("status"))
+            data_key = data_map.get(agent)
+            if not data_key:
+                logger.error("workflow.invalid_agent", agent=agent)
+                return
 
-        # Update state
-        setattr(self, data_key, state_data)
-        self.action_history.append(agent)
-        self.last_action = agent
+            # Simply trust the agent's success flag - no business logic validation
+            state_data = {
+                **result.get("data", {}),
+                "timestamp": datetime.utcnow().isoformat(),
+                "status": "completed" if result.get("success") else "failed"
+            }
 
-        # Log completion
-        logger.info("workflow.state_updated",
-                   agent=agent, 
-                   status=state_data.get("status"),
-                   success=result.get("success", False))
+            logger.info(f"workflow.{agent}_state_update",
+                    old_data=getattr(self, data_key, None),
+                    new_data=state_data,
+                    status=state_data["status"])
+
+            setattr(self, data_key, state_data)
+            self.action_history.append(agent)
+            self.last_action = agent
+
+        except Exception as e:
+            logger.error(f"workflow.{agent}_update_failed", error=str(e))
 
 """
 Intent agent implementation.
@@ -296,7 +294,7 @@ class IntentAgent:
         }
 
     async def _execute_solution_design(self) -> Dict[str, Any]:
-        """Execute solution design stage - mirror discovery pattern exactly"""
+        """Execute solution design stage with simplified logging"""
         if not self.current_state or not self.current_state.discovery_data:
             return {
                 "success": False,
@@ -304,33 +302,40 @@ class IntentAgent:
             }
 
         try:
-            # Format request just like discovery
+            # Log input
+            logger.info("solution_design.starting",
+                       discovery_data=self.current_state.discovery_data)
+
             result = await self.designer.process({
                 "intent": self.current_state.intent.description,
                 "discovery_data": self.current_state.discovery_data,
                 "iteration": self.current_state.iteration
             })
 
-            logger.debug("solution_design.result_received", 
-                        success=result.success,
-                        has_data=bool(result.data),
-                        has_response=bool(result.data.get("response")))
+            # Log raw result
+            logger.info("solution_design.result", response=result.data)
 
-            # Format solution state exactly like discovery
+            # Format solution state - keep it simple
             solution_data = {
                 "success": result.success,
                 "data": {
-                    "response": result.data.get("response", {}),
                     "changes": result.data.get("response", {}).get("changes", []),
+                    "raw_output": result.data.get("response", {}),  # Keep full response like discovery
                     "timestamp": datetime.utcnow().isoformat(),
                     "status": "completed" if result.success else "failed"
                 }
             }
 
-            # Update state exactly like discovery
-            await self.current_state.update_agent_state("solution_design", solution_data)
+            # Log before state update
+            logger.info("solution_design.updating_state", data=solution_data)
 
-            # Return control flow result like discovery
+            # Update state
+            await self.current_state.update_agent_state("solution_design", solution_data)
+            
+            # Verify state
+            logger.info("solution_design.state_updated",
+                       stored_data=self.current_state.solution_design_data)
+
             return {
                 "success": result.success,
                 "error": result.error
@@ -338,6 +343,13 @@ class IntentAgent:
 
         except Exception as e:
             logger.error("solution_design.failed", error=str(e))
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+        except Exception as e:
+            logger.error("solution_design.failed", error=str(e), traceback=True)
             return {
                 "success": False,
                 "error": str(e)

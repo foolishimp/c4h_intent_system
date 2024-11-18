@@ -67,23 +67,29 @@ class DiscoveryAgent(BaseAgent):
         try:
             # Run tartxt with stdout capture
             result = subprocess.run(
-                [sys.executable, "src/skills/tartxt.py", "-o", project_path],
+                [sys.executable, "src/skills/tartxt.py", "-o", str(project_path)],
                 capture_output=True,
                 text=True,
                 check=True
             )
 
-            # Pass through the complete output
+            # Return discovery data with raw output preserved
             return {
                 "project_path": project_path,
                 "files": self._parse_manifest(result.stdout),
-                "raw_output": result.stdout  # Keep complete tartxt output
+                "raw_output": result.stdout,  # Complete tartxt output including file contents
+                "discovery_output": result.stdout,  # Add this for backwards compatibility
+                "timestamp": datetime.utcnow().isoformat(),
+                "status": "completed"
             }
 
         except subprocess.CalledProcessError as e:
             logger.error("discovery.tartxt_failed", 
                         error=str(e),
                         stderr=e.stderr)
+            raise
+        except Exception as e:
+            logger.error("discovery.failed", error=str(e))
             raise
 
     async def process(self, context: Dict[str, Any]) -> AgentResponse:
