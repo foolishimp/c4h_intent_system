@@ -13,15 +13,16 @@ import shutil
 import structlog
 
 from src.models.intent import Intent, IntentStatus, AgentState
-from src.agents.discovery import DiscoveryAgent
+from src.agents.discovery import DiscoveryAgent 
 from src.agents.solution_designer import SolutionDesigner
-from src.agents.coder import Coder, MergeMethod
+from src.agents.coder import Coder, MergeMethod  
 from src.agents.assurance import AssuranceAgent
 from src.config import SystemConfig
+from src.agents.base import AgentResponse
 
 logger = structlog.get_logger()
 
-@dataclass
+@dataclass 
 class WorkflowState:
     """Current state of the intent workflow"""
     intent_description: Dict[str, Any]
@@ -29,7 +30,7 @@ class WorkflowState:
     iteration: int = 0
     max_iterations: int = 3
     discovery_data: Optional[Dict[str, Any]] = None
-    solution_design_data: Optional[Dict[str, Any]] = None
+    solution_design_data: Optional[Dict[str, Any]] = None  
     implementation_data: Optional[Dict[str, Any]] = None
     validation_data: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
@@ -62,120 +63,102 @@ class WorkflowState:
             data_key = f"{agent}_data"
             data = getattr(self, data_key, None)
             
-            # Log complete state data
             logger.debug("checking_agent_status", 
                         agent=agent,
                         data=data,
-                        has_data=bool(data))
+                        has_data=bool(data) and data.get("status") == "completed")
                 
-            # Success if we have data with some content
-            is_complete = (data is not None )
+            # Success if we have data with completed status
+            is_complete = bool(data) and data.get("status") == "completed"
 
             if not is_complete:
                 return agent
                 
         return None
 
-    async def update_agent_state(self, agent: str, result: Dict[str, Any]) -> None:
+    async def update_agent_state(self, agent: str, result: AgentResponse) -> None:
         """Update agent state with status from agent"""
         try:
-            data_map = {
-                "discovery": "discovery_data",
-                "solution_design": "solution_design_data",
-                "coder": "implementation_data",
-                "assurance": "validation_data"
+            # Create standard state data structure
+            state_data = {
+                "raw_output": result.data,  # Store complete response data
+                "timestamp": datetime.utcnow().isoformat(),
+                "status": "completed" if result.success else "failed",
+                "error": result.error
             }
             
-            data_key = data_map.get(agent)
-            if not data_key:
+            # Store in appropriate field
+            if agent == "discovery":
+                self.discovery_data = state_data
+            elif agent == "solution_design":
+                self.solution_design_data = state_data
+            elif agent == "coder":
+                self.implementation_data = state_data
+            elif agent == "assurance":
+                self.validation_data = state_data
+            else:
                 logger.error("workflow.invalid_agent", agent=agent)
                 return
 
-            # Simply trust the agent's success flag - no business logic validation
-            state_data = {
-                **result.get("data", {}),
-                "timestamp": datetime.utcnow().isoformat(),
-                "status": "completed" if result.get("success") else "failed"
-            }
-
             logger.info(f"workflow.{agent}_state_update",
-                    old_data=getattr(self, data_key, None),
-                    new_data=state_data,
-                    status=state_data["status"])
+                    status=state_data["status"],
+                    has_error=bool(state_data.get("error")))
 
-            setattr(self, data_key, state_data)
             self.action_history.append(agent)
             self.last_action = agent
 
         except Exception as e:
             logger.error(f"workflow.{agent}_update_failed", error=str(e))
 
-"""
-Intent agent implementation.
-Path: src/agents/intent_agent.py
-"""
-
 class IntentAgent:
     """Orchestrates the intent workflow."""
     
     def __init__(self, config: SystemConfig, max_iterations: int = 3):
-        """Initialize intent agent with system configuration.
-        
-        Args:
-            config: System configuration including provider and agent settings
-            max_iterations: Maximum number of refinement iterations
-        """
+        """Initialize intent agent with system configuration."""
         self.max_iterations = max_iterations
         self.config = config
         
         try:
-            # Convert config to dict once for all agents
             config_dict = config.dict()
             
-            # Initialize discovery agent
             discovery_config = config.get_agent_config("discovery")
             self.discovery = DiscoveryAgent(
                 provider=discovery_config.provider_enum,
                 model=discovery_config.model,
                 temperature=discovery_config.temperature,
-                config=config_dict,  # Pass the full config dict
+                config=config_dict,
                 workspace_root=Path(config.project.workspace_root) if config.project.workspace_root else None
             )
             
-            # Initialize solution designer
             designer_config = config.get_agent_config("solution_designer")
             self.designer = SolutionDesigner(
                 provider=designer_config.provider_enum,
                 model=designer_config.model,
                 temperature=designer_config.temperature,
-                config=config_dict  # Pass the full config dict
+                config=config_dict
             )
             
-            # Initialize coder
             coder_config = config.get_agent_config("coder")
             self.coder = Coder(
                 provider=coder_config.provider_enum,
                 model=coder_config.model,
                 temperature=coder_config.temperature,
                 max_file_size=config.project.max_file_size,
-                config=config_dict  # Pass the full config dict
+                config=config_dict
             )
             
-            # Initialize assurance agent
             assurance_config = config.get_agent_config("assurance")
             self.assurance = AssuranceAgent(
                 provider=assurance_config.provider_enum,
                 model=assurance_config.model,
                 temperature=assurance_config.temperature,
-                config=config_dict,  # Pass the full config dict
+                config=config_dict,
                 workspace_root=Path(config.project.workspace_root) if config.project.workspace_root else None
             )
             
-            # Initialize state tracking
             self.current_state: Optional[WorkflowState] = None
             self.backup_dir: Optional[Path] = None
 
-            # Log successful initialization
             logger.info("intent_agent.initialized", 
                     max_iterations=max_iterations,
                     discovery_model=self.discovery.model,
@@ -205,7 +188,6 @@ class IntentAgent:
                     max_iterations=self.max_iterations
                 )
 
-            # Create backup first
             if not self.backup_dir and project_path:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 self.backup_dir = Path(f"workspaces/backups/backup_{timestamp}")
@@ -222,16 +204,13 @@ class IntentAgent:
                     intent_id=str(self.current_state.intent.id),
                     project_path=str(project_path))
 
-            # Get next agent to execute from workflow state
             current_agent = self.current_state.get_current_agent()
             if not current_agent:
                 return self._create_result_response()
 
-            # Execute current agent
             result = await self._execute_agent(current_agent)
             
             if not result.get("success", False):
-                # On failure, restore backup
                 if self.backup_dir:
                     backup_path = self.backup_dir / project_path.name
                     if backup_path.exists():
@@ -261,7 +240,6 @@ class IntentAgent:
                 "error": "No project path specified"
             }
 
-        # Get discovery result
         result = await self.discovery.process({
             "project_path": self.current_state.intent.project_path
         })
@@ -271,30 +249,15 @@ class IntentAgent:
                     has_data=bool(result.data),
                     raw_output_size=len(result.data.get("raw_output", "")) if result.data else 0)
 
-        # Format discovery state directly - this was working before
-        discovery_data = {
-            "success": result.success,
-            "data": {
-                "files": result.data.get("files", {}),
-                "project_path": result.data.get("project_path"),
-                "discovery_output": result.data.get("discovery_output"),
-                "raw_output": result.data.get("raw_output"),
-                "timestamp": datetime.utcnow().isoformat(),
-                "status": "completed" if result.success else "failed"
-            }
-        }
+        await self.current_state.update_agent_state("discovery", result)
 
-        # Update state with proper structure
-        await self.current_state.update_agent_state("discovery", discovery_data)
-
-        # Return control flow result
         return {
             "success": result.success,
             "error": result.error
         }
 
     async def _execute_solution_design(self) -> Dict[str, Any]:
-        """Execute solution design stage with simplified logging"""
+        """Execute solution design stage"""
         if not self.current_state or not self.current_state.discovery_data:
             return {
                 "success": False,
@@ -302,39 +265,13 @@ class IntentAgent:
             }
 
         try:
-            # Log input
-            logger.info("solution_design.starting",
-                       discovery_data=self.current_state.discovery_data)
-
             result = await self.designer.process({
                 "intent": self.current_state.intent.description,
                 "discovery_data": self.current_state.discovery_data,
                 "iteration": self.current_state.iteration
             })
 
-            # Log raw result
-            logger.info("solution_design.result", response=result.data)
-
-            # Format solution state - keep it simple
-            solution_data = {
-                "success": result.success,
-                "data": {
-                    "changes": result.data.get("response", {}).get("changes", []),
-                    "raw_output": result.data.get("response", {}),  # Keep full response like discovery
-                    "timestamp": datetime.utcnow().isoformat(),
-                    "status": "completed" if result.success else "failed"
-                }
-            }
-
-            # Log before state update
-            logger.info("solution_design.updating_state", data=solution_data)
-
-            # Update state
-            await self.current_state.update_agent_state("solution_design", solution_data)
-            
-            # Verify state
-            logger.info("solution_design.state_updated",
-                       stored_data=self.current_state.solution_design_data)
+            await self.current_state.update_agent_state("solution_design", result)
 
             return {
                 "success": result.success,
@@ -348,31 +285,19 @@ class IntentAgent:
                 "error": str(e)
             }
 
-        except Exception as e:
-            logger.error("solution_design.failed", error=str(e), traceback=True)
-            return {
-                "success": False,
-                "error": str(e)
-            }
-
     async def _execute_code_changes(self) -> Dict[str, Any]:
         """Execute code changes stage"""
-        if not self.current_state or not self.current_state.solution_data:
+        if not self.current_state or not self.current_state.solution_design_data:
             return {
                 "success": False,
                 "error": "Solution design required for code changes"
             }
 
         result = await self.coder.process({
-            "changes": self.current_state.solution_data.get("changes", [])
+            "changes": self.current_state.solution_design_data.get("changes", [])
         })
 
-        self.current_state.implementation_data = {
-            "changes": result.data.get("changes", []),
-            "timestamp": datetime.utcnow().isoformat(),
-            "status": "completed" if result.success else "failed",
-            "error": result.error
-        }
+        await self.current_state.update_agent_state("coder", result)
 
         return {
             "success": result.success,
@@ -392,12 +317,7 @@ class IntentAgent:
             "intent": self.current_state.intent.description
         })
 
-        self.current_state.validation_data = {
-            "results": result.data,
-            "timestamp": datetime.utcnow().isoformat(),
-            "status": "completed" if result.success else "failed",
-            "error": result.error
-        }
+        await self.current_state.update_agent_state("assurance", result)
 
         return {
             "success": result.success,
@@ -419,7 +339,6 @@ class IntentAgent:
                 result = await self._execute_assurance()
             
             if result:
-                # Log the transition before state changes
                 logger.info("workflow.agent_transition",
                         agent=agent_type,
                         success=result.get("success", False),
@@ -452,7 +371,6 @@ class IntentAgent:
                 "error": "No workflow state"
             }
 
-        # Get workflow data through state
         workflow_data = {
             "current_stage": self.current_state.get_current_agent(),
             "discovery_data": self.current_state.discovery_data,
@@ -462,21 +380,18 @@ class IntentAgent:
             "error": self.current_state.error
         }
         
-        # Check if we have any agent failures
         has_failures = any(
             data.get("status") == "failed" 
             for data in workflow_data.values() 
             if isinstance(data, dict) and "status" in data
         )
 
-        # Check if all required stages are complete
         stages_complete = all(
             data.get("status") == "completed"
             for name, data in workflow_data.items()
             if isinstance(data, dict) and name != "current_stage"
         )
 
-        # Determine overall success status
         success = (
             not self.current_state.error 
             and not has_failures
@@ -497,14 +412,14 @@ class IntentAgent:
 
     def _get_workflow_data(self) -> Dict[str, Any]:
         """Get current workflow data for display"""
-        if not self:
+        if not self.current_state:
             return {}
             
         return {
-            "current_stage": self.get_current_agent(),
-            "discovery_data": self.discovery_data,
-            "solution_data": self.solution_design_data,  # Updated reference
-            "implementation_data": self.implementation_data,
-            "validation_data": self.validation_data,
-            "error": self.error
+            "current_stage": self.current_state.get_current_agent(),
+            "discovery_data": self.current_state.discovery_data,
+            "solution_data": self.current_state.solution_design_data,
+            "implementation_data": self.current_state.implementation_data,
+            "validation_data": self.current_state.validation_data,
+            "error": self.current_state.error
         }

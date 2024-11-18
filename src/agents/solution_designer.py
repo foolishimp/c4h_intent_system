@@ -6,7 +6,7 @@ Path: src/agents/solution_designer.py
 from typing import Dict, Any, Optional
 import structlog
 from datetime import datetime
-from .base import BaseAgent, LLMProvider
+from .base import BaseAgent, LLMProvider, AgentResponse
 
 logger = structlog.get_logger()
 
@@ -70,40 +70,22 @@ class SolutionDesigner(BaseAgent):
         """
 
     async def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
-        """Process solution design request exactly like discovery processes files"""
+        """Process solution design request"""
         try:
             # Check for discovery output
             discovery_data = context.get('discovery_data', {})
             raw_output = discovery_data.get('raw_output')
             
             if not raw_output:
-                logger.warning("solution_design.missing_discovery_output")
                 return self._create_standard_response(
-                    success=False,
-                    data={},
-                    error="Missing discovery output data - cannot analyze code"
+                    False,
+                    {},
+                    "Missing discovery output data - cannot analyze code"
                 )
 
-            # Pass to LLM like discovery does
-            response = await super().process(context)
-            
-            # Return data in same format as discovery
-            if response.success:
-                return self._create_standard_response(
-                    success=True,
-                    data=response.data.get("response", {})
-                )
-            else:
-                return self._create_standard_response(
-                    success=False,
-                    data={},
-                    error=response.error
-                )
+            # Simply pass through to LLM and return response
+            return await super().process(context)
 
         except Exception as e:
             logger.error("solution_design.failed", error=str(e))
-            return self._create_standard_response(
-                success=False,
-                data={},
-                error=str(e)
-            )
+            return self._create_standard_response(False, {}, str(e))

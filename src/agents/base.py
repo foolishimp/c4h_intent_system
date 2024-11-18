@@ -99,22 +99,22 @@ class BaseAgent(ABC):
                 json_match = re.search(r'\{.*\}', content, re.DOTALL)
                 if json_match:
                     return json.loads(json_match.group(0))
-                else:
-                    return {"raw_message": content}
+                    
+            # If all parsing fails, return raw content
+            return {"raw_content": content}
                     
         except Exception as e:
             self.logger.error("response_parse_failed", error=str(e))
-            return {"raw_message": content}
+            return {"raw_content": content}
 
     def _create_standard_response(self, success: bool, data: Dict[str, Any], error: Optional[str] = None) -> AgentResponse:
         """Create standardized response format"""
         return AgentResponse(
             success=success,
             data={
-                "raw_output": data,  # Store full LLM response
+                "raw_output": data,  # Store complete data
                 "timestamp": datetime.utcnow().isoformat(),
-                "status": "completed" if success else "failed",
-                **data  # Allow agents to add their specific data
+                "status": "completed" if success else "failed"
             },
             error=error
         )
@@ -157,7 +157,7 @@ class BaseAgent(ABC):
                     
                     return self._create_standard_response(
                         success=True,
-                        data={"response": parsed}
+                        data=parsed
                     )
                     
             except Exception as e:

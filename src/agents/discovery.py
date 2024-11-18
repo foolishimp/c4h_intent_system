@@ -1,10 +1,15 @@
+"""
+Discovery agent implementation.
+Path: src/agents/discovery.py
+"""
+
 from typing import Dict, Any, Optional
 import structlog
 import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
-from .base import BaseAgent, LLMProvider
+from .base import BaseAgent, LLMProvider, AgentResponse  # Fixed import
 
 logger = structlog.get_logger()
 
@@ -59,7 +64,7 @@ class DiscoveryAgent(BaseAgent):
                     files[norm_path] = True
                     
         return files
-    
+
     async def _run_tartxt(self, project_path: str) -> Dict[str, Any]:
         """Run tartxt discovery on project"""
         try:
@@ -71,14 +76,11 @@ class DiscoveryAgent(BaseAgent):
                 check=True
             )
 
-            # Return discovery data with raw output preserved
+            # Return discovery data
             return {
-                "project_path": project_path,
                 "files": self._parse_manifest(result.stdout),
-                "raw_output": result.stdout,  # Complete tartxt output including file contents
-                "discovery_output": result.stdout,  # Add this for backwards compatibility
-                "timestamp": datetime.utcnow().isoformat(),
-                "status": "completed"
+                "raw_output": result.stdout,  # Complete tartxt output
+                "project_path": project_path
             }
 
         except subprocess.CalledProcessError as e:
@@ -91,43 +93,29 @@ class DiscoveryAgent(BaseAgent):
             raise
 
     async def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process a project discovery request.
-        Simply runs tartxt and returns raw output.
-        """
+        """Process a project discovery request."""
         try:
             project_path = context.get("project_path")
             if not project_path:
                 return self._create_standard_response(
-                    success=False,
-                    data={},
-                    error="No project path provided"
+                    False,
+                    {},
+                    "No project path provided"
                 )
             
             project_path = Path(project_path)
             if not project_path.exists():
                 return self._create_standard_response(
-                    success=False,
-                    data={},
-                    error=f"Project path does not exist: {project_path}"
+                    False,
+                    {},
+                    f"Project path does not exist: {project_path}"
                 )
 
-            # Run discovery - let tartxt do the work
+            # Run discovery
             result = await self._run_tartxt(str(project_path))
             
-            # Pass through the raw output - minimize processing
-            return self._create_standard_response(
-                success=True,
-                data={
-                    "raw_output": result["raw_output"],  # Complete tartxt output
-                    "files": result["files"],  # Just the file list
-                    "project_path": result["project_path"]
-                }
-            )
+            return self._create_standard_response(True, result)
 
         except Exception as e:
             logger.error("discovery.failed", error=str(e))
-            return self._create_standard_response(
-                success=False,
-                data={},
-                error=str(e)
-            )
+            return self._create_standard_response(False, {}, str(e))

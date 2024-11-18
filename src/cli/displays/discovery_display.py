@@ -1,5 +1,8 @@
-# src/cli/displays/discovery_display.py
-"""Discovery data display handler."""
+"""
+Display handler for discovery stage output.
+Path: src/cli/displays/discovery_display.py
+"""
+
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
@@ -19,21 +22,38 @@ class DiscoveryDisplay(BaseDisplay):
     def display_data(self, data: Dict[str, Any]) -> None:
         """Display all discovery data"""
         try:
-            # First show the manifest summary
-            self.console.print("\n=== Discovery Summary ===")
-            self.show_json_data(data, "Manifest Data")
+            # Extract files from nested structure
+            files = {}
+            if isinstance(data.get('raw_output'), dict):
+                files = data['raw_output'].get('files', {})
             
-            # Then show the actual file contents
+            # Show files summary
+            self.console.print("\n=== Discovery Summary ===")
+            if files:
+                table = Table(title="Discovered Files")
+                table.add_column("File Path", style="cyan")
+                table.add_column("Status", style="green")
+                
+                for file_path, status in files.items():
+                    table.add_row(str(file_path), "✓" if status else "✗")
+                self.console.print(table)
+            else:
+                self.console.print("[yellow]No files discovered[/]")
+
+            # Show raw output if available
             self.console.print("\n=== File Contents ===")
-            if raw_output := data.get('raw_output'):
+            raw_content = None
+            if isinstance(data.get('raw_output'), dict):
+                raw_content = data['raw_output'].get('raw_output')
+            
+            if raw_content:
                 self.console.print(Panel(
-                    raw_output,
+                    raw_content,
                     title="Raw Discovery Output",
                     border_style="blue"
                 ))
             else:
-                logger.warning("discovery.missing_raw_output", 
-                             data_keys=list(data.keys()))
+                logger.warning("discovery.missing_raw_output")
                 self.console.print("[red]No file contents found in discovery data[/]")
 
         except Exception as e:
