@@ -51,3 +51,4 @@ tests/.DS_Store
 .history/
 *.txt
 !requirements.txt
+*.old
