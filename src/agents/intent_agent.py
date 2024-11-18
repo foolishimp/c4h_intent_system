@@ -145,7 +145,6 @@ class IntentAgent:
                 provider=coder_config.provider_enum,
                 model=coder_config.model,
                 temperature=coder_config.temperature,
-                max_file_size=config.project.max_file_size,
                 config=config_dict
             )
             
