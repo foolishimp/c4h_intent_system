@@ -54,7 +54,7 @@ class WorkflowState:
         if self.error:
             logger.debug("workflow.error_state", error=self.error)
             return None
-            
+                
         # Priority order
         agents = ["discovery", "solution_design", "coder", "assurance"]
         
@@ -62,19 +62,21 @@ class WorkflowState:
         for agent in agents:
             data_key = f"{agent}_data"
             data = getattr(self, data_key, None)
-            
+                
             logger.debug("checking_agent_status", 
                         agent=agent,
                         data=data,
                         has_data=bool(data) and data.get("status") == "completed")
-                
-            # Success if we have data with completed status
+                    
+            # Report success on individual stage completion
             is_complete = bool(data) and data.get("status") == "completed"
-
             if not is_complete:
-                return agent
+                return agent  # Return next agent to process
                 
-        return None
+            # Log successful completion
+            logger.info(f"workflow.{agent}_completed")
+                    
+        return None  # All stages complete
 
     async def update_agent_state(self, agent: str, result: AgentResponse) -> None:
         """Update agent state with status from agent"""
@@ -371,43 +373,27 @@ class IntentAgent:
                 "error": "No workflow state"
             }
 
-        workflow_data = {
-            "current_stage": self.current_state.get_current_agent(),
-            "discovery_data": self.current_state.discovery_data,
-            "solution_design_data": self.current_state.solution_design_data,
-            "implementation_data": self.current_state.implementation_data,
-            "validation_data": self.current_state.validation_data,
-            "error": self.current_state.error
-        }
+        workflow_data = self._get_workflow_data()
         
-        has_failures = any(
-            data.get("status") == "failed" 
-            for data in workflow_data.values() 
-            if isinstance(data, dict) and "status" in data
-        )
-
+        # The issue is here - we're marking as failed unless everything is complete
         stages_complete = all(
             data.get("status") == "completed"
             for name, data in workflow_data.items()
             if isinstance(data, dict) and name != "current_stage"
         )
 
-        success = (
-            not self.current_state.error 
-            and not has_failures
-            and stages_complete
-            and self.current_state.intent.status == IntentStatus.COMPLETED
+        # We should instead check if the current stage completed successfully
+        current_stage = self.current_state.get_current_agent()
+        current_stage_data = workflow_data.get(
+            f"{current_stage}_data" if current_stage else None, 
+            {}
         )
+        stage_success = current_stage_data.get("status") == "completed"
 
         return {
-            "status": "success" if success else "failed",
-            "intent_id": str(self.current_state.intent.id),
-            "iterations": self.current_state.iteration,
+            "status": "success" if stage_success else "failed",  # Use current stage status
             "workflow_data": workflow_data,
-            "changes": self.current_state.implementation_data.get("changes", []) if success else [],
-            "validation": self.current_state.validation_data if success else None,
-            "error": self.current_state.error,
-            "action_history": self.current_state.action_history
+            "error": self.current_state.error
         }
 
     def _get_workflow_data(self) -> Dict[str, Any]:

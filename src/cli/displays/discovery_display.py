@@ -6,10 +6,7 @@ Path: src/cli/displays/discovery_display.py
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-from rich.syntax import Syntax
-from rich.tree import Tree
-from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any
 import structlog
 
 from src.cli.displays.base_display import BaseDisplay
@@ -22,14 +19,12 @@ class DiscoveryDisplay(BaseDisplay):
     def display_data(self, data: Dict[str, Any]) -> None:
         """Display all discovery data"""
         try:
-            # Extract files from nested structure
-            files = {}
-            if isinstance(data.get('raw_output'), dict):
-                files = data['raw_output'].get('files', {})
+            # Extract displayable content
+            content = self.extract_display_data(data)
             
             # Show files summary
             self.console.print("\n=== Discovery Summary ===")
-            if files:
+            if files := content.get('files', {}):
                 table = Table(title="Discovered Files")
                 table.add_column("File Path", style="cyan")
                 table.add_column("Status", style="green")
@@ -42,13 +37,9 @@ class DiscoveryDisplay(BaseDisplay):
 
             # Show raw output if available
             self.console.print("\n=== File Contents ===")
-            raw_content = None
-            if isinstance(data.get('raw_output'), dict):
-                raw_content = data['raw_output'].get('raw_output')
-            
-            if raw_content:
+            if raw_output := content.get('raw_output'):
                 self.console.print(Panel(
-                    raw_content,
+                    str(raw_output),
                     title="Raw Discovery Output",
                     border_style="blue"
                 ))

@@ -1,7 +1,7 @@
 # src/cli/displays/base_display.py
 """
 Base display functionality for refactoring workflow stages.
-Provides common display utilities used across different stages.
+Path: src/cli/displays/base_display.py
 """
 
 from rich.console import Console
@@ -30,9 +30,17 @@ class BaseDisplay:
     def show_json_data(self, data: Dict[str, Any], title: str) -> None:
         """Display formatted JSON data"""
         try:
+            # Extract content from raw_output if present
+            if isinstance(data, dict):
+                content = data.get('raw_output', data)
+                if isinstance(content, dict):
+                    content = content.get('raw_output', content)
+            else:
+                content = data
+
             self.console.print(Panel(
                 Syntax(
-                    json.dumps(data, indent=2, default=str),
+                    json.dumps(content, indent=2, default=str),
                     "json",
                     theme="monokai",
                     line_numbers=True
@@ -43,3 +51,14 @@ class BaseDisplay:
         except Exception as e:
             logger.error("display.json_error", error=str(e))
             self.show_error(f"Error formatting JSON: {str(e)}")
+
+    def extract_display_data(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract displayable content from nested response structure"""
+        if isinstance(data, dict):
+            # Handle nested raw_output structure
+            if 'raw_output' in data:
+                content = data['raw_output']
+                if isinstance(content, dict) and 'raw_output' in content:
+                    return content['raw_output']
+                return content
+        return data
