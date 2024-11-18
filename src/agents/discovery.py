@@ -1,12 +1,10 @@
-# src/agents/discovery.py
-
 from typing import Dict, Any, Optional
 import structlog
 import subprocess
 import sys
 from pathlib import Path
 from datetime import datetime
-from .base import BaseAgent, LLMProvider, AgentResponse
+from .base import BaseAgent, LLMProvider
 
 logger = structlog.get_logger()
 
@@ -99,7 +97,7 @@ class DiscoveryAgent(BaseAgent):
         try:
             project_path = context.get("project_path")
             if not project_path:
-                return AgentResponse(
+                return self._create_standard_response(
                     success=False,
                     data={},
                     error="No project path provided"
@@ -107,7 +105,7 @@ class DiscoveryAgent(BaseAgent):
             
             project_path = Path(project_path)
             if not project_path.exists():
-                return AgentResponse(
+                return self._create_standard_response(
                     success=False,
                     data={},
                     error=f"Project path does not exist: {project_path}"
@@ -117,7 +115,7 @@ class DiscoveryAgent(BaseAgent):
             result = await self._run_tartxt(str(project_path))
             
             # Pass through the raw output - minimize processing
-            return AgentResponse(
+            return self._create_standard_response(
                 success=True,
                 data={
                     "raw_output": result["raw_output"],  # Complete tartxt output
@@ -128,7 +126,7 @@ class DiscoveryAgent(BaseAgent):
 
         except Exception as e:
             logger.error("discovery.failed", error=str(e))
-            return AgentResponse(
+            return self._create_standard_response(
                 success=False,
                 data={},
                 error=str(e)

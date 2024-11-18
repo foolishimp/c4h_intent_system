@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from litellm import acompletion
 import json
 from typing import Dict, Any, Optional
+from datetime import datetime
 from enum import Enum
 import os
 
@@ -105,10 +106,23 @@ class BaseAgent(ABC):
             self.logger.error("response_parse_failed", error=str(e))
             return {"raw_message": content}
 
+    def _create_standard_response(self, success: bool, data: Dict[str, Any], error: Optional[str] = None) -> AgentResponse:
+        """Create standardized response format"""
+        return AgentResponse(
+            success=success,
+            data={
+                "raw_output": data,  # Store full LLM response
+                "timestamp": datetime.utcnow().isoformat(),
+                "status": "completed" if success else "failed",
+                **data  # Allow agents to add their specific data
+            },
+            error=error
+        )
+
     async def process(self, intent: Optional[Dict[str, Any]]) -> AgentResponse:
         """Process intent with LLM"""
         if not isinstance(intent, dict):
-            return AgentResponse(
+            return self._create_standard_response(
                 success=False,
                 data={},
                 error="Invalid input: intent must be a dictionary"
@@ -141,7 +155,7 @@ class BaseAgent(ABC):
                                    provider=self.provider.value,
                                    content_length=len(content))
                     
-                    return AgentResponse(
+                    return self._create_standard_response(
                         success=True,
                         data={"response": parsed}
                     )
@@ -154,13 +168,13 @@ class BaseAgent(ABC):
                                 attempt=attempt + 1)
                 
                 if attempt == self.max_retries - 1:
-                    return AgentResponse(
+                    return self._create_standard_response(
                         success=False,
                         data={},
                         error=error_msg
                     )
 
-        return AgentResponse(
+        return self._create_standard_response(
             success=False,
             data={},
             error="Maximum retries exceeded"

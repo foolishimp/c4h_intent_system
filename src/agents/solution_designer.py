@@ -6,7 +6,7 @@ Path: src/agents/solution_designer.py
 from typing import Dict, Any, Optional
 import structlog
 from datetime import datetime
-from .base import BaseAgent, LLMProvider, AgentResponse
+from .base import BaseAgent, LLMProvider
 
 logger = structlog.get_logger()
 
@@ -78,7 +78,7 @@ class SolutionDesigner(BaseAgent):
             
             if not raw_output:
                 logger.warning("solution_design.missing_discovery_output")
-                return AgentResponse(
+                return self._create_standard_response(
                     success=False,
                     data={},
                     error="Missing discovery output data - cannot analyze code"
@@ -89,12 +89,12 @@ class SolutionDesigner(BaseAgent):
             
             # Return data in same format as discovery
             if response.success:
-                return AgentResponse(
+                return self._create_standard_response(
                     success=True,
-                    data=response.data.get("response", {})  # Direct pass-through of LLM response
+                    data=response.data.get("response", {})
                 )
             else:
-                return AgentResponse(
+                return self._create_standard_response(
                     success=False,
                     data={},
                     error=response.error
@@ -102,7 +102,7 @@ class SolutionDesigner(BaseAgent):
 
         except Exception as e:
             logger.error("solution_design.failed", error=str(e))
-            return AgentResponse(
+            return self._create_standard_response(
                 success=False,
                 data={},
                 error=str(e)
