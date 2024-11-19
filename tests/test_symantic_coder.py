@@ -1,3 +1,8 @@
+"""
+Unit tests for the Coder agent implementation.
+Path: tests/test_symantic_coder.py
+"""
+
 import pytest
 from pathlib import Path
 import structlog
@@ -51,9 +56,28 @@ def test_file(tmp_path):
     file.write_text(ORIGINAL_CODE)
     return file
 
+@pytest.fixture
+def test_config():
+    return {
+        'providers': {
+            'anthropic': {
+                'api_base': 'https://api.anthropic.com',
+                'context_length': 100000,
+                'env_var': 'ANTHROPIC_API_KEY'
+            }
+        },
+        'llm_config': {
+            'default_provider': 'anthropic',
+            'default_model': 'claude-3-sonnet-20240229'
+        }
+    }
+
 @pytest.mark.asyncio 
-async def test_coder_process(test_file):
-    coder = Coder(provider=LLMProvider.ANTHROPIC)
+async def test_coder_process(test_file, test_config):
+    coder = Coder(
+        provider=LLMProvider.ANTHROPIC,
+        config=test_config
+    )
     
     changes = {'changes': SAMPLE_CHANGES}
     

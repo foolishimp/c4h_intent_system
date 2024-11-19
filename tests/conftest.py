@@ -1,8 +1,12 @@
-# tests/conftest.py
+"""
+Test configuration and fixtures.
+Path: tests/conftest.py
+"""
 
 import pytest
 import logging
 import structlog
+import os
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -28,6 +32,23 @@ def setup_test_env():
     logger.info("Setting up test environment")
     yield
     logger.info("Tearing down test environment")
+
+@pytest.fixture
+def test_config():
+    """Provide test configuration"""
+    return {
+        'providers': {
+            'anthropic': {
+                'api_base': 'https://api.anthropic.com',
+                'context_length': 100000,
+                'env_var': 'ANTHROPIC_API_KEY'
+            }
+        },
+        'llm_config': {
+            'default_provider': 'anthropic',
+            'default_model': 'claude-3-sonnet-20240229'
+        }
+    }
 
 # Configure asyncio for pytest
 def pytest_configure(config):

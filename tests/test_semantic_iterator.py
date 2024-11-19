@@ -1,248 +1,168 @@
-# tests/test_semantic_iterator.py
+"""Test suite for semantic extraction and iteration.
+Path: tests/test_semantic_iterator.py"""
 
 import pytest
 from typing import List, Dict, Any
-import os
-import json
 import structlog
-from src.agents.base import LLMProvider
-from src.skills.semantic_iterator import SemanticIterator
+from dataclasses import dataclass
+from textwrap import dedent
+from src.skills.semantic_iterator import SemanticIterator, SemanticPrompt
 from src.skills.shared.types import ExtractConfig
 
 logger = structlog.get_logger()
 
-# Test Data Sets
-
-# 1. Markdown with Python code
-MARKDOWN_CODE = """
-Here's how we can refactor the solution architect:
-
-First, let's update the base class:
-
-```python
-# src/agents/base_architect.py
-from typing import Dict, Any
-
-class BaseArchitect:
-    def __init__(self, config: Dict[str, Any]):
-        self.config = config
-        
-    async def analyze(self) -> Dict[str, Any]:
-        raise NotImplementedError()
-```
-
-Then we'll create the main implementation:
-
-```python
-# src/agents/solution_architect.py
-from typing import Dict, Any
-from .base_architect import BaseArchitect
-
-class SolutionDesigner(BaseArchitect):
-    async def analyze(self) -> Dict[str, Any]:
-        return {
-            "status": "success",
-            "changes": []
-        }
-```
-"""
-
-# 2. JSON Records
-JSON_RECORDS = """
-{
-    "users": [
-        {
-            "id": 1,
-            "name": "Alice Smith",
-            "email": "alice@example.com",
-            "age": 28,
-            "active": true
-        },
-        {
-            "id": 2,
-            "name": "Bob Jones",
-            "email": "bob@example.com",
-            "age": 35,
-            "active": false
-        },
-        {
-            "id": 3,
-            "name": "Charlie Brown",
-            "email": "charlie@example.com",
-            "age": 42,
-            "active": true
-        }
-    ]
-}
-"""
-
-# 3. Text Paragraph
-TEXT_PARAGRAPH = """
-The quick brown fox jumps over the lazy dog. This is a simple test paragraph that we'll use to demonstrate sentence extraction. Each sentence should be captured individually! The sentences have different punctuation marks? Some sentences might be questions. And some might be exclamations! But all should be properly extracted.
-"""
-
-@pytest.fixture
-async def semantic_iterator():
-    """Create semantic iterator instance"""
-    api_key = os.getenv("ANTHROPIC_API_KEY")
-    if not api_key:
-        pytest.skip("ANTHROPIC_API_KEY environment variable not set")
-        
-    config_list = [{
-        "model": "claude-3-sonnet-20240229",
-        "api_key": api_key,
-        "max_tokens": 4000,
-        "temperature": 0
-    }]
+@dataclass 
+class TestData:
+    """Test data container"""
+    MARKDOWN_WITH_CODE = dedent('''
+        # Data Processing Example
+        Here's the base class:
+        ```python
+        class DataProcessor:
+            def process(self, data: Dict) -> Dict:
+                raise NotImplementedError()
+        ```
+        And implementation:
+        ```python
+        class JsonProcessor(DataProcessor):
+            def process(self, data: Dict) -> Dict:
+                return {"processed": data}
+        ```
+    ''')
     
-    try:
-        iterator = SemanticIterator(config_list)
-        return iterator
-    except Exception as e:
-        pytest.fail(f"Failed to create iterator: {str(e)}")
-
-@pytest.mark.asyncio
-async def test_code_block_iteration(semantic_iterator):
-    """Test extracting Python code blocks from markdown"""
-    print("\nTesting Python code block extraction...")
+    CSV_DATA = dedent('''
+        name,category,habitat
+        Northern Cardinal,Songbird,Woodland
+        Blue Jay,Corvid,Forest
+        American Robin,Thrush,Urban
+        House Sparrow,Sparrow,Urban
+    ''')
     
-    config = ExtractConfig(
-        pattern="""Extract all Python code blocks from the markdown.
-        For each block, return a JSON object with:
-        - content: The complete code content
-        - filename: Any filename from comments (or null if none)
-        - index: The order it appears (starting from 0)""",
-        format="json"
-    )
-    
-    iterator = await semantic_iterator.iter_extract(MARKDOWN_CODE, config)
-    
-    blocks = []
-    while iterator.has_next():
-        try:
-            block = next(iterator)
-            blocks.append(block)
-            print(f"\nCode Block {iterator.position()}:")
-            print(f"Filename: {block.get('filename', 'unknown')}")
-            print(f"Content length: {len(block.get('content', ''))}")
-        except Exception as e:
-            print(f"Error processing block: {e}")
-    
-    assert len(blocks) == 2, f"Should find 2 code blocks, found {len(blocks)}"
-    # Add more specific assertions
-    assert any('base_architect.py' in str(block.get('filename', '')) for block in blocks), \
-        "Should find base_architect.py"
-
-@pytest.mark.asyncio
-async def test_json_record_iteration(semantic_iterator):
-    """Test iterating over JSON records"""
-    print("\nTesting JSON record iteration...")
-    
-    config = ExtractConfig(
-        pattern="Extract each user record as a separate item",
-        format="json",
-        filters=[
-            lambda x: x.get('active', False)  # Only active users
+    JSON_RECORDS = {
+        "birds": [
+            {"name": "Eagle", "type": "Raptor", "wingspan": "2.3m"},
+            {"name": "Owl", "type": "Nocturnal", "wingspan": "1.4m"},
+            {"name": "Hummingbird", "type": "Small", "wingspan": "0.12m"}
         ]
-    )
+    }
     
-    iterator = await semantic_iterator.iter_extract(JSON_RECORDS, config)
-    
-    active_users = []
-    while iterator.has_next():
-        user = next(iterator)
-        active_users.append(user)
-        print(f"\nActive User: {user.get('name')}")
-    
-    assert len(active_users) == 2, "Should find 2 active users"
-    assert all(user['active'] for user in active_users)
+    NATURAL_TEXT = dedent('''
+        Common birds in North America include the American Robin, 
+        which has a red breast and yellow beak. The Blue Jay is 
+        known for its bright blue feathers and loud calls. 
+        Northern Cardinals are striking red birds often seen at feeders.
+        The tiny Ruby-throated Hummingbird can hover and fly backwards.
+    ''')
 
 @pytest.mark.asyncio
-async def test_sentence_iteration(semantic_iterator):
-    """Test iterating over sentences in text"""
-    print("\nTesting sentence iteration...")
+async def test_code_block_extraction(test_config):
+    """Test extraction of Python classes from markdown"""
+    iterator = SemanticIterator([{
+        'provider': 'anthropic',
+        'model': test_config['llm_config']['default_model'],
+        'temperature': 0,
+        'config': test_config
+    }])
     
     config = ExtractConfig(
-        pattern="""Extract each sentence as a separate item. For each sentence return a JSON object with:
-        - text: The complete sentence text
-        - punctuation: The ending punctuation mark (".", "?", or "!")
-        - is_question: boolean, true if the sentence ends with "?" or starts with question words (who/what/when/where/why/how)
-        
-        Return as an array of these objects.""",
+        pattern="Extract each Python class as a separate item with name and code",
         format="json"
     )
     
-    iterator = await semantic_iterator.iter_extract(TEXT_PARAGRAPH, config)
+    result = await iterator.iter_extract(TestData.MARKDOWN_WITH_CODE, config)
     
-    sentences = []
-    while iterator.has_next():
-        sentence = next(iterator)
-        sentences.append(sentence)
-        print(f"\nSentence {iterator.position()}:")
-        print(f"Text: {sentence.get('text', '')}")
-        print(f"Is Question: {sentence.get('is_question', False)}")
-        print(f"Punctuation: {sentence.get('punctuation', '')}")
-    
-    assert len(sentences) > 5, "Should find multiple sentences"
-    assert any(s.get('is_question', False) for s in sentences), "Should identify questions"
-    
-    # Add more specific assertions
-    questions = [s for s in sentences if s.get('is_question', False)]
-    print(f"\nFound {len(questions)} questions:")
-    for q in questions:
-        print(f"- {q.get('text', '')}")
+    classes = []
+    while result.has_next():
+        classes.append(next(result))
+        
+    assert len(classes) == 2
+    assert "DataProcessor" in classes[0]["code"]
+    assert "JsonProcessor" in classes[1]["code"]
 
 @pytest.mark.asyncio
-async def test_iterator_features(semantic_iterator):
-    """Test advanced iterator features with different content types"""
-    print("\nTesting iterator features...")
+async def test_csv_record_iteration(test_config):
+    """Test extraction of structured CSV records"""
+    iterator = SemanticIterator([{
+        'provider': 'anthropic',
+        'model': test_config['llm_config']['default_model'],
+        'temperature': 0,
+        'config': test_config
+    }])
     
-    # Test with JSON records
     config = ExtractConfig(
-        pattern="Extract user records",
-        format="json",
-        sort_key="age"  # Sort by age
+        pattern="Extract each bird record with name and habitat",
+        format="json"
     )
     
-    iterator = await semantic_iterator.iter_extract(JSON_RECORDS, config)
-    
-    # Test sorting
-    first = next(iterator)
-    second = next(iterator)
-    assert first['age'] < second['age'], "Records should be sorted by age"
-    
-    # Test backtracking
-    previous = iterator.back()
-    assert previous['age'] == second['age'], "Should go back to previous record"
-    
-    # Test reset and skip
-    iterator.reset()
-    iterator.skip(2)
-    assert iterator.position() == 2, "Should skip to position 2"
-    
-    # Test to_list
-    remaining = iterator.to_list()
-    assert len(remaining) == 1, "Should have one record remaining"
+    result = await iterator.iter_extract(TestData.CSV_DATA, config)
+    birds = []
+    while result.has_next():
+        birds.append(next(result))
+        
+    assert len(birds) == 4
+    assert birds[0]["name"] == "Northern Cardinal"
+    assert birds[0]["habitat"] == "Woodland"
 
 @pytest.mark.asyncio
-async def test_error_handling(semantic_iterator):
-    """Test error handling with different content types"""
-    print("\nTesting error handling...")
+async def test_json_bird_extraction(test_config):
+    """Test extraction from nested JSON"""
+    iterator = SemanticIterator([{
+        'provider': 'anthropic',
+        'model': test_config['llm_config']['default_model'],
+        'temperature': 0,
+        'config': test_config
+    }])
     
-    # Test with invalid JSON
-    config = ExtractConfig(pattern="Extract records")
-    invalid_json = "{invalid json"
+    config = ExtractConfig(
+        pattern="Extract each bird with name and wingspan",
+        format="json"
+    )
     
-    iterator = await semantic_iterator.iter_extract(invalid_json, config)
-    assert not iterator.has_next(), "Invalid JSON should yield no items"
-    
-    # Test with empty content
-    iterator = await semantic_iterator.iter_extract("", config)
-    assert not iterator.has_next(), "Empty content should yield no items"
-    
-    # Test with None content
-    iterator = await semantic_iterator.iter_extract(None, config)
-    assert not iterator.has_next(), "None content should yield no items"
+    result = await iterator.iter_extract(TestData.JSON_RECORDS, config)
+    birds = []
+    while result.has_next():
+        birds.append(next(result))
+        
+    assert len(birds) == 3
+    assert birds[0]["name"] == "Eagle"
+    assert birds[0]["wingspan"] == "2.3m"
 
-if __name__ == "__main__":
-    pytest.main(["-v", "--log-cli-level=INFO", __file__])
+@pytest.mark.asyncio
+async def test_natural_text_extraction(test_config):
+    """Test extraction from unstructured text"""
+    iterator = SemanticIterator([{
+        'provider': 'anthropic',
+        'model': test_config['llm_config']['default_model'],
+        'temperature': 0,
+        'config': test_config
+    }])
+    
+    config = ExtractConfig(
+        pattern="Extract each bird species mentioned with its distinctive feature",
+        format="json"
+    )
+    
+    result = await iterator.iter_extract(TestData.NATURAL_TEXT, config)
+    birds = []
+    while result.has_next():
+        birds.append(next(result))
+        
+    assert len(birds) == 4
+    assert any(b["name"] == "Ruby-throated Hummingbird" for b in birds)
+    assert any(b["feature"].lower().startswith("red breast") for b in birds)
+
+@pytest.mark.asyncio
+async def test_error_handling(test_config):
+    """Test iterator error handling"""
+    iterator = SemanticIterator([{
+        'provider': 'anthropic',
+        'model': test_config['llm_config']['default_model'],
+        'temperature': 0,
+        'config': test_config
+    }])
+    
+    config = ExtractConfig(pattern="Extract birds", format="json")
+    
+    for invalid in ["invalid { json", "", None]:
+        result = await iterator.iter_extract(invalid, config)
+        assert not result.has_next()
