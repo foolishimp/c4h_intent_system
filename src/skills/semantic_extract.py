@@ -1,10 +1,12 @@
+# src/skills/semantic_extract.py
 
-"""Semantic extraction using LLM.
+"""
+Semantic extraction using LLM. Focused purely on extraction, structure determined by caller.
 Path: src/skills/semantic_extract.py
 """
+
 from typing import Dict, Any, Optional
 import structlog
-import json
 from dataclasses import dataclass
 from src.agents.base import BaseAgent, LLMProvider, AgentResponse
 
@@ -19,6 +21,8 @@ class ExtractResult:
     error: Optional[str] = None
 
 class SemanticExtract(BaseAgent):
+    """Base extractor that follows given instructions without imposing structure"""
+    
     def __init__(self,
                  provider: LLMProvider = LLMProvider.ANTHROPIC,
                  model: Optional[str] = None,
@@ -37,11 +41,11 @@ class SemanticExtract(BaseAgent):
     def _get_system_message(self) -> str:
         return """You are a precise information extractor.
         When given content and instructions:
-        1. Extract ONLY the specific information requested
-        2. Return the information in exactly the format requested
-        3. Do not add explanations or descriptions
-        4. Do not validate or verify the content
-        5. If content cannot be extracted, return {"error": "reason"}"""
+        1. Follow the instructions exactly as given
+        2. Extract ONLY the specific information requested
+        3. Return in exactly the format specified
+        4. Do not add explanations or extra content
+        5. Do not modify or enhance the instructions"""
 
     async def extract(self,
                      content: Any,
@@ -59,11 +63,18 @@ class SemanticExtract(BaseAgent):
             
             response = await self.process(request)
             
+            if not response.success:
+                return ExtractResult(
+                    success=False,
+                    value=None,
+                    raw_response=str(response.data),
+                    error=response.error
+                )
+            
             return ExtractResult(
-                success=response.success,
-                value=response.data.get("response", {}),
-                raw_response=str(response.data),
-                error=response.error
+                success=True,
+                value=response.data.get("response"),
+                raw_response=str(response.data)
             )
             
         except Exception as e:

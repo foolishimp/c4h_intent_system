@@ -46,7 +46,7 @@ def test_config():
         },
         'llm_config': {
             'default_provider': 'anthropic',
-            'default_model': 'claude-3-sonnet-20240229'
+            'default_model': 'claude-3-opus-20240229'
         }
     }
 

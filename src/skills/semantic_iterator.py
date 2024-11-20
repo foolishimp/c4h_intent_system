@@ -1,31 +1,24 @@
-"""
-Path: src/skills/shared/types.py
-"""
-from dataclasses import dataclass, field
-from typing import List, Callable, Any, Optional, Dict
-
-@dataclass
-class ExtractConfig:
-    """Configuration for semantic extraction"""
-    instruction: str  # Pattern/prompt for extraction
-    format: str = "json"  # Expected output format 
+# src/skills/semantic_iterator.py
 
 """
+Enhanced semantic iterator implementation.
 Path: src/skills/semantic_iterator.py
 """
-from typing import Dict, Any, List
+
+from typing import List, Dict, Any
 import structlog
 from src.skills.semantic_extract import SemanticExtract
-from src.agents.base import LLMProvider
 from src.skills.shared.types import ExtractConfig
+from src.agents.base import LLMProvider
 
 logger = structlog.get_logger()
 
 class ItemIterator:
     """Iterator over extracted items"""
-    def __init__(self, items: List[Any]):
-        self._items = items 
+    def __init__(self, items: List[Any], raw_response: str = ""):
+        self._items = items if isinstance(items, list) else []
         self._index = 0
+        self._raw_response = raw_response
         
     def has_next(self) -> bool:
         return self._index < len(self._items)
@@ -36,6 +29,10 @@ class ItemIterator:
             self._index += 1
             return item
         raise StopIteration
+
+    def get_raw_response(self) -> str:
+        """Get raw LLM response for debugging"""
+        return self._raw_response
 
 class SemanticIterator:
     """Iterator using semantic extraction"""
@@ -49,25 +46,43 @@ class SemanticIterator:
             config=cfg.get('config')
         )
         logger.debug("iterator.init", config=cfg)
-        
+
     async def iter_extract(self, content: Any, config: ExtractConfig) -> ItemIterator:
         """Extract and iterate over items"""
-        logger.debug("iterator.extract.start", 
-                    content_type=type(content).__name__,
-                    instruction=config.instruction)
+        try:
+            logger.debug("iterator.extract.start", 
+                        content_type=type(content).__name__)
                     
-        result = await self.extractor.extract(
-            content=content,
-            prompt=config.instruction,
-            format_hint=config.format
-        )
-        
-        items = result.value if result.success else []
-        logger.debug("iterator.extract.complete", 
-                    success=result.success,
-                    items_count=len(items))
-                    
-        return ItemIterator(items)
+            result = await self.extractor.extract(
+                content=content,
+                prompt=config.instruction,
+                format_hint=config.format
+            )
 
-# Package exports
-__all__ = ['SemanticIterator', 'ItemIterator', 'ExtractConfig']
+            # Process into items
+            items = []
+            if result.success:
+                if isinstance(result.value, list):
+                    items = result.value
+                elif result.value:
+                    items = [result.value]
+            
+            logger.info("iterator.extract.complete", 
+                       success=result.success,
+                       items_count=len(items))
+                    
+            return ItemIterator(items, result.raw_response)
+
+        except Exception as e:
+            logger.error("iterator.extract.failed", error=str(e))
+            return ItemIterator([], str(e))
+    
+    async def extract_all(self, content: Any, config: ExtractConfig) -> List[Any]:
+        """
+        Extract all items at once.
+        """
+        iterator = await self.iter_extract(content, config)
+        items = []
+        while iterator.has_next():
+            items.append(next(iterator))
+        return items
