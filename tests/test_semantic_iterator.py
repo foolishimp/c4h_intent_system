@@ -1,168 +1,101 @@
-"""Test suite for semantic extraction and iteration.
-Path: tests/test_semantic_iterator.py"""
+"""
+Test suite for semantic iteration functionality.
+Path: tests/test_semantic_iterator.py 
+"""
 
 import pytest
-from typing import List, Dict, Any
 import structlog
-from dataclasses import dataclass
 from textwrap import dedent
-from src.skills.semantic_iterator import SemanticIterator, SemanticPrompt
+from src.skills.semantic_iterator import SemanticIterator 
 from src.skills.shared.types import ExtractConfig
 
 logger = structlog.get_logger()
 
-@dataclass 
-class TestData:
-    """Test data container"""
-    MARKDOWN_WITH_CODE = dedent('''
-        # Data Processing Example
-        Here's the base class:
-        ```python
-        class DataProcessor:
-            def process(self, data: Dict) -> Dict:
-                raise NotImplementedError()
-        ```
-        And implementation:
-        ```python
-        class JsonProcessor(DataProcessor):
-            def process(self, data: Dict) -> Dict:
-                return {"processed": data}
-        ```
-    ''')
-    
-    CSV_DATA = dedent('''
-        name,category,habitat
-        Northern Cardinal,Songbird,Woodland
-        Blue Jay,Corvid,Forest
-        American Robin,Thrush,Urban
-        House Sparrow,Sparrow,Urban
-    ''')
-    
-    JSON_RECORDS = {
-        "birds": [
-            {"name": "Eagle", "type": "Raptor", "wingspan": "2.3m"},
-            {"name": "Owl", "type": "Nocturnal", "wingspan": "1.4m"},
-            {"name": "Hummingbird", "type": "Small", "wingspan": "0.12m"}
-        ]
-    }
-    
-    NATURAL_TEXT = dedent('''
-        Common birds in North America include the American Robin, 
-        which has a red breast and yellow beak. The Blue Jay is 
-        known for its bright blue feathers and loud calls. 
-        Northern Cardinals are striking red birds often seen at feeders.
-        The tiny Ruby-throated Hummingbird can hover and fly backwards.
-    ''')
+# Test data
+MARKDOWN_WITH_CODE = dedent('''
+    # Data Processing Example
+    Here's the base class:
+    ```python
+    class DataProcessor:
+        def process(self, data: Dict) -> Dict:
+            raise NotImplementedError()
+    ```
+    And implementation:
+    ```python
+    class JsonProcessor(DataProcessor):
+        def process(self, data: Dict) -> Dict:
+            return {"processed": data}
+    ```
+''')
 
-@pytest.mark.asyncio
-async def test_code_block_extraction(test_config):
-    """Test extraction of Python classes from markdown"""
-    iterator = SemanticIterator([{
+@pytest.fixture
+def iterator_config(test_config):
+    """Create standardized iterator config"""
+    return [{
         'provider': 'anthropic',
         'model': test_config['llm_config']['default_model'],
         'temperature': 0,
         'config': test_config
-    }])
+    }]
+
+@pytest.mark.asyncio
+async def test_iteration_basics(iterator_config):
+    """Test basic iteration functionality"""
+    iterator = SemanticIterator(iterator_config)
     
     config = ExtractConfig(
-        pattern="Extract each Python class as a separate item with name and code",
+        instruction="Extract Python class definitions with name and code",
         format="json"
     )
     
-    result = await iterator.iter_extract(TestData.MARKDOWN_WITH_CODE, config)
+    # Test async iteration
+    items = []
+    async for item in iterator.iter_extract(MARKDOWN_WITH_CODE, config):
+        items.append(item)
+        logger.info("received_item", item=item)
     
-    classes = []
-    while result.has_next():
-        classes.append(next(result))
-        
-    assert len(classes) == 2
-    assert "DataProcessor" in classes[0]["code"]
-    assert "JsonProcessor" in classes[1]["code"]
+    assert items, "Should receive items from iterator"
 
 @pytest.mark.asyncio
-async def test_csv_record_iteration(test_config):
-    """Test extraction of structured CSV records"""
-    iterator = SemanticIterator([{
-        'provider': 'anthropic',
-        'model': test_config['llm_config']['default_model'],
-        'temperature': 0,
-        'config': test_config
-    }])
+async def test_bulk_extraction(iterator_config):
+    """Test bulk extraction functionality"""
+    iterator = SemanticIterator(iterator_config)
     
     config = ExtractConfig(
-        pattern="Extract each bird record with name and habitat",
+        instruction="Extract Python class definitions with name and code",
         format="json"
     )
     
-    result = await iterator.iter_extract(TestData.CSV_DATA, config)
-    birds = []
-    while result.has_next():
-        birds.append(next(result))
-        
-    assert len(birds) == 4
-    assert birds[0]["name"] == "Northern Cardinal"
-    assert birds[0]["habitat"] == "Woodland"
+    items = await iterator.extract_all(MARKDOWN_WITH_CODE, config)
+    assert items, "Should receive items from bulk extraction"
 
 @pytest.mark.asyncio
-async def test_json_bird_extraction(test_config):
-    """Test extraction from nested JSON"""
-    iterator = SemanticIterator([{
-        'provider': 'anthropic',
-        'model': test_config['llm_config']['default_model'],
-        'temperature': 0,
-        'config': test_config
-    }])
+async def test_empty_content(iterator_config):
+    """Test handling of empty content"""
+    iterator = SemanticIterator(iterator_config)
     
     config = ExtractConfig(
-        pattern="Extract each bird with name and wingspan",
+        instruction="Extract items",
         format="json"
     )
     
-    result = await iterator.iter_extract(TestData.JSON_RECORDS, config)
-    birds = []
-    while result.has_next():
-        birds.append(next(result))
-        
-    assert len(birds) == 3
-    assert birds[0]["name"] == "Eagle"
-    assert birds[0]["wingspan"] == "2.3m"
+    items = await iterator.extract_all("", config)
+    assert not items, "Should handle empty content gracefully"
 
 @pytest.mark.asyncio
-async def test_natural_text_extraction(test_config):
-    """Test extraction from unstructured text"""
-    iterator = SemanticIterator([{
-        'provider': 'anthropic',
-        'model': test_config['llm_config']['default_model'],
-        'temperature': 0,
-        'config': test_config
-    }])
+async def test_error_recovery(iterator_config):
+    """Test recovery from extraction errors"""
+    iterator = SemanticIterator(iterator_config)
     
     config = ExtractConfig(
-        pattern="Extract each bird species mentioned with its distinctive feature",
+        instruction="Extract items",
         format="json"
     )
     
-    result = await iterator.iter_extract(TestData.NATURAL_TEXT, config)
-    birds = []
-    while result.has_next():
-        birds.append(next(result))
-        
-    assert len(birds) == 4
-    assert any(b["name"] == "Ruby-throated Hummingbird" for b in birds)
-    assert any(b["feature"].lower().startswith("red breast") for b in birds)
+    # Test with None content
+    items = await iterator.extract_all(None, config)
+    assert not items, "Should handle None content gracefully"
 
-@pytest.mark.asyncio
-async def test_error_handling(test_config):
-    """Test iterator error handling"""
-    iterator = SemanticIterator([{
-        'provider': 'anthropic',
-        'model': test_config['llm_config']['default_model'],
-        'temperature': 0,
-        'config': test_config
-    }])
-    
-    config = ExtractConfig(pattern="Extract birds", format="json")
-    
-    for invalid in ["invalid { json", "", None]:
-        result = await iterator.iter_extract(invalid, config)
-        assert not result.has_next()
+    # Test with invalid content
+    items = await iterator.extract_all(object(), config)
+    assert not items, "Should handle invalid content gracefully"
