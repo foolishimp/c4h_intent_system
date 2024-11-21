@@ -99,45 +99,78 @@ class SemanticIterator:
                    provider=cfg['provider'],
                    model=cfg['model'])
 
-    def _extract_json_array(self, text: str) -> ParseResult:
-        """Extract first valid JSON array found in text.
+    """
+    JSON array extraction implementation.
+    Path: src/skills/semantic_iterator.py
+    """
+
+    def _extract_json_array(self, response: Any) -> ParseResult:
+        """Extract JSON array from response.
         
         Args:
-            text: Text to extract JSON array from
-            
+            response: Response that may contain a JSON array
+                
         Returns:
             ParseResult containing extracted items or error
         """
-        if not text:
-            return ParseResult(False, [], "Empty response", text)
+        if not response:
+            return ParseResult(False, [], "Empty response", str(response))
             
-        # Try direct parse first if it looks like a JSON array
-        text = text.strip()
-        if text.startswith('[') and text.endswith(']'):
-            try:
-                items = json.loads(text)
-                if isinstance(items, list):
-                    logger.debug("json_array.direct_parse.success",
-                               items_count=len(items))
-                    return ParseResult(True, items, None, text)
-            except json.JSONDecodeError as e:
-                logger.debug("json_array.direct_parse.failed",
-                           error=str(e))
+        # Handle dictionary response
+        if isinstance(response, dict):
+            # Check common keys that might contain arrays
+            for key in ['raw_output', 'response', 'items', 'changes']:
+                if key in response:
+                    value = response[key]
+                    if isinstance(value, list):
+                        logger.debug("json_array.dict_extract.success",
+                                key=key,
+                                items_count=len(value))
+                        return ParseResult(True, value, None, str(response))
+            return ParseResult(False, [], "No array found in dictionary", str(response))
 
-        # Fall back to finding array pattern
-        array_match = re.search(r'\[[\s\S]*?\]', text)
-        if array_match:
-            try:
-                items = json.loads(array_match.group(0))
-                if isinstance(items, list):
-                    logger.debug("json_array.pattern_match.success",
-                               items_count=len(items))
-                    return ParseResult(True, items, None, text)
-            except json.JSONDecodeError as e:
-                logger.debug("json_array.pattern_match.failed",
-                           error=str(e))
+        # If response is string, try to parse JSON array
+        if isinstance(response, str):
+            # Try direct parse if looks like JSON array
+            text = response.strip()
+            if text.startswith('[') and text.endswith(']'):
+                try:
+                    items = json.loads(text)
+                    if isinstance(items, list):
+                        logger.debug("json_array.direct_parse.success",
+                                items_count=len(items))
+                        return ParseResult(True, items, None, text)
+                except json.JSONDecodeError as e:
+                    logger.debug("json_array.direct_parse.failed",
+                            error=str(e))
 
-        return ParseResult(False, [], "No valid JSON array found", text)
+            # Try to find array pattern
+            array_match = re.search(r'\[[\s\S]*?\]', text)
+            if array_match:
+                try:
+                    items = json.loads(array_match.group(0))
+                    if isinstance(items, list):
+                        logger.debug("json_array.pattern_match.success",
+                                items_count=len(items))
+                        return ParseResult(True, items, None, text)
+                except json.JSONDecodeError as e:
+                    logger.debug("json_array.pattern_match.failed",
+                            error=str(e))
+
+            # Try to parse as JSON object that might contain array
+            try:
+                obj = json.loads(text)
+                if isinstance(obj, dict):
+                    for key in ['raw_output', 'response', 'items', 'changes']:
+                        if key in obj and isinstance(obj[key], list):
+                            logger.debug("json_array.object_extract.success",
+                                    key=key,
+                                    items_count=len(obj[key]))
+                            return ParseResult(True, obj[key], None, text)
+            except json.JSONDecodeError:
+                pass
+
+        return ParseResult(False, [], "No valid JSON array found", str(response))
 
     def _enhance_prompt(self, instruction: str) -> str:
         """Add formatting requirements to instruction.
