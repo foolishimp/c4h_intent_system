@@ -192,3 +192,110 @@ Next Steps Would Be:
 3. Sort out test infrastructure
 4. Then focus on parsing improvements
 
+### More Design Notes
+```mermaid
+classDiagram
+    class BaseAgent {
+        <<abstract>>
+        +provider: LLMProvider
+        +model: str
+        +temperature: float
+        +config: Dict
+        +process(intent: Dict) AgentResponse
+        #_create_standard_response()
+        #_format_request()
+        #_parse_response()
+    }
+
+    class Coder {
+        +merger: SemanticMerge
+        +iterator: SemanticIterator
+        +process(context: Dict) AgentResponse
+        +transform(context: Dict) TransformResult
+        -_backup_file(path: Path) Path
+    }
+
+    class SemanticMerge {
+        +merge(original: str, changes: str) MergeResult
+        -_extract_code_content(response: Dict) str
+        -_validate_code(content: str) bool
+    }
+
+    class SemanticIterator {
+        +iter_extract(content: Any, config: ExtractConfig) ItemIterator
+        -_extract_items(data: Any) List
+        -_validate_items(items: List) bool
+    }
+
+    class TransformResult {
+        +success: bool
+        +file_path: str
+        +backup_path: str
+        +error: str
+    }
+
+    class AgentResponse {
+        +success: bool
+        +data: Dict
+        +error: str
+    }
+
+    class ItemIterator~T~ {
+        +has_next() bool
+        +next() T
+        +peek() T
+        +back() T
+        +reset()
+        +skip(count: int)
+    }
+
+    BaseAgent <|-- Coder
+    BaseAgent <|-- SemanticMerge
+    Coder --> SemanticMerge
+    Coder --> SemanticIterator
+    Coder ..> TransformResult
+    Coder ..> AgentResponse
+    SemanticIterator ..> ItemIterator
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> RequestReceived: Transform Request
+    
+    RequestReceived --> ValidationPhase: Parse Request
+    ValidationPhase --> BackupPhase: Valid Request
+    ValidationPhase --> Error: Invalid Request
+    
+    BackupPhase --> ExtractionPhase: Backup Created
+    BackupPhase --> Error: Backup Failed
+    
+    state ExtractionPhase {
+        [*] --> ExtractChanges
+        ExtractChanges --> ValidateChanges
+        ValidateChanges --> ProcessChanges: Valid
+        ValidateChanges --> ExtractError: Invalid
+        ProcessChanges --> [*]: Success
+        ProcessChanges --> ExtractError: Failure
+    }
+    
+    ExtractionPhase --> MergePhase: Changes Extracted
+    ExtractionPhase --> Error: Extraction Failed
+    
+    state MergePhase {
+        [*] --> MergeChanges
+        MergeChanges --> ValidateMerge
+        ValidateMerge --> WriteMerge: Valid
+        ValidateMerge --> MergeError: Invalid
+        WriteMerge --> [*]: Success
+        WriteMerge --> MergeError: Write Failed
+    }
+    
+    MergePhase --> Success: Changes Applied
+    MergePhase --> Error: Merge Failed
+    
+    Error --> RestoreBackup: Has Backup
+    Error --> [*]: No Backup
+    
+    RestoreBackup --> [*]
+    Success --> [*]
+```
