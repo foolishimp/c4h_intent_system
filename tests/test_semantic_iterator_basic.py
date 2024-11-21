@@ -1,71 +1,117 @@
 """
-Basic semantic iterator tests.
-Path: tests/test_semantic_iterator_basic.py 
+Basic semantic iterator test focused on change extraction.
+Path: tests/test_semantic_iterator_basic.py
 """
 
 import pytest
 import json
 import structlog
-from src.skills.semantic_iterator import SemanticIterator, SemanticPrompt
+from typing import Dict, Any, List
+from src.skills.semantic_iterator import SemanticIterator
+from src.skills.shared.types import ExtractConfig
 
 logger = structlog.get_logger()
 
-CHANGE_DATA = {
+# Simple test data
+TEST_DATA = {
     "changes": [
         {
-            "file_path": "src/agents/intent_agent.py",
-            "type": "modify", 
-            "description": "Fix solution designer state tracking",
-            "diff": """diff --git a/src/agents/intent_agent.py b/src/agents/intent_agent.py
-@@ -284,7 +284,8 @@ class IntentAgent:
-     result.error
-)"""
+            "file_path": "src/example/test.py",
+            "type": "modify",
+            "description": "Add logging",
+            "content": """
+                def test():
+                    print("hello")
+            """
         },
         {
-            "file_path": "src/agents/base.py",
+            "file_path": "src/example/other.py", 
             "type": "modify",
-            "description": "Add error handling",
-            "diff": """diff --git a/src/agents/base.py b/src/agents/base.py
-@@ -51,6 +51,7 @@ class BaseAgent:
-     try:
-         result = await process()
-         return result
-+    except Exception as e:
-+        logger.error("process failed", error=str(e))"""
+            "description": "Add type hints",
+            "content": """
+                def other():
+                    return None
+            """
         }
     ]
 }
 
-@pytest.mark.asyncio
-async def test_llm_extraction(test_config):
-    """Test iteration over changes"""
-    iterator = SemanticIterator(
-        config={
-            'provider': 'anthropic',
-            'model': test_config['llm_config']['default_model'],
-            'temperature': 0,
-            'config': test_config
-        },
-        content=CHANGE_DATA,
-        prompt = SemanticPrompt(
-            instruction="""Extract a list of code changes where each item contains:
-            - file_path: The target file path
-            - type: The type of change (modify/create/delete) 
-            - description: Brief description of the change
-            - diff: The git-style diff content
+@pytest.fixture
+def iterator(test_config):
+    """Create iterator with test configuration"""
+    return SemanticIterator([{
+        'provider': 'anthropic',
+        'model': test_config['llm_config']['default_model'],
+        'temperature': 0,
+        'config': test_config
+    }])
 
-            Return as JSON array with these exact fields.""",
-            format="json")
+def print_response(response: str):
+    """Print response for debugging"""
+    print("\nRaw Response:")
+    print("-" * 40)
+    print(response)
+    print("-" * 40)
+
+@pytest.mark.asyncio
+async def test_basic_extraction(iterator):
+    """Test basic extraction of well-formed changes"""
+    logger.info("test.basic_extraction.start")
+    
+    config = ExtractConfig(
+        instruction="""Extract code changes from the input and return them as a JSON array. 
+            Each change should be a JSON object with these exact fields:
+            - file_path (string)  
+            - type (string)
+            - description (string)
+            - content (string)
+
+            Return ONLY the JSON array with no other text.
+            
+            Example response format:
+            [
+                {
+                    "file_path": "path/to/file.py",
+                    "type": "modify", 
+                    "description": "Added logging",
+                    "content": "def example()..."
+                }
+            ]""",
+        format="json"
     )
+
+    result = await iterator.iter_extract(TEST_DATA, config)
     
-    logger.info("iterator_input", data=json.dumps(CHANGE_DATA, indent=2))
+    # Print raw response for debugging
+    print_response(result.get_raw_response())
     
+    # Collect changes
     changes = []
-    async for change in iterator:
+    while result.has_next():
+        change = next(result)
+        logger.info("change.extracted",
+                   file=change.get('file_path'),
+                   type=change.get('type'))
         changes.append(change)
+
+    # Print extracted changes
+    print("\nExtracted Changes:")
+    for i, change in enumerate(changes, 1):
+        print(f"\nChange {i}:")
+        print(f"File: {change.get('file_path')}")
+        print(f"Type: {change.get('type')}")
+        print(f"Description: {change.get('description')}")
+        if 'content' in change:
+            print("Content Preview:", change['content'].split('\n')[0])
+
+    # Verify extraction
+    assert len(changes) == 2, "Should extract exactly two changes"
+    assert all(isinstance(c, dict) for c in changes), "All changes should be dictionaries"
     
-    logger.info("extracted_changes", changes=json.dumps(changes, indent=2))
-    
-    assert len(changes) == 2
-    assert all(isinstance(c, dict) for c in changes)
-    assert all(k in changes[0] for k in ['file_path', 'type', 'description', 'diff'])
+    required_fields = ['file_path', 'type', 'description', 'content']
+    for change in changes:
+        for field in required_fields:
+            assert field in change, f"Change missing required field: {field}"
+
+if __name__ == "__main__":
+    pytest.main(["-v", "--log-cli-level=INFO", "-k", "test_basic_extraction"])

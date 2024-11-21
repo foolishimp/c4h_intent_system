@@ -131,3 +131,64 @@ iterator = SemanticIterator(
 async for item in iterator:
     process(item)
 ```
+
+### Additional Notes
+
+Problem Space:
+- Working with semantic iterator and extract for parsing structured data
+- Test suite revealing issues with response handling
+- Testing framework configuration challenges
+
+Components at Play:
+
+Semantic Iterator
+Core Principles:
+Acts as a list processor over semantic extractions
+Works with BaseAgent for LLM interactions
+Handles parsing and validation of responses
+Provides iterator interface for extracted items
+
+Semantic Extract (BaseAgent)
+Key Functions:
+Makes LLM API calls
+Wraps responses in raw_output field
+Handles retries and errors
+Requires provider configuration and API keys
+Key Issues Found:
+1. Configuration Chain:
+
+SemanticIterator -> SemanticExtract -> BaseAgent -> LiteLLM
+
+- Missing env_var in config
+- Authentication setup incomplete
+
+```python
+Response Structure: python
+Response = {
+ 'raw_output': [  # Wrapper from BaseAgent
+     {'name': 'DataProcessor', 'code': '...'}, 
+     # More items...
+ ]
+}
+```
+
+LLM returns correct structure
+Parser fails due to raw_output wrapper
+Need to handle nested response format
+
+Infrastructure:
+Event loop management in tests
+Fixture scoping and ordering
+API key mocking
+Main Learning Points:
+1. Semantic iterator expects unwrapped JSON array responses
+2. BaseAgent adds response wrapping we need to handle
+3. Configuration needs complete provider setup including env vars
+4. Test infrastructure needs proper async and mock setup
+
+Next Steps Would Be:
+1. Fix config structure
+2. Handle response unwrapping 
+3. Sort out test infrastructure
+4. Then focus on parsing improvements
+

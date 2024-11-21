@@ -7,6 +7,7 @@ import pytest
 import logging
 import structlog
 import os
+from typing import Dict, Any
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -26,16 +27,9 @@ structlog.configure(
     cache_logger_on_first_use=True
 )
 
-@pytest.fixture(autouse=True)
-def setup_test_env():
-    """Setup test environment"""
-    logger.info("Setting up test environment")
-    yield
-    logger.info("Tearing down test environment")
-
-@pytest.fixture
-def test_config():
-    """Provide test configuration"""
+@pytest.fixture(scope="module")
+def test_config() -> Dict[str, Any]:
+    """Provide test configuration with proper scoping"""
     return {
         'providers': {
             'anthropic': {
@@ -50,16 +44,15 @@ def test_config():
         }
     }
 
-# Configure asyncio for pytest
-def pytest_configure(config):
-    config.addinivalue_line(
-        "markers", "asyncio: mark test as an asyncio test"
-    )
+@pytest.fixture(scope="function")
+def mock_api_key(monkeypatch):
+    """Provide mock API key for testing"""
+    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test-key-123')
+    return 'test-key-123'
 
-@pytest.fixture
-def event_loop(request):
-    """Create an instance of the default event loop for each test case."""
+# Configure asyncio - remove the custom event_loop fixture
+@pytest.fixture(scope="module")
+def event_loop_policy():
+    """Provide event loop policy for testing"""
     import asyncio
-    loop = asyncio.get_event_loop_policy().new_event_loop()
-    yield loop
-    loop.close()
+    return asyncio.WindowsSelectorEventLoopPolicy() if os.name == 'nt' else asyncio.DefaultEventLoopPolicy()
