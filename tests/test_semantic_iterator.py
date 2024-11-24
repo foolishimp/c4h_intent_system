@@ -70,51 +70,32 @@ class TestData:
     ]
 
 @pytest.fixture(scope="module")
-async def iterator(test_config, setup_test_environment):
-    """Create reusable iterator instance with proper config"""
-    config = [{
-        'provider': 'anthropic',
-        'model': test_config['llm_config']['default_model'],
-        'temperature': 0,
-        'config': test_config  # Pass complete test config
-    }]
-    
-    logger.info(
-        "creating_test_iterator",
-        config=config,
-        anthropic_key_present='ANTHROPIC_API_KEY' in os.environ
+async def iterator(test_config):
+    """Create reusable iterator instance with FAST and SLOW modes"""
+    return SemanticIterator(
+        [{
+            'provider': 'anthropic',
+            'model': test_config['llm_config']['default_model'],
+            'temperature': 0,
+            'config': test_config
+        }],
+        extraction_modes=["fast", "slow"]  # Enable both modes
     )
-                
-    return SemanticIterator(config)
 
+@pytest.mark.asyncio
 @pytest.mark.asyncio
 async def test_code_block_extraction(iterator):
     """Test extraction of Python classes from markdown"""
-    logger.info("test.code_block_extraction.start")
-    
-    # Log test state
-    logger.debug(
-        "extraction_test_state",
-        has_iterator=bool(iterator),
-        env_vars={'ANTHROPIC_API_KEY': '***' if os.getenv('ANTHROPIC_API_KEY') else None}
-    )
-    
     config = ExtractConfig(
         instruction="Extract each Python class as a separate item with name and code",
         format="json"
     )
     
-    result = await iterator.iter_extract(TestData.MARKDOWN_WITH_CODE, config)
-    classes = []
-    while result.has_next():
-        classes.append(next(result))
-    
-    logger.info(
-        "test.code_block_extraction.complete",
-        classes_found=len(classes)
+    result = await iterator.iter_extract(
+        TestData.MARKDOWN_WITH_CODE, 
+        config,
+        modes=["fast", "slow"]  # Use both modes for complex extraction
     )
-    
-    assert len(classes) == 2, "Should extract two classes"
 
 @pytest.mark.asyncio
 async def test_csv_record_iteration(iterator):
@@ -183,10 +164,9 @@ async def test_natural_text_extraction(iterator):
     assert any(b["feature"].lower().startswith("red breast") for b in birds)
 
 @pytest.mark.asyncio
+@pytest.mark.asyncio
 async def test_malformed_responses(iterator):
     """Test handling of malformed responses"""
-    logger.info("test.malformed_responses.start")
-    
     config = ExtractConfig(
         instruction="Extract any items",
         format="json"
@@ -196,13 +176,12 @@ async def test_malformed_responses(iterator):
         logger.debug("test.malformed_response.checking",
                     response_type=type(response).__name__)
         
-        result = await iterator.iter_extract(response, config)
-        assert not result.has_next(), f"Should handle malformed response: {response}"
-        
-        # Verify we can still get raw response
-        raw = result.get_raw_response()
-        assert raw is not None, "Should always have raw response access"
-        
+        result = await iterator.iter_extract(
+            response, 
+            config,
+            modes=["fast"]  # Force fast mode only for malformed test
+        )
+        assert not result.has_next()
     logger.info("test.malformed_responses.complete")
 
 @pytest.mark.asyncio

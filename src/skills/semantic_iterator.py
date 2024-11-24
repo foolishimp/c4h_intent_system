@@ -1,29 +1,23 @@
 """
-Enhanced semantic iterator with configurable extraction modes.
+Enhanced semantic iterator with simplified modes.
 Path: src/skills/semantic_iterator.py
 """
 
-import os
 from typing import List, Dict, Any, Optional, Iterator, Union
 from enum import Enum
 import structlog
 import json
 import re
 from dataclasses import dataclass
-from dotenv import load_dotenv  # Add this import
 from src.skills.semantic_extract import SemanticExtract
 from src.skills.shared.types import ExtractConfig
 from src.agents.base import LLMProvider
-
-# Load environment variables at module level
-load_dotenv()  # This will load .env file
 
 logger = structlog.get_logger()
 
 class ExtractionMode(str, Enum):
     """Available extraction modes from fastest to slowest"""
-    FAST = "fast"      # Direct extraction only
-    MEDIUM = "medium"  # Pattern matching and heuristics
+    FAST = "fast"      # Direct extraction from structured data
     SLOW = "slow"      # LLM-based semantic extraction
 
 @dataclass
@@ -45,6 +39,10 @@ class ItemIterator:
                     mode=state.current_mode,
                     items_count=len(state.items),
                     position=state.position)
+    
+    def __iter__(self):
+        """Make iterator properly iterable"""
+        return self
     
     def __next__(self) -> Any:
         """Get next item in iteration"""
@@ -77,26 +75,14 @@ class SemanticIterator:
     
     def __init__(self, 
                  config: List[Dict[str, Any]], 
-                 extraction_modes: Optional[List[str]] = None):
-        """Initialize iterator with specified modes
-        
-        Args:
-            config: LLM configuration
-            extraction_modes: List of modes to try in sequence
-                            Defaults to ["fast", "medium", "slow"]
-        """
+                 extraction_modes: Optional[List[str]] = None,
+                 default_mode: str = "fast"):
+        """Initialize iterator with specified modes"""
         if not config:
             raise ValueError("Config required")
             
-        # Ensure environment variables are loaded
-        if 'ANTHROPIC_API_KEY' not in os.environ:
-            logger.warning("Environment check", 
-                         env_vars=list(os.environ.keys()),
-                         anthropic_key_present='ANTHROPIC_API_KEY' in os.environ)
-            
-        # Setup extractor
-        cfg = config[0]
         # Ensure provider config is complete
+        cfg = config[0]
         if 'providers' not in cfg.get('config', {}):
             cfg['config'] = {
                 'providers': {
@@ -115,115 +101,115 @@ class SemanticIterator:
             config=cfg.get('config')
         )
         
-        # Configure modes
-        self.modes = [ExtractionMode(m) for m in (extraction_modes or ["fast", "medium", "slow"])]
-        logger.info("iterator.configured", modes=self.modes)
+        # Configure modes with improved validation
+        allowed_modes = [ExtractionMode.FAST, ExtractionMode.SLOW]
+        self.modes = []
+        
+        if extraction_modes:
+            validated_modes = []
+            for mode in extraction_modes:
+                try:
+                    validated_modes.append(ExtractionMode(mode))
+                except ValueError:
+                    logger.warning(f"Invalid extraction mode: {mode}")
+                    continue
+            self.modes = [m for m in validated_modes if m in allowed_modes]
+            
+        if not self.modes:  # Use default if no valid modes specified
+            default = ExtractionMode(default_mode)
+            self.modes = [default if default in allowed_modes else ExtractionMode.FAST]
+            
+        logger.info("iterator.configured", 
+                   modes=self.modes,
+                   default_mode=default_mode)
 
     async def _extract_fast(self, content: Any) -> Optional[List[Any]]:
         """Direct extraction from clean data structures"""
         if content is None:
             return None
+        
+        # Handle coroutines
+        if hasattr(content, '__await__'):
+            try:
+                content = await content
+            except Exception as e:
+                logger.error("coroutine.extraction_failed", error=str(e))
+                return None
             
         # Handle lists
         if isinstance(content, list):
             return content
             
-        # Handle dict
+        # Handle dict with improved nested search
         if isinstance(content, dict):
-            # Look for direct list values
-            for value in content.values():
-                if isinstance(value, list):
-                    return value
+            # Look for list values at any level
+            def find_lists(d: Dict) -> Optional[List]:
+                if not isinstance(d, dict):
+                    return None
                     
-            # Look through nested structures
-            for value in content.values():
-                if isinstance(value, dict):
-                    for nested_value in value.values():
-                        if isinstance(nested_value, list):
-                            return nested_value
-                            
-            # Single item case
-            return [content]
-        
-        return None
-
-    async def _extract_medium(self, content: Any) -> Optional[List[Any]]:
-        """Pattern matching and heuristic extraction"""
-        if not isinstance(content, str):
-            content = str(content)
-            
-        items = []
-        
-        # Class extraction
-        class_matches = re.finditer(r'class\s+(\w+)(?:\([^)]*\))?\s*:([^class]*?)(?=\s*class|\s*$)', 
-                                  content, re.DOTALL)
-        for match in class_matches:
-            name, body = match.groups()
-            items.append({
-                "name": name,
-                "code": f"class {name}:{body.rstrip()}"
-            })
-        
-        # JSON pattern matching
-        json_matches = re.findall(r'(?:\{[^}]+\}|\[[^\]]+\])', content)
-        for match in json_matches:
-            try:
-                parsed = json.loads(match)
-                if isinstance(parsed, list):
-                    items.extend(parsed)
-                elif isinstance(parsed, dict):
-                    items.append(parsed)
-            except json.JSONDecodeError:
-                continue
+                # Priority keys to check first
+                priority_keys = ['items', 'changes', 'results', 'data']
+                for key in priority_keys:
+                    if key in d and isinstance(d[key], list):
+                        return d[key]
                 
-        # CSV parsing
-        if ',' in content and '\n' in content:
-            lines = [line.strip() for line in content.split('\n') if line.strip()]
-            if len(lines) > 1:  # Has header
-                header = [h.strip() for h in lines[0].split(',')]
-                for line in lines[1:]:
-                    values = [v.strip() for v in line.split(',')]
-                    if len(values) == len(header):
-                        items.append(dict(zip(header, values)))
-        
-        # Code block extraction
-        code_blocks = re.finditer(r'```(?:\w+)?\s*(.*?)\s*```', content, re.DOTALL)
-        for block in code_blocks:
-            block_content = block.group(1)
+                # General search
+                for v in d.values():
+                    if isinstance(v, list):
+                        return v
+                    elif isinstance(v, dict):
+                        nested = find_lists(v)
+                        if nested:
+                            return nested
+                return None
+
+            # Try to find lists
+            if items := find_lists(content):
+                return items
+
+            # Handle single item case
+            if any(k in content for k in ['type', 'name', 'content', 'value']):
+                return [content]
+
+        # Handle string content with improved parsing
+        if isinstance(content, str):
+            # Handle markdown code blocks
+            if '```' in content:
+                parts = content.split('```')
+                for part in parts:
+                    if part.startswith('json'):
+                        content = part[4:].strip()
+                        break
+            
             try:
-                # Try parsing as JSON first
-                items.append(json.loads(block_content))
+                parsed = json.loads(content)
+                # Recursively try to extract from parsed content
+                return self._extract_fast(parsed)
             except json.JSONDecodeError:
-                # If not JSON, treat as code content
-                items.append({"content": block_content})
-        
-        return items if items else None
+                # Try to find JSON-like structures in text
+                json_pattern = r'\[[\s\S]*\]|\{[\s\S]*\}'
+                matches = re.findall(json_pattern, content)
+                for match in matches:
+                    try:
+                        parsed = json.loads(match)
+                        return self._extract_fast(parsed)
+                    except json.JSONDecodeError:
+                        continue
+                        
+        return None
 
     async def _extract_slow(self, content: Any, config: ExtractConfig) -> Optional[List[Any]]:
         """LLM-based semantic extraction"""
-        prompt = f"""Extract items from the following content. Return each item as a complete JSON object.
+        prompt = f"""Extract items from the following content. Return a JSON array of objects.
         
-        Extraction guidelines:
-        1. If content contains Python classes:
-           - Extract each class with name and full code
-           - Preserve indentation and formatting
+        Guidelines:
+        1. Each object should have appropriate fields based on the content type
+        2. Return ONLY the JSON array
+        3. Include all relevant information in each object
+        4. Use consistent field names across objects
         
-        2. If content contains records (like CSV):
-           - Create an object for each record
-           - Include all fields with proper names
-        
-        3. If content contains natural text:
-           - Identify distinct items
-           - Create structured objects with relevant fields
-        
-        Format the output as a JSON array: 
-        [
-            {{"type": "item_type", "name": "item_name", "details": "..."}},
-            ...
-        ]
-        
-        Original instruction: {config.instruction}
-        Content to analyze: {content}
+        Instructions: {config.instruction}
+        Content: {content}
         """
         
         try:
@@ -234,13 +220,23 @@ class SemanticIterator:
             )
             
             if result.success:
-                # Handle both array and single object responses
-                if isinstance(result.value, list):
-                    return result.value
-                elif isinstance(result.value, dict):
-                    if "items" in result.value:
-                        return result.value["items"]
-                    return [result.value]
+                response = result.value
+                
+                # Handle various response formats
+                if isinstance(response, str):
+                    try:
+                        response = json.loads(response)
+                    except json.JSONDecodeError:
+                        pass
+                        
+                if isinstance(response, dict):
+                    # Check common wrapper keys
+                    for key in ['items', 'results', 'data', 'changes']:
+                        if key in response and isinstance(response[key], list):
+                            return response[key]
+                    return [response]
+                elif isinstance(response, list):
+                    return response
                     
         except Exception as e:
             logger.error("slow_extraction.error", error=str(e))
@@ -248,7 +244,8 @@ class SemanticIterator:
         return None
 
     async def iter_extract(self, content: Any, config: ExtractConfig) -> ItemIterator:
-        """Extract and iterate over items using configured modes"""
+        """Extract and iterate over items using configured modes."""
+        # Initialize extraction state
         state = ExtractionState(
             current_mode=self.modes[0],
             attempted_modes=[],
@@ -257,40 +254,81 @@ class SemanticIterator:
             raw_response=str(content)
         )
         
-        for mode in self.modes:
-            try:
-                state.current_mode = mode
-                state.attempted_modes.append(mode)
-                
-                logger.info("extraction.attempt", mode=mode)
-                
-                items = None
-                if mode == ExtractionMode.FAST:
-                    items = await self._extract_fast(content)
-                elif mode == ExtractionMode.MEDIUM:
-                    items = await self._extract_medium(content)
-                elif mode == ExtractionMode.SLOW:
-                    items = await self._extract_slow(content, config)
+        try:
+            # Handle coroutines
+            if hasattr(content, '__await__'):
+                try:
+                    content = await content
+                except Exception as e:
+                    logger.error("content.await_failed", error=str(e))
+                    content = str(content)
+            
+            # Try each mode in sequence
+            for mode in self.modes:
+                try:
+                    state.current_mode = mode
+                    state.attempted_modes.append(mode)
                     
-                if items:
-                    state.items = items
-                    logger.info("extraction.success", 
-                              mode=mode,
-                              items_found=len(items))
-                    break
+                    logger.info("extraction.attempt", mode=mode)
                     
-            except Exception as e:
-                logger.error("extraction.failed",
-                           mode=mode,
-                           error=str(e))
-                state.error = str(e)
+                    items = None
+                    if mode == ExtractionMode.FAST:
+                        try:
+                            items = await self._extract_fast(content)
+                        except Exception as e:
+                            logger.error("fast_extraction.failed", error=str(e))
+                            continue
+                            
+                    elif mode == ExtractionMode.SLOW:
+                        try:
+                            items = await self._extract_slow(content, config)
+                        except Exception as e:
+                            logger.error("slow_extraction.failed", error=str(e))
+                            continue
+                    
+                    # Process extracted items if found
+                    if items:
+                        # Ensure list type
+                        if not isinstance(items, list):
+                            items = [items]
+                            
+                        # Remove None and empty items
+                        items = [item for item in items 
+                                if item is not None and item != {}]
+                                
+                        if items:
+                            state.items = items
+                            logger.info("extraction.success", 
+                                    mode=mode,
+                                    items_found=len(items))
+                            break
+                        
+                    logger.debug("extraction.no_items", 
+                            mode=mode,
+                            content_preview=str(content)[:100])
+                        
+                except Exception as e:
+                    logger.error("extraction.failed",
+                            mode=mode,
+                            error=str(e))
+                    state.error = str(e)
+                    
+                    if "coroutine" in str(e).lower():
+                        break
+                        
+        except Exception as e:
+            logger.error("extraction.process_failed", error=str(e))
+            state.error = str(e)
+            
+        finally:
+            logger.debug("extraction.complete",
+                        attempted_modes=state.attempted_modes,
+                        items_found=len(state.items) if state.items else 0,
+                        has_error=bool(state.error))
         
         return ItemIterator(state)
 
     async def extract_all(self, content: Any, config: ExtractConfig) -> List[Any]:
         """Extract all items at once using configured modes"""
         iterator = await self.iter_extract(content, config)
-        items = []
-        while iterator.has_next():
-            items.append(next(iterator))
-        return items
+        return [item for item in iterator]
