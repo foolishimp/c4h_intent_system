@@ -26,57 +26,53 @@ structlog.configure(
     cache_logger_on_first_use=True
 )
 
-# Get structlog logger
 logger = structlog.get_logger()
 
 @pytest.fixture(scope="session", autouse=True)
 def setup_test_environment():
     """Setup test environment and verify configuration"""
-    # Check if we have real API key from .env
     api_key = os.getenv('ANTHROPIC_API_KEY')
     if not api_key:
-        # If no real key, set a mock one
-        os.environ['ANTHROPIC_API_KEY'] = 'test-key-123'
-        logger.warn("Using mock API key for tests")
-    else:
-        logger.info("Using real API key from environment")
+        pytest.skip("ANTHROPIC_API_KEY not set")
+        
+    logger.info("setup.environment", 
+                anthropic_key_set=bool(api_key),
+                key_length=len(api_key))
+    
+    return {'ANTHROPIC_API_KEY': api_key}
 
-    # Log environment state using structlog
-    env_vars = {k: '***' if 'KEY' in k else v for k, v in os.environ.items()}
-    logger.info(
-        "test_environment",
-        env_vars=env_vars,
-        anthropic_key_present='ANTHROPIC_API_KEY' in os.environ
+@pytest.fixture(scope="function")
+async def test_iterator(setup_test_environment, test_config):
+    """Create pre-configured test iterator"""
+    from src.skills.semantic_iterator import SemanticIterator
+    
+    return SemanticIterator(
+        [{
+            'provider': test_config['llm_config']['default_provider'],
+            'model': test_config['llm_config']['default_model'],
+            'temperature': test_config['llm_config']['temperature'],
+            'config': test_config
+        }],
+        extraction_modes=["fast", "slow"]
     )
 
 @pytest.fixture(scope="session")
 def test_config() -> Dict[str, Any]:
-    """Provide test configuration with proper scoping"""
+    """Provide test configuration"""
     return {
         'providers': {
             'anthropic': {
                 'api_base': 'https://api.anthropic.com',
-                'context_length': 100000,
-                'env_var': 'ANTHROPIC_API_KEY'
+                'env_var': 'ANTHROPIC_API_KEY',
+                'context_length': 100000
             }
         },
         'llm_config': {
             'default_provider': 'anthropic',
-            'default_model': 'claude-3-opus-20240229'
+            'default_model': 'claude-3-opus-20240229',
+            'temperature': 0
         }
     }
-
-@pytest.fixture(scope="function")
-def mock_api_key(monkeypatch):
-    """Provide mock API key for testing"""
-    monkeypatch.setenv('ANTHROPIC_API_KEY', 'test-key-123')
-    return 'test-key-123'
-
-@pytest.fixture(scope="session")
-def event_loop_policy():
-    """Provide event loop policy for testing"""
-    import asyncio
-    return asyncio.WindowsSelectorEventLoopPolicy() if os.name == 'nt' else asyncio.DefaultEventLoopPolicy()
 
 @pytest.fixture(scope="session")
 def event_loop():

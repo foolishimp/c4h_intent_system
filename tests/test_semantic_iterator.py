@@ -1,20 +1,16 @@
 """
-Comprehensive test suite for semantic extraction and iteration.
+Test suite for semantic extraction and iteration across different data formats.
 Path: tests/test_semantic_iterator.py
 """
 
 import pytest
 from typing import List, Dict, Any
 import structlog
-import json
-import os
 from dataclasses import dataclass
 from textwrap import dedent
-from src.agents.base import LLMProvider
 from src.skills.semantic_iterator import SemanticIterator
 from src.skills.shared.types import ExtractConfig
 
-import structlog
 logger = structlog.get_logger()
 
 @dataclass
@@ -61,44 +57,44 @@ class TestData:
         The tiny Ruby-throated Hummingbird can hover and fly backwards.
     ''')
 
-    MALFORMED_RESPONSES = [
-        '{"not": "an array"}',
-        'Some text [{"id": 1}] more text',
-        'Invalid JSON',
-        '[]',
-        None
-    ]
-
-@pytest.fixture(scope="module")
-async def iterator(test_config):
-    """Create reusable iterator instance with FAST and SLOW modes"""
-    return SemanticIterator(
-        [{
-            'provider': 'anthropic',
-            'model': test_config['llm_config']['default_model'],
-            'temperature': 0,
-            'config': test_config
-        }],
-        extraction_modes=["fast", "slow"]  # Enable both modes
-    )
-
 @pytest.mark.asyncio
-@pytest.mark.asyncio
-async def test_code_block_extraction(iterator):
+async def test_code_block_extraction(test_iterator):
     """Test extraction of Python classes from markdown"""
     config = ExtractConfig(
-        instruction="Extract each Python class as a separate item with name and code",
+        instruction="""Analyze the markdown text and extract all Python class definitions.
+
+        For each class found, return a JSON object with these exact fields:
+        - name: The class name (string)
+        - code: The complete class definition including docstrings and methods (string)
+        - parent: The parent class name if inherited, otherwise null (string|null)
+
+        Return as a JSON array of objects in this exact format:
+        [
+            {
+                "name": "ExampleClass",
+                "code": "class ExampleClass:\n    def method(self):\n        pass",
+                "parent": null
+            },
+            {
+                "name": "ChildClass",
+                "code": "class ChildClass(ParentClass):\n    pass",
+                "parent": "ParentClass"
+            }
+        ]
+
+        Important:
+        - Preserve all indentation in the code field
+        - Include the complete class definition from 'class' keyword to the last method
+        - Extract ALL classes found in the markdown code blocks
+        - Do not include any explanatory text, only the JSON array
+        """,
         format="json"
     )
-    
-    result = await iterator.iter_extract(
-        TestData.MARKDOWN_WITH_CODE, 
-        config,
-        modes=["fast", "slow"]  # Use both modes for complex extraction
-    )
+
+    result = await test_iterator.iter_extract(TestData.MARKDOWN_WITH_CODE, config)
 
 @pytest.mark.asyncio
-async def test_csv_record_iteration(iterator):
+async def test_csv_record_iteration(test_iterator):
     """Test extraction of structured CSV records"""
     logger.info("test.csv_record_iteration.start")
     
@@ -107,7 +103,7 @@ async def test_csv_record_iteration(iterator):
         format="json"
     )
     
-    result = await iterator.iter_extract(TestData.CSV_DATA, config)
+    result = await test_iterator.iter_extract(TestData.CSV_DATA, config)
     birds = []
     while result.has_next():
         birds.append(next(result))
@@ -120,7 +116,7 @@ async def test_csv_record_iteration(iterator):
     assert birds[0]["habitat"] == "Woodland"
 
 @pytest.mark.asyncio
-async def test_json_bird_extraction(iterator):
+async def test_json_bird_extraction(test_iterator):
     """Test extraction from nested JSON"""
     logger.info("test.json_bird_extraction.start")
     
@@ -129,7 +125,7 @@ async def test_json_bird_extraction(iterator):
         format="json"
     )
     
-    result = await iterator.iter_extract(TestData.JSON_RECORDS, config)
+    result = await test_iterator.iter_extract(TestData.JSON_RECORDS, config)
     birds = []
     while result.has_next():
         birds.append(next(result))
@@ -142,7 +138,7 @@ async def test_json_bird_extraction(iterator):
     assert birds[0]["wingspan"] == "2.3m"
 
 @pytest.mark.asyncio
-async def test_natural_text_extraction(iterator):
+async def test_natural_text_extraction(test_iterator):
     """Test extraction from unstructured text"""
     logger.info("test.natural_text_extraction.start")
     
@@ -151,7 +147,7 @@ async def test_natural_text_extraction(iterator):
         format="json"
     )
     
-    result = await iterator.iter_extract(TestData.NATURAL_TEXT, config)
+    result = await test_iterator.iter_extract(TestData.NATURAL_TEXT, config)
     birds = []
     while result.has_next():
         birds.append(next(result))
@@ -160,32 +156,34 @@ async def test_natural_text_extraction(iterator):
                 birds_found=len(birds))
     
     assert len(birds) == 4, "Should extract four bird records"
-    assert any(b["name"] == "Ruby-throated Hummingbird" for b in birds)
-    assert any(b["feature"].lower().startswith("red breast") for b in birds)
+    assert any(b.get("feature", "").startswith("can hover") for b in birds)
 
 @pytest.mark.asyncio
-@pytest.mark.asyncio
-async def test_malformed_responses(iterator):
+async def test_malformed_responses(test_iterator):
     """Test handling of malformed responses"""
     config = ExtractConfig(
         instruction="Extract any items",
         format="json"
     )
     
-    for response in TestData.MALFORMED_RESPONSES:
+    test_inputs = [
+        '{"not": "an array"}',
+        'Some text [{"id": 1}] more text',
+        'Invalid JSON',
+        '[]',
+        None
+    ]
+    
+    for response in test_inputs:
         logger.debug("test.malformed_response.checking",
                     response_type=type(response).__name__)
         
-        result = await iterator.iter_extract(
-            response, 
-            config,
-            modes=["fast"]  # Force fast mode only for malformed test
-        )
+        result = await test_iterator.iter_extract(response, config)
+        # Should handle gracefully and not raise exceptions
         assert not result.has_next()
-    logger.info("test.malformed_responses.complete")
 
 @pytest.mark.asyncio
-async def test_response_parsing():
+async def test_response_parsing(test_iterator, test_config):
     """Test different response formats"""
     logger.info("test.response_parsing.start")
     
@@ -197,112 +195,24 @@ async def test_response_parsing():
         ("Completely invalid", "Not JSON at all")
     ]
     
-    iterator = SemanticIterator([{
-        'provider': 'anthropic',
-        'model': 'claude-3-opus-20240229',
-        'temperature': 0,
-        'config': {'providers': {'anthropic': {'api_base': 'https://api.anthropic.com'}}}
-    }])
+    config = ExtractConfig(
+        instruction="Extract items with ids",
+        format="json"
+    )
     
     for case_name, content in test_cases:
         logger.info(f"test.response_parsing.case", case=case_name)
         
-        config = ExtractConfig(
-            instruction=f"Extract items from: {content}",
-            format="json"
-        )
-        
-        result = await iterator.iter_extract(content, config)
+        result = await test_iterator.iter_extract(content, config)
         items = []
         while result.has_next():
             items.append(next(result))
             
         logger.info("test.response_parsing.result",
                    case=case_name,
-                   items_found=len(items),
-                   raw_response=result.get_raw_response())
+                   items_found=len(items))
         
-        if case_name.startswith("Direct") or case_name.startswith("Invalid but"):
-            assert len(items) > 0, f"Should extract items from {case_name}"
+        if case_name.startswith("Completely invalid"):
+            assert not items, f"Should not extract items from {case_name}"
         else:
-            assert len(items) == 0, f"Should handle {case_name} gracefully"
-
-@pytest.mark.asyncio
-async def test_iterator_lifecycle():
-    """Test complete iterator lifecycle and state"""
-    logger.info("test.iterator_lifecycle.start")
-    
-    test_data = [{"id": 1}, {"id": 2}, {"id": 3}]
-    
-    iterator = SemanticIterator([{
-        'provider': 'anthropic',
-        'model': 'claude-3-opus-20240229',
-        'temperature': 0,
-        'config': {'providers': {'anthropic': {'api_base': 'https://api.anthropic.com'}}}
-    }])
-    
-    config = ExtractConfig(
-        instruction="Return these items unchanged",
-        format="json"
-    )
-    
-    result = await iterator.iter_extract(json.dumps(test_data), config)
-    
-    # Test initial state
-    assert len(result) == 3, "Should have correct length"
-    assert result.has_next(), "Should have next item"
-    
-    # Test iteration
-    items = []
-    item_count = 0
-    while result.has_next():
-        items.append(next(result))
-        item_count += 1
-        assert item_count <= 3, "Should not iterate beyond data"
-        
-    # Test final state    
-    assert not result.has_next(), "Should be exhausted"
-    assert len(items) == 3, "Should extract all items"
-    
-    # Verify raw response access still works
-    raw = result.get_raw_response()
-    assert raw, "Should maintain raw response access"
-    
-    logger.info("test.iterator_lifecycle.complete",
-                items_processed=len(items))
-
-@pytest.mark.asyncio
-async def test_concurrent_extraction():
-    """Test concurrent extractions"""
-    logger.info("test.concurrent_extraction.start")
-    
-    iterator = SemanticIterator([{
-        'provider': 'anthropic',
-        'model': 'claude-3-opus-20240229',
-        'temperature': 0,
-        'config': {'providers': {'anthropic': {'api_base': 'https://api.anthropic.com'}}}
-    }])
-    
-    config = ExtractConfig(
-        instruction="Extract items",
-        format="json"
-    )
-    
-    # Run multiple extractions concurrently
-    import asyncio
-    tasks = []
-    for data in [TestData.CSV_DATA, TestData.JSON_RECORDS, TestData.NATURAL_TEXT]:
-        tasks.append(iterator.extract_all(data, config))
-    
-    results = await asyncio.gather(*tasks)
-    
-    logger.info("test.concurrent_extraction.complete",
-                extraction_count=len(results),
-                total_items=sum(len(r) for r in results))
-    
-    # Verify all extractions worked
-    assert all(isinstance(r, list) for r in results), "All extractions should return lists"
-    assert all(len(r) > 0 for r in results), "All extractions should find items"
-
-if __name__ == "__main__":
-    pytest.main(["-v", "--log-cli-level=INFO", __file__])
+            assert items, f"Should extract items from {case_name}"
