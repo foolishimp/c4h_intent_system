@@ -27,10 +27,19 @@ class Coder(BaseAgent):
         self.iterator = SemanticIterator([{'provider': provider.value, 'model': model, 'temperature': temperature, 'config': config}])
 
     def _get_agent_name(self) -> str:
+        """Required by BaseAgent - name of this agent"""
         return "coder"
 
     def _get_system_message(self) -> str:
-        return """You are an expert code modification agent. Extract changes from instructions and apply them precisely."""
+        """Required by BaseAgent - system prompt for this agent"""
+        return """You are an expert code modification agent. Your task is to safely and precisely apply code changes.
+        
+        Rules:
+        1. Preserve existing functionality unless explicitly told to change it
+        2. Maintain code style and formatting
+        3. Apply changes exactly as specified
+        4. Handle errors gracefully with backups
+        5. Validate code after changes"""
 
     async def process(self, context: Dict[str, Any]) -> AgentResponse:
         try:

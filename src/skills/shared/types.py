@@ -23,27 +23,30 @@ class ExtractConfig:
     """Configuration for semantic extraction"""
     instruction: str  # Pattern/prompt for extraction
     format: str = "json"  # Expected output format
-    list_fields: List[str] = field(default_factory=lambda: ['items', 'changes', 'results'])  # Fields to check for lists
-    strict_json: bool = True  # Whether to require strict JSON or allow fuzzy matching
-
+    strict_json: bool = True
+    
     def __post_init__(self):
-        """Add JSON requirements to instruction if strict"""
+        """Add format requirements to instruction if strict"""
         if self.strict_json and 'json' in self.format.lower():
+            # Build complete instruction with format requirements
             self.instruction = f"""
 {self.instruction}
 
 RESPONSE FORMAT:
-Your response must be a valid JSON array, starting with '[' and ending with ']'.
-Do not include any text before or after the JSON array.
+Your response must be a valid JSON object with these requirements:
+1. Fields must match the example structure exactly
+2. Use null for any missing or unavailable values
+3. Empty arrays [] are acceptable for no values
+4. Do not use empty strings "" for missing values
+5. All optional fields must be present but can be null
 
-Example response:
-[
-    {{
-        "field1": "value1",
-        "field2": "value2"
-    }},
-    {{
-        "field1": "value3",
-        "field2": "value4"
-    }}
-]"""
+Example format showing null handling:
+{{
+    "attr1": "Value String",
+    "attr2": [],  // Empty array for no colors
+    "attr3": ["feature1", "feature2"],
+    "attr4": null  // null for unknown location
+}}
+
+{self.instruction}
+"""
