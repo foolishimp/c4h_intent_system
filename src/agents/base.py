@@ -1,5 +1,5 @@
 """
-Base agent implementation with improved authentication handling.
+Base agent implementation with improved response handling and logging.
 Path: src/agents/base.py
 """
 
@@ -54,21 +54,6 @@ class BaseAgent(ABC):
         if not provider_config:
             raise ValueError(f"Configuration missing for provider: {provider.value}")
         
-        # Get API key from environment
-        env_var = provider_config.get('env_var')
-        if not env_var:
-            raise ValueError(f"Missing env_var in provider config: {provider.value}")
-            
-        api_key = os.getenv(env_var)
-        if not api_key:
-            # In test environment, use a default test key
-            if os.getenv('PYTEST_CURRENT_TEST'):
-                api_key = f"sk-{provider.value}-test-key"
-                os.environ[env_var] = api_key
-                logger.info("test.using_mock_key", provider=provider.value)
-            else:
-                raise ValueError(f"Missing API key environment variable: {env_var}")
-        
         # Initialize logger
         self.logger = structlog.get_logger(
             agent=self._get_agent_name(),
@@ -93,11 +78,20 @@ class BaseAgent(ABC):
 
     def _create_standard_response(self, success: bool, data: Dict[str, Any], error: Optional[str] = None) -> AgentResponse:
         """Create standardized response format"""
+        timestamp = datetime.utcnow().isoformat()
+        
+        # Log the complete response data
+        logger.debug("agent.response_data",
+                    success=success,
+                    data_keys=list(data.keys()) if data else None,
+                    error=error,
+                    timestamp=timestamp)
+                    
         return AgentResponse(
             success=success,
             data={
-                "raw_output": data,
-                "timestamp": datetime.utcnow().isoformat(),
+                **data,  # Preserve all original data
+                "timestamp": timestamp,
                 "status": "completed" if success else "failed"
             },
             error=error
@@ -113,6 +107,12 @@ class BaseAgent(ABC):
             )
 
         provider_config = self.config['providers'][self.provider.value]
+        
+        # Log the request
+        logger.debug("agent.request",
+                    context_keys=list(context.keys()),
+                    provider=self.provider.value,
+                    model=self.model)
 
         for attempt in range(self.max_retries):
             try:
@@ -121,11 +121,17 @@ class BaseAgent(ABC):
                                model=self.model,
                                attempt=attempt + 1)
                 
+                # Format request for logging
+                formatted_request = self._format_request(context)
+                logger.debug("agent.request_content",
+                           system_message=self._get_system_message(),
+                           user_message=formatted_request)
+                
                 response = await acompletion(
                     model=self.model,
                     messages=[
                         {"role": "system", "content": self._get_system_message()},
-                        {"role": "user", "content": self._format_request(context)}
+                        {"role": "user", "content": formatted_request}
                     ],
                     temperature=self.temperature,
                     api_base=provider_config["api_base"],
@@ -137,10 +143,20 @@ class BaseAgent(ABC):
                     self.logger.info("request.success",
                                    provider=self.provider.value,
                                    content_length=len(content))
+                                   
+                    # Log full response content for debugging
+                    logger.debug("agent.llm_response",
+                               content_preview=content[:200],
+                               content_type=type(content).__name__)
                     
+                    # Preserve both raw response and processed content
                     return self._create_standard_response(
                         True,
-                        {"response": content, "raw_output": response}
+                        {
+                            "response": content,  # The actual LLM response content
+                            "raw_output": response,  # Complete litellm response object
+                            "raw_content": content  # Duplicate for backwards compatibility
+                        }
                     )
                     
             except Exception as e:

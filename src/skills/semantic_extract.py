@@ -32,6 +32,7 @@ class SemanticExtract(BaseAgent):
             provider=provider,
             model=model, 
             temperature=temperature,
+            max_retries=3,  # Default value
             config=config
         )
 
@@ -70,11 +71,22 @@ class SemanticExtract(BaseAgent):
                     raw_response=str(response.data),
                     error=response.error
                 )
+
+            # Extract actual content from response
+            if isinstance(response.data, dict):
+                content = response.data.get("response", "")
+            else:
+                content = str(response.data)
             
+            # Log full response for debugging
+            logger.debug("extract.llm_response", 
+                        response_type=type(content).__name__,
+                        response_preview=str(content)[:100] if content else None)
+
             return ExtractResult(
                 success=True,
-                value=response.data.get("response"),
-                raw_response=str(response.data)
+                value=content,
+                raw_response=str(content)  # Use actual response content
             )
             
         except Exception as e:

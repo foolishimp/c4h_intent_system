@@ -123,7 +123,6 @@ class SemanticIterator:
     Semantic iterator with enhanced logging for fast extraction.
     Path: src/skills/semantic_iterator.py
     """
-
     async def _extract_fast(self, content: Any) -> Optional[List[Any]]:
         """Direct extraction from structured data"""
         if not content:
@@ -133,42 +132,47 @@ class SemanticIterator:
         # Log incoming content type and structure
         logger.debug("fast_extract.input", 
                     content_type=type(content).__name__,
-                    is_dict='content' in content if isinstance(content, dict) else False,
-                    length=len(str(content)))
+                    content_preview=str(content)[:100] if content else None)
 
-        # Enhanced handling of anthropic-style responses
-        if isinstance(content, dict) and 'content' in content:
-            logger.debug("fast_extract.checking_anthropic_format")
-            for item in content.get('content', []):
-                if isinstance(item, dict) and 'text' in item:
+        try:
+            # First try direct JSON parsing
+            if isinstance(content, str):
+                try:
+                    parsed = json.loads(content)
+                    if isinstance(parsed, list):
+                        logger.info("fast_extract.direct_json_success", count=len(parsed))
+                        return parsed
+                except json.JSONDecodeError:
+                    pass
+
+            # Check for Anthropic-style response
+            if isinstance(content, dict):
+                # Check raw_response field
+                raw_response = content.get("raw_response", "")
+                if raw_response:
                     try:
-                        logger.debug("fast_extract.parsing_text", text=item['text'][:100])
-                        parsed = json.loads(item['text'])
+                        parsed = json.loads(raw_response)
                         if isinstance(parsed, list):
-                            logger.info("fast_extract.found_items", count=len(parsed))
                             return parsed
-                    except json.JSONDecodeError as e:
-                        logger.debug("fast_extract.json_parse_failed", error=str(e))
+                    except json.JSONDecodeError:
+                        pass
 
-        # Try standard JSON parsing if content is a string
-        if isinstance(content, str):
-            logger.debug("fast_extract.attempting_string_parse", content_preview=content[:100])
-            try:
-                parsed = json.loads(content)
-                if isinstance(parsed, list):
-                    logger.info("fast_extract.found_list", count=len(parsed))
-                    return parsed
-                if isinstance(parsed, dict):
-                    for key in ['items', 'changes', 'results']:
-                        if key in parsed and isinstance(parsed[key], list):
-                            logger.info(f"fast_extract.found_{key}", count=len(parsed[key]))
-                            return parsed[key]
-                    logger.debug("fast_extract.no_list_fields", available_keys=list(parsed.keys()))
-            except json.JSONDecodeError as e:
-                logger.debug("fast_extract.string_parse_failed", error=str(e))
+                # Check response field
+                response = content.get("response", "")
+                if response:
+                    try:
+                        parsed = json.loads(response)
+                        if isinstance(parsed, list):
+                            return parsed
+                    except json.JSONDecodeError:
+                        pass
 
-        logger.debug("fast_extract.no_valid_data")
-        return None
+            logger.debug("fast_extract.no_valid_json_found")
+            return None
+
+        except Exception as e:
+            logger.error("fast_extract.failed", error=str(e))
+            return None
 
     async def _extract_slow(self, content: Any, config: ExtractConfig) -> Optional[List[Any]]:
         """LLM-based semantic extraction"""
