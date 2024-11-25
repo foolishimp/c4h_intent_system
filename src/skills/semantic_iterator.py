@@ -1,5 +1,5 @@
 """
-Enhanced semantic iterator implementation with robust fast and slow modes.
+Enhanced semantic iterator implementation with synchronous interface.
 Path: src/skills/semantic_iterator.py
 """
 
@@ -7,6 +7,7 @@ from typing import List, Dict, Any, Optional, Iterator, Union, Tuple
 from enum import Enum
 import structlog
 import json
+import asyncio
 from dataclasses import dataclass
 from src.skills.semantic_extract import SemanticExtract, ExtractResult
 from src.skills.shared.types import ExtractConfig
@@ -28,59 +29,95 @@ class ExtractionState:
     position: int
     raw_response: str = ""
     error: Optional[str] = None
-    # Additional fields for slow mode
     content: Any = None
     config: Optional[ExtractConfig] = None
     extractor: Optional[SemanticExtract] = None
 
+def _generate_ordinal(n: int) -> str:
+    """Generate ordinal string for a number"""
+    if 10 <= n % 100 <= 20:
+        suffix = 'th'
+    else:
+        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
+    return f"{n}{suffix}"
+
 class ItemIterator:
-    """Iterator over extracted items"""
+    """Iterator over extracted items with synchronous interface"""
     
     def __init__(self, state: ExtractionState):
         self._state = state
+        self._loop = None
         logger.debug("iterator.initialized",
                     mode=state.current_mode,
                     items_count=len(state.items),
-                    position=state.position,
-                    has_response=bool(state.raw_response))
-    
+                    position=state.position)
+
+    def _ensure_loop(self):
+        """Ensure we have an event loop, create if needed"""
+        try:
+            self._loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+
     def __iter__(self):
         return self
 
     def __next__(self) -> Any:
-        """Standard iteration for fast mode"""
-        if not self.has_next():
-            raise StopIteration()
-            
-        if self._state.current_mode == ExtractionMode.FAST:
-            if self._state.position >= len(self._state.items):  # Added explicit length check
-                raise StopIteration()
-            item = self._state.items[self._state.position]
-            self._state.position += 1
-            return item
-        else:
-            raise RuntimeError("Slow mode requires async iteration")
-
-    async def __anext__(self) -> Any:
-        """Async iteration for slow mode"""
-        if not await self.has_next():
-            raise StopAsyncIteration
-            
-        if self._state.current_mode == ExtractionMode.FAST:
-            return self.__next__()
-            
-        # Slow mode: extract next item
+        """Unified sync interface for both fast and slow modes"""
         try:
-            nth_prompt = f"""From the following content, return ONLY the {self._state.position}th instance of the requested item.
-            If no {self._state.position}th item exists, return exactly "NO_MORE_ITEMS".
+            if self._state.current_mode == ExtractionMode.FAST:
+                # Fast mode: direct list access
+                if not self._has_next_fast():
+                    raise StopIteration()
+                    
+                item = self._state.items[self._state.position]
+                self._state.position += 1
+                return item
+            else:
+                # Slow mode: wrap async call in sync interface
+                self._ensure_loop()
+                try:
+                    return self._loop.run_until_complete(self._get_next_slow())
+                except StopAsyncIteration:
+                    raise StopIteration()
+        except Exception as e:
+            logger.error("iterator.next_failed", error=str(e))
+            raise StopIteration()
+
+    def _has_next_fast(self) -> bool:
+        """Check for next item in fast mode"""
+        return (bool(self._state.items) and 
+                self._state.position >= 0 and 
+                self._state.position < len(self._state.items))
+
+    async def _get_next_slow(self) -> Any:
+        """Get next item in slow mode"""
+        try:
+            ordinal = _generate_ordinal(self._state.position + 1)  # Use 1-based position for prompts
             
-            {self._state.config.instruction}"""
+            nth_prompt = f"""Extract the {ordinal} item from the content.
+
+Original instruction for reference:
+{self._state.config.instruction}
+
+Important:
+1. Return ONLY the {ordinal} item that matches the format
+2. Use EXACTLY the same JSON structure as shown in the original instruction
+3. If no {ordinal} item exists, return exactly "NO_MORE_ITEMS"
+4. Do not include any explanations or additional text
+
+Content to analyze:
+{self._state.content}"""
             
-            logger.info("slow_extract.requesting_item", position=self._state.position)
+            logger.info("slow_extract.requesting_item", 
+                       position=self._state.position + 1,
+                       ordinal=ordinal)
             
             result = await self._state.extractor.extract(
                 content=self._state.content,
-                prompt=nth_prompt
+                prompt=nth_prompt,
+                format_hint=self._state.config.format
             )
             
             if not result.success:
@@ -89,8 +126,11 @@ class ItemIterator:
                 
             self._state.raw_response = result.raw_response
             
-            if not result.value or "NO_MORE_ITEMS" in str(result.value):
-                logger.info("slow_extract.no_more_items", position=self._state.position)
+            # Check for end marker with tolerance for spacing/formatting
+            response_text = str(result.value).upper().replace(" ", "")
+            if "NO_MORE_ITEMS" in response_text or "NOMOREITEM" in response_text:
+                logger.info("slow_extract.no_more_items", 
+                          position=self._state.position + 1)
                 raise StopAsyncIteration
                 
             self._state.position += 1
@@ -99,16 +139,6 @@ class ItemIterator:
         except Exception as e:
             logger.error("slow_extract.error", error=str(e))
             raise StopAsyncIteration
-
-    def has_next(self) -> bool:
-        """Check for next item availability with explicit bounds checking"""
-        if self._state.current_mode == ExtractionMode.FAST:
-            return (
-                bool(self._state.items) and  # Verify we have items
-                self._state.position >= 0 and  # Valid position
-                self._state.position < len(self._state.items)  # Within bounds
-            )
-        return True  # Slow mode checks in __anext__
 
     def get_state(self) -> ExtractionState:
         """Get current iterator state"""
@@ -159,45 +189,32 @@ class SemanticIterator:
                    allow_fallback=allow_fallback)
 
     async def _extract_fast(self, content: Any) -> Tuple[Optional[List[Any]], str]:
-        """Fast extraction attempting direct JSON parsing then single LLM call.
-        Returns tuple of (items, raw_response)
-        """
+        """Fast extraction attempting direct JSON parsing then single LLM call."""
         if not content:
             logger.debug("fast_extract.empty_content")
             return None, ""
-        
-        BASE_INSTRUCTION = "Extract items as JSON array"
-                    
+
         try:
-            # Step 1: Try direct JSON parse
-            if isinstance(content, str):
-                try:
-                    parsed = json.loads(content)
-                    if isinstance(parsed, list):
-                        logger.info("fast_extract.direct_json_success",
-                                  count=len(parsed))
-                        return parsed, content
-                except json.JSONDecodeError:
-                    pass
+            # Build extraction prompt
+            fast_prompt = f"""Extract ALL items at once as a complete list.
 
-            # Step 2: Check response structure
-            if isinstance(content, dict):
-                for key in ['response', 'raw_output', 'choices']:
-                    value = content.get(key)
-                    if isinstance(value, str):
-                        try:
-                            parsed = json.loads(value)
-                            if isinstance(parsed, list):
-                                logger.info(f"fast_extract.{key}_success",
-                                          count=len(parsed))
-                                return parsed, value
-                        except json.JSONDecodeError:
-                            continue
+Original instruction:
+{self.extract_config.instruction}
 
-            # Step 3: Make LLM call
+Important:
+1. Return items in a single JSON array
+2. Use exactly the same structure for each item
+3. Include ALL matching items
+4. Do not include any explanations or text before/after the JSON array
+
+Content to analyze:
+{content}"""
+
+            # Make LLM call
             result = await self.extractor.extract(
                 content=content,
-                prompt=f"{BASE_INSTRUCTION}\n\n{self.extract_config.instruction}" if hasattr(self, 'extract_config') else BASE_INSTRUCTION
+                prompt=fast_prompt,
+                format_hint="json"
             )
             
             if result.success and result.value:
@@ -217,7 +234,7 @@ class SemanticIterator:
             logger.error("fast_extract.failed", error=str(e))
             return None, ""
 
-    async def iter_extract(self, content: Any, config: ExtractConfig) -> ItemIterator:
+    def iter_extract(self, content: Any, config: ExtractConfig) -> ItemIterator:
         """Extract and iterate over items using configured mode.
         
         Args:
@@ -227,6 +244,9 @@ class SemanticIterator:
         Returns:
             ItemIterator instance
         """
+        # Store config for prompts
+        self.extract_config = config
+        
         state = ExtractionState(
             current_mode=self.modes[0],
             attempted_modes=[],
@@ -239,12 +259,21 @@ class SemanticIterator:
         )
         
         try:
-            # Try fast extraction first if enabled
+            # Handle fast mode if enabled
             if ExtractionMode.FAST in self.modes:
                 logger.info("extraction.attempt", mode="fast")
                 state.attempted_modes.append(ExtractionMode.FAST)
                 
-                items, raw_response = await self._extract_fast(content)
+                # Run fast extraction synchronously
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    items, raw_response = loop.run_until_complete(
+                        self._extract_fast(content)
+                    )
+                finally:
+                    loop.close()
+                
                 state.raw_response = raw_response
                 
                 if items:
@@ -253,21 +282,19 @@ class SemanticIterator:
                               items_found=len(items))
                     return ItemIterator(state)
                     
-                # Handle fallback to slow mode if enabled and configured
+                # Handle fallback to slow mode
                 if (self.allow_fallback and 
                     ExtractionMode.SLOW in self.modes):
                     logger.info("extraction.fallback_to_slow")
                     state.current_mode = ExtractionMode.SLOW
                     state.attempted_modes.append(ExtractionMode.SLOW)
-                    state.position = 1  # Start with first item
                     return ItemIterator(state)
                     
-            # Initialize slow mode if it's the primary mode
+            # Initialize slow mode if configured
             elif ExtractionMode.SLOW in self.modes:
                 logger.info("extraction.using_slow_mode")
                 state.current_mode = ExtractionMode.SLOW
                 state.attempted_modes.append(ExtractionMode.SLOW)
-                state.position = 1  # Start with first item
                 return ItemIterator(state)
 
             logger.info("extraction.complete",

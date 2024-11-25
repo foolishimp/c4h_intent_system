@@ -23,7 +23,7 @@ logger = structlog.get_logger()
 class IteratorConfig(BaseModel):
     """Configuration for semantic iterator"""
     provider: str = "anthropic"
-    model: str = "claude-3.5-sonnet-20241022"
+    model: str = "claude-3-opus-20240229"
     temperature: float = 0
     env_var: str = "ANTHROPIC_API_KEY"
     api_base: str = "https://api.anthropic.com"
@@ -44,7 +44,7 @@ def print_section(title: str, content: Any) -> None:
         print(content)
     print("="*80 + "\n")
 
-async def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
+def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
     """Process items using semantic iterator"""
     try:
         # Print input configuration
@@ -57,11 +57,8 @@ async def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
         
         print_section("INPUT DATA", config.input_data)
         
-
         # Use instruction directly from config
-        instruction = config.instruction
-        
-        print_section("EXTRACTION PROMPT", instruction)
+        print_section("EXTRACTION PROMPT", config.instruction)
         
         # Initialize iterator with single mode
         iterator = SemanticIterator(
@@ -83,13 +80,13 @@ async def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
         
         # Create extraction config
         extract_config = ExtractConfig(
-            instruction=instruction,
+            instruction=config.instruction,
             format=config.format
         )
         
         # Process items
         logger.info("starting_extraction", mode=mode.value)
-        result = await iterator.iter_extract(config.input_data, extract_config)
+        result = iterator.iter_extract(config.input_data, extract_config)
         
         # Get extraction state for debugging
         state = result.get_state()
@@ -104,16 +101,13 @@ async def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
         items = []
         count = 0
         
-        while result.has_next():
-            try:
-                item = next(result)
-                count += 1
-                print(f"\nITEM {count}:")
-                print("-" * 40)
-                print(json.dumps(item, indent=2))
-                items.append(item)
-            except Exception as e:
-                print(f"Error processing item: {e}")
+        # Simple loop works for both modes
+        for item in result:
+            count += 1
+            print(f"\nITEM {count}:")
+            print("-" * 40)
+            print(json.dumps(item, indent=2))
+            items.append(item)
         
         # Print summary
         print_section("SUMMARY", {
@@ -136,7 +130,7 @@ def load_config(config_path: str) -> IteratorConfig:
         data = yaml.safe_load(f)
         return IteratorConfig(**data)
 
-async def main() -> None:
+def main() -> None:
     """Main entry point"""
     parser = argparse.ArgumentParser(
         description="Test semantic iterator functionality"
@@ -157,10 +151,10 @@ async def main() -> None:
     try:
         config = load_config(args.config)
         mode = ExtractionMode(args.mode)
-        await process_items(config, mode)
+        process_items(config, mode)
     except Exception as e:
         logger.error("execution_failed", error=str(e))
         raise
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    main()
