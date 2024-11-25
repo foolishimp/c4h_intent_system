@@ -1,0 +1,35 @@
+# iter_config.yml
+
+provider: "anthropic"
+model: "claude-3-opus-20240229"
+temperature: 0
+env_var: "ANTHROPIC_API_KEY"
+api_base: "https://api.anthropic.com"
+
+input_data: |
+  # Data Processing Functions
+  def process_customer(customer_id: str, data: dict) -> dict:
+      """Process customer data and return enriched information"""
+      return {"id": customer_id, "processed": True, **data}
+      
+  def validate_order(order: dict) -> bool:
+      """Validate order data"""
+      required = ["id", "customer", "items"]
+      return all(k in order for k in required)
+      
+  def calculate_total(items: list) -> float:
+      """Calculate order total"""
+      return sum(item["price"] * item["quantity"] for item in items)
+
+instruction: |
+  Extract each function from the provided code.
+  For each function provide a JSON object with:
+  1. name: The function name
+  2. params: Array of parameter names and types
+  3. return_type: The return type if specified
+  4. docstring: The function's docstring if present
+  5. code: The complete function code
+
+  Return as a JSON array of these objects.
+
+format: "json"

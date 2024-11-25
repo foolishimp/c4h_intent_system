@@ -1,12 +1,11 @@
 """
-Semantic extraction using LLM. Focused purely on extraction, structure determined by caller.
+Simple semantic extraction without format requirements.
 Path: src/skills/semantic_extract.py
 """
 
 from typing import Dict, Any, Optional
 import structlog
 from dataclasses import dataclass
-import json
 from src.agents.base import BaseAgent, LLMProvider, AgentResponse
 
 logger = structlog.get_logger()
@@ -22,18 +21,6 @@ class ExtractResult:
 class SemanticExtract(BaseAgent):
     """Base extractor that follows given instructions without imposing structure"""
     
-    def __init__(self,
-                 provider: LLMProvider = LLMProvider.ANTHROPIC,
-                 model: Optional[str] = None,
-                 temperature: float = 0,
-                 config: Optional[Dict[str, Any]] = None):
-        super().__init__(
-            provider=provider,
-            model=model, 
-            temperature=temperature,
-            config=config
-        )
-
     def _get_agent_name(self) -> str:
         return "semantic_extract"
 
@@ -42,7 +29,7 @@ class SemanticExtract(BaseAgent):
         When given content and instructions:
         1. Follow the instructions exactly as given
         2. Extract ONLY the specific information requested
-        3. Return in exactly the format specified
+        3. Return in exactly the format specified in the instructions
         4. Do not add explanations or extra content
         5. Do not modify or enhance the instructions"""
 
@@ -70,21 +57,6 @@ class SemanticExtract(BaseAgent):
                     error=response.error
                 )
 
-            # Handle Anthropic response format
-            if isinstance(response.data, dict):
-                if 'content' in response.data:
-                    for item in response.data['content']:
-                        if 'text' in item:
-                            try:
-                                value = json.loads(item['text'])
-                                return ExtractResult(
-                                    success=True,
-                                    value=value,
-                                    raw_response=str(response.data)
-                                )
-                            except json.JSONDecodeError:
-                                pass
-                        
             return ExtractResult(
                 success=True,
                 value=response.data.get("response"),
