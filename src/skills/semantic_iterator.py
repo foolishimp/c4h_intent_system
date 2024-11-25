@@ -1,309 +1,172 @@
 """
-Enhanced semantic iterator implementation with synchronous interface.
-Path: src/skills/semantic_iterator.py
+Command-line tool for testing semantic iterator functionality.
+Path: src/sem_iter.py
 """
 
-from typing import List, Dict, Any, Optional, Iterator, Union, Tuple
-from enum import Enum
-import structlog
-import json
+import argparse
 import asyncio
+import yaml
+from pathlib import Path
+from typing import Dict, Any, Optional
+import structlog
 from dataclasses import dataclass
-from src.skills.semantic_extract import SemanticExtract, ExtractResult
-from src.skills.shared.types import ExtractConfig
-from src.agents.base import LLMProvider
+import json
+from enum import Enum
+
+from skills.semantic_iterator import SemanticIterator, ExtractionMode
+from skills.shared.types import ExtractConfig
 
 logger = structlog.get_logger()
 
-class ExtractionMode(str, Enum):
-    """Available extraction modes"""
-    FAST = "fast"      # Direct extraction from structured data
-    SLOW = "slow"      # Sequential item-by-item extraction
-
-@dataclass
-class ExtractionState:
-    """Tracks extraction state across attempts"""
-    current_mode: ExtractionMode
-    attempted_modes: List[ExtractionMode]
-    items: List[Any]
-    position: int
-    raw_response: str = ""
-    error: Optional[str] = None
-    content: Any = None
-    config: Optional[ExtractConfig] = None
-    extractor: Optional[SemanticExtract] = None
-
-def _generate_ordinal(n: int) -> str:
-    """Generate ordinal string for a number"""
-    if 10 <= n % 100 <= 20:
-        suffix = 'th'
+def print_section(title: str, content: Any) -> None:
+    """Print a section with clear formatting"""
+    print("\n" + "="*80)
+    print(f" {title} ".center(80, "="))
+    print("="*80)
+    
+    if isinstance(content, (dict, list)):
+        print(json.dumps(content, indent=2))
     else:
-        suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
-    return f"{n}{suffix}"
+        print(content)
+    print("="*80 + "\n")
 
-class ItemIterator:
-    """Iterator over extracted items with synchronous interface"""
-    
-    def __init__(self, state: ExtractionState):
-        self._state = state
-        self._loop = None
-        logger.debug("iterator.initialized",
-                    mode=state.current_mode,
-                    items_count=len(state.items),
-                    position=state.position)
-
-    def _ensure_loop(self):
-        """Ensure we have an event loop, create if needed"""
-        try:
-            self._loop = asyncio.get_event_loop()
-        except RuntimeError:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self) -> Any:
-        """Unified sync interface for both fast and slow modes"""
-        try:
-            if self._state.current_mode == ExtractionMode.FAST:
-                # Fast mode: direct list access
-                if not self._has_next_fast():
-                    raise StopIteration()
-                    
-                item = self._state.items[self._state.position]
-                self._state.position += 1
-                return item
-            else:
-                # Slow mode: wrap async call in sync interface
-                self._ensure_loop()
-                try:
-                    return self._loop.run_until_complete(self._get_next_slow())
-                except StopAsyncIteration:
-                    raise StopIteration()
-        except Exception as e:
-            logger.error("iterator.next_failed", error=str(e))
-            raise StopIteration()
-
-    def _has_next_fast(self) -> bool:
-        """Check for next item in fast mode"""
-        return (bool(self._state.items) and 
-                self._state.position >= 0 and 
-                self._state.position < len(self._state.items))
-
-    async def _get_next_slow(self) -> Any:
-        """Get next item in slow mode"""
-        try:
-            ordinal = _generate_ordinal(self._state.position + 1)  # Use 1-based position for prompts
-            
-            nth_prompt = f"""Extract the {ordinal} item from the content.
-
-Original instruction for reference:
-{self._state.config.instruction}
-
-Important:
-1. Return ONLY the {ordinal} item that matches the format
-2. Use EXACTLY the same JSON structure as shown in the original instruction
-3. If no {ordinal} item exists, return exactly "NO_MORE_ITEMS"
-4. Do not include any explanations or additional text
-
-Content to analyze:
-{self._state.content}"""
-            
-            logger.info("slow_extract.requesting_item", 
-                       position=self._state.position + 1,
-                       ordinal=ordinal)
-            
-            result = await self._state.extractor.extract(
-                content=self._state.content,
-                prompt=nth_prompt,
-                format_hint=self._state.config.format
-            )
-            
-            if not result.success:
-                logger.error("slow_extract.failed", error=result.error)
-                raise StopAsyncIteration
-                
-            self._state.raw_response = result.raw_response
-            
-            # Check for end marker with tolerance for spacing/formatting
-            response_text = str(result.value).upper().replace(" ", "")
-            if "NO_MORE_ITEMS" in response_text or "NOMOREITEM" in response_text:
-                logger.info("slow_extract.no_more_items", 
-                          position=self._state.position + 1)
-                raise StopAsyncIteration
-                
-            self._state.position += 1
-            return result.value
-            
-        except Exception as e:
-            logger.error("slow_extract.error", error=str(e))
-            raise StopAsyncIteration
-
-    def get_state(self) -> ExtractionState:
-        """Get current iterator state"""
-        return self._state
-
-class SemanticIterator:
-    """Extracts and iterates over semantic items"""
-    
-    def __init__(self, 
-                 config: List[Dict[str, Any]], 
-                 extraction_modes: Optional[List[str]] = None,
-                 allow_fallback: bool = False):
-        """Initialize iterator with configuration and modes.
+def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
+    """Process items using semantic iterator"""
+    try:
+        # Print configuration sections
+        print_section("CONFIGURATION", {
+            "provider": config.provider,
+            "model": config.model,
+            "temperature": config.temperature,
+            "extraction_mode": mode.value
+        })
         
-        Args:
-            config: LLM configuration dictionary
-            extraction_modes: List of modes to use in order (default: ['fast'])
-            allow_fallback: Whether to allow fallback from fast to slow mode
-        """
-        if not config:
-            raise ValueError("Config required")
-            
-        cfg = config[0]
-        self.extractor = SemanticExtract(
-            provider=LLMProvider(cfg['provider']),
-            model=cfg['model'],
-            temperature=cfg.get('temperature', 0),
-            config=cfg.get('config')
+        print_section("INPUT DATA", config.input_data)
+        print_section("EXTRACTION PROMPT", config.instruction)
+        
+        # Initialize iterator
+        iterator = SemanticIterator(
+            [{
+                'provider': config.provider,
+                'model': config.model,
+                'temperature': config.temperature,
+                'config': {
+                    'providers': {
+                        config.provider: {
+                            'api_base': config.api_base,
+                            'env_var': config.env_var
+                        }
+                    }
+                }
+            }],
+            extraction_modes=[mode.value]
         )
         
-        # Configure modes
-        self.modes = []
-        self.allow_fallback = allow_fallback
-        
-        if extraction_modes:
-            for mode in extraction_modes:
-                try:
-                    self.modes.append(ExtractionMode(mode))
-                except ValueError:
-                    logger.warning(f"Invalid extraction mode: {mode}")
-                    continue
-                    
-        if not self.modes:
-            self.modes = [ExtractionMode.FAST]
-            
-        logger.info("iterator.configured",
-                   modes=[m.value for m in self.modes],
-                   allow_fallback=allow_fallback)
-
-    async def _extract_fast(self, content: Any) -> Tuple[Optional[List[Any]], str]:
-        """Fast extraction attempting direct JSON parsing then single LLM call."""
-        if not content:
-            logger.debug("fast_extract.empty_content")
-            return None, ""
-
-        try:
-            # Build extraction prompt
-            fast_prompt = f"""Extract ALL items at once as a complete list.
-
-Original instruction:
-{self.extract_config.instruction}
-
-Important:
-1. Return items in a single JSON array
-2. Use exactly the same structure for each item
-3. Include ALL matching items
-4. Do not include any explanations or text before/after the JSON array
-
-Content to analyze:
-{content}"""
-
-            # Make LLM call
-            result = await self.extractor.extract(
-                content=content,
-                prompt=fast_prompt,
-                format_hint="json"
-            )
-            
-            if result.success and result.value:
-                try:
-                    if isinstance(result.value, list):
-                        return result.value, result.raw_response
-                    parsed = json.loads(result.value)
-                    if isinstance(parsed, list):
-                        return parsed, result.raw_response
-                except (json.JSONDecodeError, TypeError):
-                    pass
-
-            logger.debug("fast_extract.no_items_found")
-            return None, result.raw_response if result else ""
-            
-        except Exception as e:
-            logger.error("fast_extract.failed", error=str(e))
-            return None, ""
-
-    def iter_extract(self, content: Any, config: ExtractConfig) -> ItemIterator:
-        """Extract and iterate over items using configured mode.
-        
-        Args:
-            content: Content to extract from
-            config: Extraction configuration
-            
-        Returns:
-            ItemIterator instance
-        """
-        # Store config for prompts
-        self.extract_config = config
-        
-        state = ExtractionState(
-            current_mode=self.modes[0],
-            attempted_modes=[],
-            items=[],
-            position=0,
-            raw_response="",
-            content=content,
-            config=config,
-            extractor=self.extractor
+        # Create extraction config
+        extract_config = ExtractConfig(
+            instruction=config.instruction,
+            format=config.format
         )
         
-        try:
-            # Handle fast mode if enabled
-            if ExtractionMode.FAST in self.modes:
-                logger.info("extraction.attempt", mode="fast")
-                state.attempted_modes.append(ExtractionMode.FAST)
-                
-                # Run fast extraction synchronously
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    items, raw_response = loop.run_until_complete(
-                        self._extract_fast(content)
-                    )
-                finally:
-                    loop.close()
-                
-                state.raw_response = raw_response
-                
-                if items:
-                    state.items = items
-                    logger.info("extraction.fast_success",
-                              items_found=len(items))
-                    return ItemIterator(state)
-                    
-                # Handle fallback to slow mode
-                if (self.allow_fallback and 
-                    ExtractionMode.SLOW in self.modes):
-                    logger.info("extraction.fallback_to_slow")
-                    state.current_mode = ExtractionMode.SLOW
-                    state.attempted_modes.append(ExtractionMode.SLOW)
-                    return ItemIterator(state)
-                    
-            # Initialize slow mode if configured
-            elif ExtractionMode.SLOW in self.modes:
-                logger.info("extraction.using_slow_mode")
-                state.current_mode = ExtractionMode.SLOW
-                state.attempted_modes.append(ExtractionMode.SLOW)
-                return ItemIterator(state)
+        # Process items
+        logger.info("starting_extraction", mode=mode.value)
+        item_iterator = iterator.iter_extract(config.input_data, extract_config)
+        
+        # Access state through proper method
+        iterator_state = item_iterator.state
+        print_section("LLM RAW RESPONSE", iterator_state.raw_response)
+        
+        if iterator_state.error:
+            print_section("EXTRACTION ERROR", iterator_state.error)
+        
+        # Process items
+        print_section("EXTRACTED ITEMS", "")
+        items = []
+        count = 0
 
-            logger.info("extraction.complete",
-                       mode=state.current_mode.value,
-                       attempted_modes=[m.value for m in state.attempted_modes],
-                       items_found=len(state.items))
-                    
-        except Exception as e:
-            logger.error("extraction.failed", error=str(e))
-            state.error = str(e)
-            
-        return ItemIterator(state)
+        for item in item_iterator:
+            if item:
+                count += 1
+                print(f"\nITEM {count}:")
+                print("-" * 40)
+                try:
+                    if isinstance(item, str):
+                        cleaned = item.strip()
+                        if cleaned.startswith('[') and cleaned.endswith(']'):
+                            parsed = json.loads(cleaned)[0]
+                        else:
+                            parsed = json.loads(cleaned)
+                        print(json.dumps(parsed, indent=2))
+                        items.append(parsed)
+                    elif isinstance(item, dict):
+                        print(json.dumps(item, indent=2))
+                        items.append(item)
+                    else:
+                        print(str(item))
+                        items.append(item)
+                except json.JSONDecodeError as e:
+                    logger.error("item.json_parse_failed", 
+                               item_number=count, 
+                               error=str(e),
+                               content=str(item))
+                    print(f"Failed to parse item {count}: {str(item)}")
+                except Exception as e:
+                    logger.error("item.processing_failed",
+                               item_number=count,
+                               error=str(e))
+                    print(f"Error processing item {count}: {str(e)}")
+        
+        # Final state for summary
+        final_state = item_iterator.state
+        summary = {
+            "total_items": len(items),
+            "extraction_mode": final_state.current_mode,
+            "attempted_modes": [mode.value for mode in final_state.attempted_modes],
+            "items": items
+        }
+        
+        print_section("SUMMARY", summary)
+                   
+    except Exception as e:
+        logger.error("processing_failed", error=str(e))
+        raise
+
+
+def load_config(config_path: str) -> IteratorConfig:
+    """Load configuration from YAML file"""
+    path = Path(config_path)
+    if not path.exists():
+        raise ValueError(f"Config file not found: {path}")
+        
+    with open(path) as f:
+        data = yaml.safe_load(f)
+        return IteratorConfig(**data)
+
+def main() -> None:
+    """Main entry point"""
+    parser = argparse.ArgumentParser(
+        description="Test semantic iterator functionality"
+    )
+    parser.add_argument(
+        "config", 
+        help="Path to YAML config file"
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["fast", "slow"],
+        default="fast",
+        help="Extraction mode to use (default: fast)"
+    )
+    
+    args = parser.parse_args()
+    
+    try:
+        config = load_config(args.config)
+        mode = ExtractionMode(args.mode)
+        process_items(config, mode)
+    except Exception as e:
+        logger.error("execution_failed", error=str(e))
+        raise
+
+if __name__ == "__main__":
+    main()

@@ -100,25 +100,58 @@ def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
         print_section("EXTRACTED ITEMS", "")
         items = []
         count = 0
-        
-        # Simple loop works for both modes
+
+        # Iterate and process each item
         for item in result:
-            count += 1
-            print(f"\nITEM {count}:")
-            print("-" * 40)
-            print(json.dumps(item, indent=2))
-            items.append(item)
+            if item:  # Guard against None items
+                count += 1
+                print(f"\nITEM {count}:")
+                print("-" * 40)
+                try:
+                    if isinstance(item, str):
+                        # Handle string responses
+                        cleaned = item.strip()
+                        # Handle array or object JSON
+                        if cleaned.startswith('[') and cleaned.endswith(']'):
+                            parsed = json.loads(cleaned)[0]  # Get first item from array
+                        else:
+                            parsed = json.loads(cleaned)
+                        print(json.dumps(parsed, indent=2))
+                        items.append(parsed)
+                    elif isinstance(item, dict):
+                        # Already parsed dictionary
+                        print(json.dumps(item, indent=2))
+                        items.append(item)
+                    else:
+                        # Unknown format - print as is
+                        print(str(item))
+                        items.append(item)
+                except json.JSONDecodeError as e:
+                    logger.error("item.json_parse_failed", 
+                               item_number=count, 
+                               error=str(e),
+                               content=str(item))
+                    print(f"Failed to parse item {count}: {str(item)}")
+                except Exception as e:
+                    logger.error("item.processing_failed",
+                               item_number=count,
+                               error=str(e))
+                    print(f"Error processing item {count}: {str(e)}")
         
-        # Print summary
-        print_section("SUMMARY", {
+        # Print summary with processed items
+        summary = {
             "total_items": len(items),
             "extraction_mode": state.current_mode,
-            "attempted_modes": [mode.value for mode in state.attempted_modes]
-        })
+            "attempted_modes": [mode.value for mode in state.attempted_modes],
+            "items": items  # Include parsed items in summary
+        }
+        
+        print_section("SUMMARY", summary)
                    
     except Exception as e:
         logger.error("processing_failed", error=str(e))
         raise
+
 
 def load_config(config_path: str) -> IteratorConfig:
     """Load configuration from YAML file"""
