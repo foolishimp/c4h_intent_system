@@ -1,7 +1,5 @@
-# src/skills/semantic_extract.py
-
 """
-Semantic extraction using LLM. Focused purely on extraction, structure determined by caller.
+Enhanced semantic extraction with proper response preservation.
 Path: src/skills/semantic_extract.py
 """
 
@@ -23,19 +21,6 @@ class ExtractResult:
 class SemanticExtract(BaseAgent):
     """Base extractor that follows given instructions without imposing structure"""
     
-    def __init__(self,
-                 provider: LLMProvider = LLMProvider.ANTHROPIC,
-                 model: Optional[str] = None,
-                 temperature: float = 0,
-                 config: Optional[Dict[str, Any]] = None):
-        super().__init__(
-            provider=provider,
-            model=model, 
-            temperature=temperature,
-            max_retries=3,  # Default value
-            config=config
-        )
-
     def _get_agent_name(self) -> str:
         return "semantic_extract"
 
@@ -72,21 +57,18 @@ class SemanticExtract(BaseAgent):
                     error=response.error
                 )
 
-            # Extract actual content from response
-            if isinstance(response.data, dict):
-                content = response.data.get("response", "")
-            else:
-                content = str(response.data)
+            # Important: Get actual LLM response content
+            raw_response = response.data.get("raw_content", "")
             
-            # Log full response for debugging
-            logger.debug("extract.llm_response", 
-                        response_type=type(content).__name__,
-                        response_preview=str(content)[:100] if content else None)
+            # Try to parse structured response if available
+            value = response.data.get("response")
+            if not value and raw_response:
+                value = raw_response
 
             return ExtractResult(
                 success=True,
-                value=content,
-                raw_response=str(content)  # Use actual response content
+                value=value,
+                raw_response=raw_response  # Preserve actual LLM response
             )
             
         except Exception as e:
