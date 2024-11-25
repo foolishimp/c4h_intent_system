@@ -23,7 +23,7 @@ logger = structlog.get_logger()
 class IteratorConfig(BaseModel):
     """Configuration for semantic iterator"""
     provider: str = "anthropic"
-    model: str = "claude-3-opus-20240229"
+    model: str = "claude-3.5-sonnet-20241022"
     temperature: float = 0
     env_var: str = "ANTHROPIC_API_KEY"
     api_base: str = "https://api.anthropic.com"
@@ -57,20 +57,9 @@ async def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
         
         print_section("INPUT DATA", config.input_data)
         
-        # Make the prompt more explicit about JSON requirement
-        instruction = f"""{config.instruction}
 
-IMPORTANT: Your response must be a JSON array only. Do not include any other text.
-Example format:
-[
-    {{
-        "name": "example_func",
-        "params": ["param1: str", "param2: int"],
-        "return_type": "bool",
-        "docstring": "Example function docstring",
-        "code": "def example_func(param1: str, param2: int) -> bool:\\n    return True"
-    }}
-]"""
+        # Use instruction directly from config
+        instruction = config.instruction
         
         print_section("EXTRACTION PROMPT", instruction)
         

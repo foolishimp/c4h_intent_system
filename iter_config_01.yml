@@ -1,0 +1,34 @@
+# iter_config.yml
+
+provider: "anthropic"
+model: "claude-3-opus-20240229"
+temperature: 0
+env_var: "ANTHROPIC_API_KEY"
+api_base: "https://api.anthropic.com"
+
+input_data: |
+  Common birds in North America include the American Robin, 
+  which has a red breast and yellow beak. The Blue Jay is 
+  known for its bright blue feathers and loud calls. 
+  Northern Cardinals are striking red birds often seen at feeders.
+  The tiny Ruby-throated Hummingbird can hover and fly backwards.
+
+instruction: |
+  Return every bird mentioned in the input text, along with its color(s) and any other relevant information.
+  For each bird provide a JSON object with these fields:
+  - name: The bird's name
+  - colors: Array of colors mentioned
+  - features: Any distinguishing features or behaviors mentioned
+  - location: Where it's found (if mentioned)
+
+  Return as a JSON array. Example format:
+  [
+    {
+      "name": "American Robin",
+      "colors": ["red", "yellow"],
+      "features": ["yellow beak", "red breast"],
+      "location": "North America"
+    }
+  ]
+
+format: "json"

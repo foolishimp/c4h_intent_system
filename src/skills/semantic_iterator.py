@@ -165,10 +165,8 @@ class SemanticIterator:
         if not content:
             logger.debug("fast_extract.empty_content")
             return None, ""
-            
-        logger.debug("fast_extract.input",
-                    content_type=type(content).__name__,
-                    content_preview=str(content)[:100] if content else None)
+        
+        BASE_INSTRUCTION = "Extract items as JSON array"
                     
         try:
             # Step 1: Try direct JSON parse
@@ -199,8 +197,9 @@ class SemanticIterator:
             # Step 3: Make LLM call
             result = await self.extractor.extract(
                 content=content,
-                prompt="Extract items as JSON array")
-                
+                prompt=f"{BASE_INSTRUCTION}\n\n{self.extract_config.instruction}" if hasattr(self, 'extract_config') else BASE_INSTRUCTION
+            )
+            
             if result.success and result.value:
                 try:
                     if isinstance(result.value, list):
