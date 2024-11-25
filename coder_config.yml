@@ -6,16 +6,13 @@ temperature: 0
 env_var: "ANTHROPIC_API_KEY"
 api_base: "https://api.anthropic.com"
 
-# Base path where files are located
 project_path: "tests/test_projects/project1"
 
 input_data: |
-  Let's add logging to all functions. Here are the changes:
-
-  For tests/test_projects/project1/sample.py:
+  Changes to add logging to sample.py:
   ```python
   import logging
-
+  
   logging.basicConfig(level=logging.INFO)
   logger = logging.getLogger(__name__)
 
@@ -35,12 +32,20 @@ input_data: |
   ```
 
 instruction: |
-  Extract code changes from the input. Each code block represents changes for a specific file.
-  For each change provide a JSON object with:
-  - file_path: The complete path to the file relative to project_path
-  - content: The complete new file content
-  - type: "modify" for updating existing files
-  - description: Brief description of the changes
+  Find code blocks in the markdown-formatted input and extract each as a change.
+  For each code block:
+  1. The file path should be "sample.py" as it's mentioned in the description
+  2. The content should be the complete code block content without markdown
+  3. The type should be "modify" as this updates existing code
+  4. Include a description of "Adding logging functionality"
+  
+  Return each change as a JSON object with exact fields:
+  {
+    "file_path": "sample.py",
+    "content": "complete code without markdown",
+    "type": "modify",
+    "description": "Adding logging functionality"
+  }
 
 format: "json"
 merge_method: "smart"

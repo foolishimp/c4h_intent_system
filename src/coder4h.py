@@ -4,10 +4,9 @@ Path: src/coder4h.py
 """
 
 import argparse
-import asyncio
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import structlog
 from dataclasses import dataclass
 import json
@@ -28,31 +27,15 @@ class CoderConfig(BaseModel):
     env_var: str = "ANTHROPIC_API_KEY"
     api_base: str = "https://api.anthropic.com"
     
-    # Project configuration
-    project_path: str  # Base path for resolving file locations
-    
-    # Code change configuration
-    input_data: str  # Code changes to apply
-    instruction: str  # How to parse the changes
+    project_path: str
+    input_data: str
+    instruction: str
     format: str = "json"
     merge_method: str = "smart"
 
-def print_section(title: str, content: Any) -> None:
-    """Print a section with clear formatting"""
-    print("\n" + "="*80)
-    print(f" {title} ".center(80, "="))
-    print("="*80)
-    
-    if isinstance(content, (dict, list)):
-        print(json.dumps(content, indent=2))
-    else:
-        print(content)
-    print("="*80 + "\n")
-
-async def process_changes(config: CoderConfig) -> None:
+def process_changes(config: CoderConfig) -> None:
     """Process code changes using semantic coder"""
     try:
-        # Verify project path exists
         project_path = Path(config.project_path)
         if not project_path.exists():
             raise ValueError(f"Project path does not exist: {project_path}")
@@ -68,38 +51,31 @@ async def process_changes(config: CoderConfig) -> None:
         print_section("INPUT DATA", config.input_data)
         print_section("CHANGE INSTRUCTIONS", config.instruction)
         
-        # Initialize coder with project path
-        coder = Coder(
-            provider=LLMProvider(config.provider),
-            model=config.model,
-            temperature=config.temperature,
-            config={
-                'providers': {
-                    config.provider: {
-                        'api_base': config.api_base,
-                        'env_var': config.env_var
-                    }
-                },
-                'project_path': str(project_path)  # Pass project path to coder
-            }
-        )
+        # Initialize components
+        llm_config = {
+            'providers': {
+                config.provider: {
+                    'api_base': config.api_base,
+                    'env_var': config.env_var
+                }
+            },
+            'project_path': str(project_path)
+        }
         
-        # Initialize iterator
         iterator = SemanticIterator(
             [{
                 'provider': config.provider,
                 'model': config.model,
                 'temperature': config.temperature,
-                'config': {
-                    'providers': {
-                        config.provider: {
-                            'api_base': config.api_base,
-                            'env_var': config.env_var
-                        }
-                    }
-                }
-            }],
-            extraction_modes=[ExtractionMode.FAST.value]
+                'config': llm_config
+            }]
+        )
+        
+        coder = Coder(
+            provider=LLMProvider(config.provider),
+            model=config.model,
+            temperature=config.temperature,
+            config=llm_config
         )
         
         # Extract changes
@@ -108,39 +84,54 @@ async def process_changes(config: CoderConfig) -> None:
             format=config.format
         )
         
-        change_iterator = iterator.iter_extract(config.input_data, extract_config)
+        print_section("EXTRACTING CHANGES", "")
         
-        # Process changes
-        print_section("PROCESSING CHANGES", "")
-        
+        # Use iterator synchronously
+        change_iter = iterator.iter_extract(config.input_data, extract_config)
         changes = []
-        count = 0
         
-        # Collect changes first
-        for change in change_iterator:
+        # Collect changes
+        for change in change_iter:
             if change:
-                count += 1
-                print(f"\nCHANGE {count}:")
-                print("-" * 40)
-                
                 # Resolve file path relative to project path
                 file_path = change.get('file_path', '')
                 if not file_path.startswith(str(project_path)):
-                    change['file_path'] = str(project_path / file_path)
-                    
-                print(json.dumps(change, indent=2))
+                    relative_path = file_path.replace('tests/test_projects/project1/', '')
+                    change['file_path'] = str(project_path / relative_path)
                 changes.append(change)
-                
-        # Apply changes using coder
-        if changes:
-            result = await coder.process({"changes": changes})
-            print_section("RESULTS", result.data)
-        else:
+        
+        print_section("FOUND CHANGES", changes)
+        
+        if not changes:
             print("No changes to process")
+            return
+            
+        # Process changes
+        print_section("APPLYING CHANGES", "")
+        
+        for i, change in enumerate(changes, 1):
+            print(f"\nChange {i}:")
+            print("-" * 40)
+            print(json.dumps(change, indent=2))
+            
+        result = coder.process({"changes": changes})
+        print_section("RESULTS", result.data)
             
     except Exception as e:
         logger.error("processing_failed", error=str(e))
         raise
+
+def print_section(title: str, content: Any) -> None:
+    """Print a section with clear formatting"""
+    print("\n" + "="*80)
+    print(f" {title} ".center(80, "="))
+    print("="*80)
+    
+    if isinstance(content, (dict, list)):
+        print(json.dumps(content, indent=2))
+    else:
+        print(content)
+    print("="*80 + "\n")
 
 def load_config(config_path: str) -> CoderConfig:
     """Load configuration from YAML file"""
@@ -166,7 +157,7 @@ def main() -> None:
     
     try:
         config = load_config(args.config)
-        asyncio.run(process_changes(config))
+        process_changes(config)
     except Exception as e:
         logger.error("execution_failed", error=str(e))
         raise
