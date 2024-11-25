@@ -46,13 +46,15 @@ class ItemIterator:
     
     def __iter__(self):
         return self
-    
+
     def __next__(self) -> Any:
         """Standard iteration for fast mode"""
         if not self.has_next():
             raise StopIteration()
             
         if self._state.current_mode == ExtractionMode.FAST:
+            if self._state.position >= len(self._state.items):  # Added explicit length check
+                raise StopIteration()
             item = self._state.items[self._state.position]
             self._state.position += 1
             return item
@@ -98,10 +100,14 @@ class ItemIterator:
             logger.error("slow_extract.error", error=str(e))
             raise StopAsyncIteration
 
-    async def has_next(self) -> bool:
-        """Check for next item availability"""
+    def has_next(self) -> bool:
+        """Check for next item availability with explicit bounds checking"""
         if self._state.current_mode == ExtractionMode.FAST:
-            return self._state.position < len(self._state.items)
+            return (
+                bool(self._state.items) and  # Verify we have items
+                self._state.position >= 0 and  # Valid position
+                self._state.position < len(self._state.items)  # Within bounds
+            )
         return True  # Slow mode checks in __anext__
 
     def get_state(self) -> ExtractionState:
