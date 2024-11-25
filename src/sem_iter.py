@@ -1,5 +1,5 @@
 """
-Simple command-line tool for testing semantic iterator functionality with mode control.
+Command-line tool for testing semantic iterator functionality.
 Path: src/sem_iter.py
 """
 
@@ -10,13 +10,12 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 import structlog
 from dataclasses import dataclass
-from pydantic import BaseModel
 import json
 from enum import Enum
+from pydantic import BaseModel
 
-from skills.semantic_iterator import SemanticIterator, ExtractionMode
-from skills.shared.types import ExtractConfig
-from agents.base import LLMProvider
+from src.skills.semantic_iterator import SemanticIterator, ExtractionMode
+from src.skills.shared.types import ExtractConfig
 
 logger = structlog.get_logger()
 
@@ -47,7 +46,7 @@ def print_section(title: str, content: Any) -> None:
 def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
     """Process items using semantic iterator"""
     try:
-        # Print input configuration
+        # Print configuration sections
         print_section("CONFIGURATION", {
             "provider": config.provider,
             "model": config.model,
@@ -56,11 +55,9 @@ def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
         })
         
         print_section("INPUT DATA", config.input_data)
-        
-        # Use instruction directly from config
         print_section("EXTRACTION PROMPT", config.instruction)
         
-        # Initialize iterator with single mode
+        # Initialize iterator
         iterator = SemanticIterator(
             [{
                 'provider': config.provider,
@@ -75,7 +72,7 @@ def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
                     }
                 }
             }],
-            extraction_modes=[mode.value]  # Only use specified mode
+            extraction_modes=[mode.value]
         )
         
         # Create extraction config
@@ -86,44 +83,38 @@ def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
         
         # Process items
         logger.info("starting_extraction", mode=mode.value)
-        result = iterator.iter_extract(config.input_data, extract_config)
+        item_iterator = iterator.iter_extract(config.input_data, extract_config)
         
-        # Get extraction state for debugging
-        state = result.get_state()
-        print_section("LLM RAW RESPONSE", state.raw_response)
+        # Access state through proper method
+        iterator_state = item_iterator.state
+        print_section("LLM RAW RESPONSE", iterator_state.raw_response)
         
-        # Display any errors
-        if state.error:
-            print_section("EXTRACTION ERROR", state.error)
+        if iterator_state.error:
+            print_section("EXTRACTION ERROR", iterator_state.error)
         
         # Process items
         print_section("EXTRACTED ITEMS", "")
         items = []
         count = 0
 
-        # Iterate and process each item
-        for item in result:
-            if item:  # Guard against None items
+        for item in item_iterator:
+            if item:
                 count += 1
                 print(f"\nITEM {count}:")
                 print("-" * 40)
                 try:
                     if isinstance(item, str):
-                        # Handle string responses
                         cleaned = item.strip()
-                        # Handle array or object JSON
                         if cleaned.startswith('[') and cleaned.endswith(']'):
-                            parsed = json.loads(cleaned)[0]  # Get first item from array
+                            parsed = json.loads(cleaned)[0]
                         else:
                             parsed = json.loads(cleaned)
                         print(json.dumps(parsed, indent=2))
                         items.append(parsed)
                     elif isinstance(item, dict):
-                        # Already parsed dictionary
                         print(json.dumps(item, indent=2))
                         items.append(item)
                     else:
-                        # Unknown format - print as is
                         print(str(item))
                         items.append(item)
                 except json.JSONDecodeError as e:
@@ -138,12 +129,13 @@ def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
                                error=str(e))
                     print(f"Error processing item {count}: {str(e)}")
         
-        # Print summary with processed items
+        # Final state for summary
+        final_state = item_iterator.state
         summary = {
             "total_items": len(items),
-            "extraction_mode": state.current_mode,
-            "attempted_modes": [mode.value for mode in state.attempted_modes],
-            "items": items  # Include parsed items in summary
+            "extraction_mode": final_state.current_mode,
+            "attempted_modes": [mode.value for mode in final_state.attempted_modes],
+            "items": items
         }
         
         print_section("SUMMARY", summary)
@@ -151,7 +143,6 @@ def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
     except Exception as e:
         logger.error("processing_failed", error=str(e))
         raise
-
 
 def load_config(config_path: str) -> IteratorConfig:
     """Load configuration from YAML file"""
