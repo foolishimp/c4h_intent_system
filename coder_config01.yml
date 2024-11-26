@@ -6,54 +6,50 @@ temperature: 0
 env_var: "ANTHROPIC_API_KEY"
 api_base: "https://api.anthropic.com"
 
-project_path: "tests/test_projects/project1"
+project_path: ""
 
 input_data: |
- Here are the code changes to implement logging in the Python files and replace print statements with log statements:                                 │
-                                                                                                                                                      │
- {                                                                                                                                                    │
-     "changes": [                                                                                                                                     │
-         {                                                                                                                                            │
-             "file_path": "tests/test_projects/project2/main.py",                                                                                     │
-             "type": "modify",                                                                                                                        │
-             "description": "Add logging and replace print with log statement",                                                                       │
-             "diff": "diff --git a/tests/test_projects/project2/main.py b/tests/test_projects/project2/main.py\n---                                   │
- a/tests/test_projects/project2/main.py\n+++ b/tests/test_projects/project2/main.py\n@@ -1,5 +1,9 @@\n from utils import format_name, validate_age\n  │
- \n+import logging\n+\n+logging.basicConfig(level=logging.INFO)\n+logger = logging.getLogger(__name__)\n \n def process_user(user_data):\n            │
- \"\"\"Process user data and return formatted string\"\"\"\n@@ -12,4 +16,4 @@\n         \"name\": \"john doe\",\n         \"age\": 25\n     }\n-      │
- print(process_user(test_data))\n+    logger.info(process_user(test_data))"                                                                           │
-         },                                                                                                                                           │
-         {                                                                                                                                            │
-             "file_path": "tests/test_projects/project2/utils.py",                                                                                    │
-             "type": "modify",                                                                                                                        │
-             "description": "Add logging to utility functions",                                                                                       │
-             "diff": "diff --git a/tests/test_projects/project2/utils.py b/tests/test_projects/project2/utils.py\n---                                 │
- a/tests/test_projects/project2/utils.py\n+++ b/tests/test_projects/project2/utils.py\n@@ -1,11 +1,17 @@\n+import logging\n+\n+logger =               │
- logging.getLogger(__name__)\n+\n def format_name(name):\n     \"\"\"Format name by stripping whitespace and converting to title case\"\"\"\n+        │
- logger.debug(f\"Formatting name: {name}\")\n     return name.strip().title()\n \n def validate_age(age):\n     \"\"\"Validate age is an integer      │
- between 0 and 150\"\"\"\n+    logger.debug(f\"Validating age: {age}\")\n     if not isinstance(age, int):\n+        logger.error(\"Age must be an    │
- integer\")\n         raise TypeError(\"Age must be an integer\")\n     if age < 0 or age > 150:\n+        logger.error(\"Age must be between 0 and   │
- 150\")\n         raise ValueError(\"Age must be between 0 and 150\")\n     return age"                                                               │
-         }                                                                                                                                            │
-     ]                                                                                                                                                │
- }                                                                                                                                                    │
-                                                                                                                                                      │
- The Java file was skipped since the intent specified Python files. Let me know if you need any clarification or have additional requirements!  
-
+ Here are the code changes to implement logging in the Python files and replace print statements with log statements:                                 
+                                                                                                                                                      
+ {                                                                                                                                                    
+     "changes": [                                                                                                                                     
+         {                                                                                                                                            
+             "file_path": "tests/test_projects/project2/main.py",                                                                                     
+             "type": "modify",                                                                                                                        
+             "description": "Add logging and replace print with log statement",                                                                       
+             "diff": "diff --git a/tests/test_projects/project2/main.py b/tests/test_projects/project2/main.py\n---                                   
+ a/tests/test_projects/project2/main.py\n+++ b/tests/test_projects/project2/main.py\n@@ -1,5 +1,9 @@\n from utils import format_name, validate_age\n  
+ \n+import logging\n+\n+logging.basicConfig(level=logging.INFO)\n+logger = logging.getLogger(__name__)\n \n def process_user(user_data):\n            
+ \"\"\"Process user data and return formatted string\"\"\"\n@@ -12,4 +16,4 @@\n         \"name\": \"john doe\",\n         \"age\": 25\n     }\n-      
+ print(process_user(test_data))\n+    logger.info(process_user(test_data))"                                                                           
+         },                                                                                                                                           
+         {                                                                                                                                            
+             "file_path": "tests/test_projects/project2/utils.py",                                                                                    
+             "type": "modify",                                                                                                                        
+             "description": "Add logging to utility functions",                                                                                       
+             "diff": "diff --git a/tests/test_projects/project2/utils.py b/tests/test_projects/project2/utils.py\n---                                 
+ a/tests/test_projects/project2/utils.py\n+++ b/tests/test_projects/project2/utils.py\n@@ -1,11 +1,17 @@\n+import logging\n+\n+logger =               
+ logging.getLogger(__name__)\n+\n def format_name(name):\n     \"\"\"Format name by stripping whitespace and converting to title case\"\"\"\n+        
+ logger.debug(f\"Formatting name: {name}\")\n     return name.strip().title()\n \n def validate_age(age):\n     \"\"\"Validate age is an integer      
+ between 0 and 150\"\"\"\n+    logger.debug(f\"Validating age: {age}\")\n     if not isinstance(age, int):\n+        logger.error(\"Age must be an    
+ integer\")\n         raise TypeError(\"Age must be an integer\")\n     if age < 0 or age > 150:\n+        logger.error(\"Age must be between 0 and   
+ 150\")\n         raise ValueError(\"Age must be between 0 and 150\")\n     return age"                                                               
+         }                                                                                                                                            
+     ]                                                                                                                                                
+ }                                                                                                                                                    
 instruction: |
-  Find code blocks in the markdown-formatted input and extract each as a change.
-  For each code block:
-  1. The file path should be "sample.py" as it's mentioned in the description
-  2. The content should be the complete code block content without markdown
-  3. The type should be "modify" as this updates existing code
-  4. Include a description of "Adding logging functionality"
+  Extract changes from the input maintaining:
+  1. Original file paths from the diff
+  2. Change type (modify/create/delete)
+  3. Description of changes
+  4. Complete diff patches
   
-  Return each change as a JSON object with exact fields:
+  Return each change as a JSON object with exact fields - VALUE content is only an example to be overwritten by actual content:
   {
     "file_path": "sample.py",
-    "content": "complete code without markdown",
     "type": "modify",
-    "description": "Adding logging functionality"
+    "description": "Adding logging functionality",
+    "diff": "git diff instruction to make changes"
   }
 
 format: "json"

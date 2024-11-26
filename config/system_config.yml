@@ -26,12 +26,12 @@ llm_config:
       
     solution_designer:
       provider: "anthropic"
-      model: "claude-3-opus-20240229"
+      model: "claude-3.5-sonnet-20241022"
       temperature: 0
     
     coder:
-      provider: "anthropic"
-      model: "claude-3.5-sonnet-20241022"
+      provider: "openai"
+      model: "gpt-4o-2024-08-06"
       temperature: 0
       
     assurance:

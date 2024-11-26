@@ -3,6 +3,7 @@ from typing import Dict, Any, Optional
 from dataclasses import dataclass
 import structlog
 import re
+import asyncio
 from src.agents.base import BaseAgent, LLMProvider  # Changed from .base
 
 logger = structlog.get_logger()
@@ -16,12 +17,9 @@ class MergeResult:
 class SemanticMerge(BaseAgent):
     """Merges code changes using semantic understanding"""
     
-    def __init__(self,
-                 provider: LLMProvider = LLMProvider.ANTHROPIC,
-                 model: Optional[str] = None, 
-                 config: Optional[Dict[str, Any]] = None,
-                 temperature: float = 0):
-        """Initialize merger with specified provider"""
+    def __init__(self, provider: LLMProvider, model: str, 
+                 temperature: float = 0,
+                 config: Optional[Dict[str, Any]] = None):
         super().__init__(
             provider=provider,
             model=model,
@@ -78,18 +76,22 @@ class SemanticMerge(BaseAgent):
         
         return content
 
-    async def merge(self, original: str, instructions: str) -> MergeResult:
+    def merge(self, original: str, instructions: str) -> MergeResult:
         """Merge changes into original content"""
         try:
-            # Format request to emphasize code-only response
             request = {
                 "original_code": original,
                 "instructions": instructions,
-                "format": "Return only the complete modified code without any additional text or formatting."
+                "format": "Return only the complete modified code"
             }
             
-            # Get response from LLM
-            response = await self.process(request)
+            # Create event loop and run process synchronously
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            try:
+                response = loop.run_until_complete(self.process(request))
+            finally:
+                loop.close()
             
             if not response.success:
                 return MergeResult(
@@ -98,30 +100,15 @@ class SemanticMerge(BaseAgent):
                     error=response.error
                 )
                 
-            # Extract the code content
             merged_content = self._extract_code_content(response.data)
             
-            # Basic validation
             if not merged_content or merged_content.isspace():
-                logger.error("semantic_merge.empty_content", 
-                           raw_response=str(response.data))
                 return MergeResult(
                     success=False,
                     content="",
                     error="Empty or invalid merge result"
                 )
 
-            # Verify it looks like Python code
-            if not any(keyword in merged_content 
-                      for keyword in ['class', 'def', 'import']):
-                logger.error("semantic_merge.invalid_python",
-                           content=merged_content[:100])
-                return MergeResult(
-                    success=False,
-                    content="",
-                    error="Response does not appear to be valid Python code"
-                )
-                
             return MergeResult(
                 success=True,
                 content=merged_content

@@ -193,19 +193,18 @@ class SemanticIterator:
     """Iterator factory for semantic extraction"""
     
     def __init__(self, 
-                 config: List[Dict[str, Any]], 
+                 provider: LLMProvider, 
+                 model: str,
+                 temperature: float = 0,
+                 config: Optional[Dict[str, Any]] = None,
                  extraction_modes: Optional[List[str]] = None,
                  allow_fallback: bool = False):
         """Initialize iterator with configuration and modes."""
-        if not config:
-            raise ValueError("Config required")
-            
-        cfg = config[0]
         self.extractor = SemanticExtract(
-            provider=LLMProvider(cfg['provider']),
-            model=cfg['model'],
-            temperature=cfg.get('temperature', 0),
-            config=cfg.get('config')
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            config=config
         )
         
         self.modes = []

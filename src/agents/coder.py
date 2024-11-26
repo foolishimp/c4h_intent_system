@@ -42,15 +42,6 @@ class Coder(BaseAgent):
     def process(self, context: Dict[str, Any]) -> AgentResponse:
         """Synchronous interface for processing changes"""
         try:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            return loop.run_until_complete(self._process_async(context))
-        finally:
-            loop.close()
-
-    async def _process_async(self, context: Dict[str, Any]) -> AgentResponse:
-        """Internal async implementation"""
-        try:
             changes_data = context.get('changes', {})
             results = []
 
@@ -61,7 +52,7 @@ class Coder(BaseAgent):
                 try:
                     if backup:
                         shutil.copy2(file_path, backup)
-                    result = await self.merger.merge(
+                    result = self.merger.merge(  # Now synchronous
                         file_path.read_text() if file_path.exists() else "", 
                         change.get('content', '')
                     )

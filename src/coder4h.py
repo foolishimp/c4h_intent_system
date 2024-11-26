@@ -1,40 +1,63 @@
 """
-Standalone code modification tool using semantic models.
+Standalone code modification tool using the Coder agent.
 Path: src/coder4h.py
+
+This module handles configuration loading and bootstrapping,
+then passes clean configuration to the Coder agent.
 """
 
 import argparse
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional
 import structlog
-from dataclasses import dataclass
 import json
 from pydantic import BaseModel
 
-from src.agents.coder import Coder, MergeMethod
-from src.skills.semantic_iterator import SemanticIterator, ExtractionMode
-from src.skills.shared.types import ExtractConfig
-from src.agents.base import LLMProvider
+from src.agents.coder import Coder
+from src.agents.base import LLMProvider, AgentResponse
 
 logger = structlog.get_logger()
 
 class CoderConfig(BaseModel):
-    """Configuration for coder execution"""
+    """External configuration format for the CLI tool"""
+    # LLM Configuration
     provider: str = "anthropic"
     model: str = "claude-3-opus-20240229"
     temperature: float = 0
     env_var: str = "ANTHROPIC_API_KEY"
     api_base: str = "https://api.anthropic.com"
     
+    # Project Configuration
     project_path: str
     input_data: str
     instruction: str
     format: str = "json"
     merge_method: str = "smart"
 
+def create_agent_config(config: CoderConfig) -> Dict[str, Any]:
+    """Convert CLI config into clean agent configuration"""
+    return {
+        'providers': {
+            config.provider: {
+                'api_base': config.api_base,
+                'env_var': config.env_var
+            }
+        },
+        'project_path': str(Path(config.project_path))
+    }
+
+def create_change_request(config: CoderConfig) -> Dict[str, Any]:
+    """Create a clean change request for the agent"""
+    return {
+        "input": config.input_data,
+        "instruction": config.instruction,
+        "format": config.format,
+        "merge_method": config.merge_method
+    }
+
 def process_changes(config: CoderConfig) -> None:
-    """Process code changes using semantic coder"""
+    """Process code changes using the Coder agent"""
     try:
         project_path = Path(config.project_path)
         if not project_path.exists():
@@ -51,75 +74,41 @@ def process_changes(config: CoderConfig) -> None:
         print_section("INPUT DATA", config.input_data)
         print_section("CHANGE INSTRUCTIONS", config.instruction)
         
-        # Initialize components
-        llm_config = {
-            'providers': {
-                config.provider: {
-                    'api_base': config.api_base,
-                    'env_var': config.env_var
-                }
-            },
-            'project_path': str(project_path)
-        }
-        
-        iterator = SemanticIterator(
-            [{
-                'provider': config.provider,
-                'model': config.model,
-                'temperature': config.temperature,
-                'config': llm_config
-            }]
-        )
-        
+        # Create clean agent config and initialize agent
+        agent_config = create_agent_config(config)
         coder = Coder(
             provider=LLMProvider(config.provider),
             model=config.model,
             temperature=config.temperature,
-            config=llm_config
+            config=agent_config
         )
         
-        # Extract changes
-        extract_config = ExtractConfig(
-            instruction=config.instruction,
-            format=config.format
-        )
+        # Create clean change request
+        change_request = create_change_request(config)
         
-        print_section("EXTRACTING CHANGES", "")
+        print_section("PROCESSING CHANGES", "")
         
-        # Use iterator synchronously
-        change_iter = iterator.iter_extract(config.input_data, extract_config)
-        changes = []
-        
-        # Collect changes
-        for change in change_iter:
-            if change:
-                # Resolve file path relative to project path
-                file_path = change.get('file_path', '')
-                if not file_path.startswith(str(project_path)):
-                    relative_path = file_path.replace('tests/test_projects/project1/', '')
-                    change['file_path'] = str(project_path / relative_path)
-                changes.append(change)
-        
-        print_section("FOUND CHANGES", changes)
-        
-        if not changes:
-            print("No changes to process")
-            return
-            
-        # Process changes
-        print_section("APPLYING CHANGES", "")
-        
-        for i, change in enumerate(changes, 1):
-            print(f"\nChange {i}:")
-            print("-" * 40)
-            print(json.dumps(change, indent=2))
-            
-        result = coder.process({"changes": changes})
-        print_section("RESULTS", result.data)
+        # Process changes through the agent
+        result = coder.process(change_request)
+        handle_agent_response(result)
             
     except Exception as e:
         logger.error("processing_failed", error=str(e))
         raise
+
+def handle_agent_response(result: AgentResponse) -> None:
+    """Handle the agent's response"""
+    if result.success:
+        print_section("RESULTS", result.data)
+        
+        # Show detailed changes if available
+        if 'changes' in result.data:
+            for i, change in enumerate(result.data['changes'], 1):
+                print(f"\nChange {i}:")
+                print("-" * 40)
+                print(json.dumps(change, indent=2))
+    else:
+        print_section("ERROR", result.error)
 
 def print_section(title: str, content: Any) -> None:
     """Print a section with clear formatting"""
@@ -146,7 +135,7 @@ def load_config(config_path: str) -> CoderConfig:
 def main() -> None:
     """Main entry point"""
     parser = argparse.ArgumentParser(
-        description="Process code changes using semantic coder"
+        description="Process code changes using the Coder agent"
     )
     parser.add_argument(
         "config", 

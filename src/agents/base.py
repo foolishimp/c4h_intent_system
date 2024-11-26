@@ -1,14 +1,14 @@
 """
-Base agent implementation with improved response handling and logging.
+Base agent implementation supporting multiple LLM providers.
 Path: src/agents/base.py
 """
 
 from abc import ABC, abstractmethod
 import structlog
 from dataclasses import dataclass
-from litellm import acompletion
+from litellm import completion
 import json
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 from datetime import datetime
 from enum import Enum
 import os
@@ -31,34 +31,66 @@ class AgentResponse:
 class BaseAgent(ABC):
     """Base agent using LiteLLM"""
     
+class BaseAgent(ABC):
     def __init__(self, 
                  provider: LLMProvider,
-                 model: Optional[str] = None,
+                 model: str,  # Now required
                  temperature: float = 0,
                  max_retries: int = 3,
                  config: Optional[Dict[str, Any]] = None):
         """Initialize agent with provider configuration"""
         self.provider = provider
-        self.model = model
+        self.model = model  # No default model logic here
         self.temperature = temperature
         self.max_retries = max_retries
         
-        # Validate config
-        if not config:
-            raise ValueError("Provider configuration required - config is None")
-        if 'providers' not in config:
-            raise ValueError("Provider configuration required - no providers section")
+        # Only validate provider config exists
+        if not config or 'providers' not in config:
+            raise ValueError("Provider configuration required")
             
-        self.config = config
         provider_config = config.get('providers', {}).get(provider.value)
         if not provider_config:
             raise ValueError(f"Configuration missing for provider: {provider.value}")
         
-        # Initialize logger
-        self.logger = structlog.get_logger(
-            agent=self._get_agent_name(),
-            provider=provider.value
+        self.config = config
+
+    def _get_provider_model(self, model: Optional[str] = None) -> str:
+        """Get appropriate model name from config or provided model"""
+        if model:
+            return model
+            
+        # Get from config
+        llm_config = self.config.get('llm_config', {})
+        
+        # First check if there's a specific agent model configured
+        agent_name = self._get_agent_name()
+        agent_config = llm_config.get('agents', {}).get(agent_name, {})
+        if agent_config.get('model'):
+            return agent_config['model']
+        
+        # Fall back to default model for the provider
+        if self.provider.value == llm_config.get('default_provider'):
+            return llm_config.get('default_model')
+        
+        # If no specific model found, raise error
+        raise ValueError(
+            f"No model specified for provider {self.provider.value} "
+            f"and agent {agent_name}. Please specify in config."
         )
+
+    def _format_messages(self, user_content: str) -> List[Dict[str, str]]:
+        """Format messages based on provider requirements"""
+        system_msg = self._get_system_message()
+        
+        if self.provider == LLMProvider.GEMINI:
+            # Gemini doesn't support system messages directly
+            combined = f"{system_msg}\n\nUser request: {user_content}"
+            return [{"role": "user", "content": combined}]
+        else:
+            return [
+                {"role": "system", "content": system_msg},
+                {"role": "user", "content": user_content}
+            ]
 
     @abstractmethod
     def _get_system_message(self) -> str:
@@ -97,7 +129,7 @@ class BaseAgent(ABC):
             error=error
         )
 
-    async def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
+    def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
         """Process context with LLM"""
         if not isinstance(context, dict):
             return self._create_standard_response(
@@ -107,6 +139,13 @@ class BaseAgent(ABC):
             )
 
         provider_config = self.config['providers'][self.provider.value]
+        api_key = os.getenv(provider_config["env_var"])
+        if not api_key:
+            return self._create_standard_response(
+                False, 
+                {},
+                f"API key not found in environment: {provider_config['env_var']}"
+            )
         
         # Log the request
         logger.debug("agent.request",
@@ -127,15 +166,12 @@ class BaseAgent(ABC):
                            system_message=self._get_system_message(),
                            user_message=formatted_request)
                 
-                response = await acompletion(
-                    model=self.model,
-                    messages=[
-                        {"role": "system", "content": self._get_system_message()},
-                        {"role": "user", "content": formatted_request}
-                    ],
+                response = completion(
+                    model=self._get_provider_model(self.model),
+                    messages=self._format_messages(formatted_request),
                     temperature=self.temperature,
                     api_base=provider_config["api_base"],
-                    api_key=os.getenv(provider_config["env_var"])
+                    api_key=api_key
                 )
 
                 if response and response.choices:
@@ -144,7 +180,7 @@ class BaseAgent(ABC):
                                    provider=self.provider.value,
                                    content_length=len(content))
                                    
-                    # Log full response content for debugging
+                    # Log full response for debugging
                     logger.debug("agent.llm_response",
                                content_preview=content[:200],
                                content_type=type(content).__name__)
