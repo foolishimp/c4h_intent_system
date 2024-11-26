@@ -19,12 +19,9 @@ class DiscoveryDisplay(BaseDisplay):
     def display_data(self, data: Dict[str, Any]) -> None:
         """Display all discovery data"""
         try:
-            # Extract displayable content
-            content = self.extract_display_data(data)
-            
-            # Show files summary
+            # Show files summary if available
             self.console.print("\n=== Discovery Summary ===")
-            if files := content.get('files', {}):
+            if files := data.get('files', {}):
                 table = Table(title="Discovered Files")
                 table.add_column("File Path", style="cyan")
                 table.add_column("Status", style="green")
@@ -35,9 +32,10 @@ class DiscoveryDisplay(BaseDisplay):
             else:
                 self.console.print("[yellow]No files discovered[/]")
 
-            # Show raw output if available
-            self.console.print("\n=== File Contents ===")
-            if raw_output := content.get('raw_output'):
+            # Always show raw output
+            raw_output = data.get('raw_output', '')
+            if raw_output:
+                self.console.print("\n=== File Contents ===")
                 self.console.print(Panel(
                     str(raw_output),
                     title="Raw Discovery Output",
@@ -45,7 +43,7 @@ class DiscoveryDisplay(BaseDisplay):
                 ))
             else:
                 logger.warning("discovery.missing_raw_output")
-                self.console.print("[red]No file contents found in discovery data[/]")
+                self.console.print("[yellow]No file contents available[/]")
 
         except Exception as e:
             logger.error("discovery_display.error", error=str(e))

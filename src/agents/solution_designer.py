@@ -72,19 +72,41 @@ class SolutionDesigner(BaseAgent):
     async def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
         """Process solution design request"""
         try:
+            # Log incoming context
+            logger.info("solution_design.started", 
+                       has_context=bool(context),
+                       intent=context.get('intent', {}).get('description') if context else None)
+            
             # Check for discovery output
             discovery_data = context.get('discovery_data', {})
             raw_output = discovery_data.get('raw_output')
             
+            logger.debug("solution_design.discovery_data",
+                        has_raw_output=bool(raw_output),
+                        discovery_data_keys=list(discovery_data.keys()) if discovery_data else None)
+            
             if not raw_output:
+                logger.error("solution_design.missing_discovery")
                 return self._create_standard_response(
                     False,
                     {},
                     "Missing discovery output data - cannot analyze code"
                 )
 
-            # Simply pass through to LLM and return response
-            return await super().process(context)
+            # Pass through to LLM
+            response = await super().process(context)
+            
+            # Log response for debugging
+            logger.info("solution_design.completed",
+                       success=response.success,
+                       has_data=bool(response.data),
+                       error=response.error)
+            
+            logger.debug("solution_design.response_content",
+                        data_keys=list(response.data.keys()) if response.data else None,
+                        response_preview=str(response.data.get('response', ''))[:200] if response.data else None)
+
+            return response
 
         except Exception as e:
             logger.error("solution_design.failed", error=str(e))

@@ -83,7 +83,8 @@ class WorkflowState:
         try:
             # Create standard state data structure
             state_data = {
-                "raw_output": result.data,  # Store complete response data
+                "raw_output": result.data.get("raw_output", ""),  # Get raw_output from data dict
+                "files": result.data.get("files", {}),  # Include files mapping
                 "timestamp": datetime.utcnow().isoformat(),
                 "status": "completed" if result.success else "failed",
                 "error": result.error
