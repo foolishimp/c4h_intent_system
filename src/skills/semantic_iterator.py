@@ -1,17 +1,17 @@
 """
-Enhanced semantic iterator with proper state access.
+Enhanced semantic iterator with fast and slow extraction modes.
 Path: src/skills/semantic_iterator.py
 """
 
 from typing import List, Dict, Any, Optional, Iterator, Union, Tuple
-from enum import Enum
 import structlog
 import json
 import asyncio
 from dataclasses import dataclass
-from src.skills.semantic_extract import SemanticExtract, ExtractResult
-from src.skills.shared.types import ExtractConfig
-from src.agents.base import LLMProvider
+from enum import Enum
+from .shared.types import ExtractConfig, ExtractionState
+from .semantic_extract import SemanticExtract
+from src.agents.base import BaseAgent, LLMProvider, AgentResponse, LLMConfigError
 
 logger = structlog.get_logger()
 
@@ -39,6 +39,7 @@ class ItemIterator:
     def __init__(self, state: ExtractionState):
         self._state = state
         self._loop = None
+        self._peek_cache = None
         logger.debug("iterator.initialized",
                     mode=state.current_mode,
                     items_count=len(state.items),
@@ -53,22 +54,63 @@ class ItemIterator:
             suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')
         return f"{n}{suffix}"
 
-    @property
-    def state(self) -> ExtractionState:
-        """Access to iterator state"""
-        return self._state
-
-    def get_state(self) -> ExtractionState:
-        """Get current extraction state"""
-        return self._state
-
     def _ensure_loop(self):
-        """Ensure we have an event loop, create if needed"""
+        """Ensure we have an event loop"""
         try:
             self._loop = asyncio.get_event_loop()
         except RuntimeError:
             self._loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self._loop)
+
+    @property
+    def state(self) -> ExtractionState:
+        """Access to iterator state"""
+        return self._state
+
+    def peek(self) -> Optional[Any]:
+        """Look at next item without advancing"""
+        if self._state.current_mode == ExtractionMode.FAST:
+            if not self._has_next_fast():
+                return None
+            return self._state.items[self._state.position]
+        else:
+            if not self._peek_cache:
+                try:
+                    self._ensure_loop()
+                    self._peek_cache = self._loop.run_until_complete(self._get_next_slow())
+                except StopAsyncIteration:
+                    return None
+            return self._peek_cache
+
+    def back(self) -> Optional[Any]:
+        """Move back one item if possible"""
+        if self._state.position > 0:
+            self._state.position -= 1
+            if self._state.current_mode == ExtractionMode.FAST:
+                return self._state.items[self._state.position]
+            # For slow mode, we'd need to re-extract
+            return None
+        return None
+
+    def reset(self) -> None:
+        """Reset iterator to beginning"""
+        self._state.position = 0
+        self._peek_cache = None
+
+    def skip(self, count: int) -> None:
+        """Skip forward by count items"""
+        if self._state.current_mode == ExtractionMode.FAST:
+            self._state.position = min(
+                self._state.position + count,
+                len(self._state.items)
+            )
+        else:
+            # For slow mode, we need to advance carefully
+            for _ in range(count):
+                try:
+                    next(self)
+                except StopIteration:
+                    break
 
     def __iter__(self):
         return self
@@ -90,28 +132,17 @@ class ItemIterator:
                 try:
                     return self._loop.run_until_complete(self._get_next_slow())
                 except StopAsyncIteration as e:
-                    if str(e) == "Completed normal iteration":
-                        logger.info("iteration.completed",
-                                  mode=self._state.current_mode,
-                                  total_items=self._state.position)
-                    else:
-                        logger.warning("iteration.stopped",
-                                     reason=str(e),
-                                     mode=self._state.current_mode,
-                                     items_processed=self._state.position)
+                    logger.info("slow_extract.completed",
+                              position=self._state.position)
                     raise StopIteration()
                 
         except Exception as e:
-            if isinstance(e, StopIteration):
-                # Clean completion, just re-raise
-                raise
             logger.error("iterator.error",
                         error=str(e),
-                        error_type=type(e).__name__,
                         mode=self._state.current_mode,
                         position=self._state.position)
             raise StopIteration()
-    
+
     def _has_next_fast(self) -> bool:
         """Check for next item in fast mode"""
         return (bool(self._state.items) and 
@@ -123,27 +154,21 @@ class ItemIterator:
         try:
             ordinal = self._generate_ordinal(self._state.position + 1)
             
-            nth_prompt = f"""Extract the {ordinal} item from the content.
-
-Original instruction for reference:
-{self._state.config.instruction}
-
-Important:
-1. Return ONLY the {ordinal} item that matches the format
-2. Use EXACTLY the same JSON structure as shown in the original instruction
-3. If no {ordinal} item exists, return exactly "NO_MORE_ITEMS"
-4. Do not include any explanations or additional text
-
-Content to analyze:
-{self._state.content}"""
+            # Get slow extraction prompt from config
+            prompt = self._state.extractor._get_prompt('slow_extract').format(
+                ordinal=ordinal,
+                instruction=self._state.config.instruction,
+                format=self._state.config.format,
+                content=self._state.content
+            )
             
             logger.info("slow_extract.requesting_item", 
-                    position=self._state.position + 1,
-                    ordinal=ordinal)
+                       position=self._state.position + 1,
+                       ordinal=ordinal)
             
             result = await self._state.extractor.extract(
                 content=self._state.content,
-                prompt=nth_prompt,
+                prompt=prompt,
                 format_hint=self._state.config.format
             )
             
@@ -154,52 +179,90 @@ Content to analyze:
             self._state.raw_response = result.raw_response
             
             response_text = str(result.value).upper().replace(" ", "")
-            if "NO_MORE_ITEMS" in response_text or "NOMOREITEM" in response_text:
+            if "NO_MORE_ITEMS" in response_text:
                 logger.info("slow_extract.completed", 
-                    position=self._state.position,
-                    total_items_processed=self._state.position)
-                # Use a specific exception for iteration completion
-                raise StopAsyncIteration("Completed normal iteration")
+                          position=self._state.position)
+                raise StopAsyncIteration
                 
+            # Validate extracted item
+            validate_prompt = self._state.extractor._get_prompt('slow_validate').format(
+                format=self._state.config.format
+            )
+            
+            validation = await self._state.extractor.extract(
+                content=result.value,
+                prompt=validate_prompt,
+                format_hint=self._state.config.format
+            )
+            
+            if not validation.success:
+                logger.error("slow_extract.validation_failed",
+                           error=validation.error)
+                raise StopAsyncIteration
+            
+            # Parse and return validated item
             try:
-                if isinstance(result.value, dict):
-                    parsed_item = result.value
+                if isinstance(validation.value, dict):
+                    item = validation.value
                 else:
-                    response_str = str(result.value).strip()
-                    if response_str.startswith('[') and response_str.endswith(']'):
-                        parsed_item = json.loads(response_str)[0]
-                    else:
-                        parsed_item = json.loads(response_str)
+                    item = json.loads(validation.value)
                 
                 self._state.position += 1
-                return parsed_item
+                
+                # Periodically summarize progress
+                if self._state.position % 5 == 0:
+                    await self._summarize_progress()
+                    
+                return item
                 
             except json.JSONDecodeError as e:
-                logger.error("slow_extract.json_parse_error", 
-                            error=str(e),
-                            content=result.value if 'result' in locals() else None)
-                raise StopAsyncIteration(f"JSON parse error: {str(e)}")
+                logger.error("slow_extract.parse_error", 
+                           error=str(e))
+                raise StopAsyncIteration
                 
         except Exception as e:
-            if isinstance(e, StopAsyncIteration):
-                # Re-raise completion signal with context
-                raise
-            logger.error("slow_extract.unexpected_error", 
-                        error=str(e),
-                        error_type=type(e).__name__)
-            raise StopAsyncIteration(f"Extraction error: {str(e)}")
-        
-class SemanticIterator:
+            logger.error("slow_extract.error", error=str(e))
+            raise StopAsyncIteration
+
+    async def _summarize_progress(self):
+        """Summarize extraction progress"""
+        try:
+            prompt = self._state.extractor._get_prompt('slow_summarize').format(
+                count=self._state.position,
+                position=self._state.position
+            )
+            
+            result = await self._state.extractor.extract(
+                content=self._state.content,
+                prompt=prompt,
+                format_hint="text"
+            )
+            
+            if result.success:
+                logger.info("extraction.progress", 
+                          summary=result.value)
+                          
+        except Exception as e:
+            logger.error("summarize.failed", error=str(e))
+
+class SemanticIterator(BaseAgent):
     """Iterator factory for semantic extraction"""
     
     def __init__(self, 
-                 provider: LLMProvider, 
+                 provider: LLMProvider,
                  model: str,
                  temperature: float = 0,
                  config: Optional[Dict[str, Any]] = None,
                  extraction_modes: Optional[List[str]] = None,
-                 allow_fallback: bool = False):
-        """Initialize iterator with configuration and modes."""
+                 allow_fallback: bool = True):
+        """Initialize iterator with provider configuration"""
+        super().__init__(
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            config=config
+        )
+        
         self.extractor = SemanticExtract(
             provider=provider,
             model=model,
@@ -207,48 +270,24 @@ class SemanticIterator:
             config=config
         )
         
-        self.modes = []
+        self.modes = [ExtractionMode(m) for m in (extraction_modes or ["fast", "slow"])]
         self.allow_fallback = allow_fallback
-        
-        if extraction_modes:
-            for mode in extraction_modes:
-                try:
-                    self.modes.append(ExtractionMode(mode))
-                except ValueError:
-                    logger.warning(f"Invalid extraction mode: {mode}")
-                    continue
-                    
-        if not self.modes:
-            self.modes = [ExtractionMode.FAST]
-            
-        logger.info("iterator.configured",
-                   modes=[m.value for m in self.modes],
-                   allow_fallback=allow_fallback)
 
-    async def _extract_fast(self, content: Any) -> Tuple[Optional[List[Any]], str]:
+    def _get_agent_name(self) -> str:
+        return "semantic_iterator"
+
+    async def _extract_fast(self, content: Any, config: ExtractConfig) -> Tuple[Optional[List[Any]], str]:
         """Fast extraction attempting direct JSON parsing then single LLM call."""
-        if not content:
-            logger.debug("fast_extract.empty_content")
-            return None, ""
-
         try:
-            fast_prompt = f"""Extract ALL items at once as a complete list.
-
-Original instruction:
-{self.extract_config.instruction}
-
-Important:
-1. Return items in a single JSON array
-2. Use exactly the same structure for each item
-3. Include ALL matching items
-4. Do not include any explanations or text before/after the JSON array
-
-Content to analyze:
-{content}"""
+            prompt = self._get_prompt('fast_extract').format(
+                instruction=config.instruction,
+                format=config.format,
+                content=content
+            )
 
             result = await self.extractor.extract(
                 content=content,
-                prompt=fast_prompt,
+                prompt=prompt,
                 format_hint="json"
             )
             
@@ -259,10 +298,9 @@ Content to analyze:
                     parsed = json.loads(result.value)
                     if isinstance(parsed, list):
                         return parsed, result.raw_response
-                except (json.JSONDecodeError, TypeError):
+                except json.JSONDecodeError:
                     pass
 
-            logger.debug("fast_extract.no_items_found")
             return None, result.raw_response if result else ""
             
         except Exception as e:
@@ -270,41 +308,27 @@ Content to analyze:
             return None, ""
 
     def iter_extract(self, content: Any, config: ExtractConfig) -> ItemIterator:
-        """Create iterator for extracting items.
-        
-        Args:
-            content: Content to extract from
-            config: Extraction configuration
-            
-        Returns:
-            ItemIterator instance
-        """
-        self.extract_config = config
-        
-        state = ExtractionState(
-            current_mode=self.modes[0],
-            attempted_modes=[],
-            items=[],
-            position=0,
-            raw_response="",
-            content=content,
-            config=config,
-            extractor=self.extractor
-        )
-        
+        """Create iterator for extracting items"""
         try:
+            self._ensure_loop()
+            
+            state = ExtractionState(
+                current_mode=self.modes[0],
+                attempted_modes=[],
+                items=[],
+                position=0,
+                content=content,
+                config=config,
+                extractor=self.extractor
+            )
+            
             if ExtractionMode.FAST in self.modes:
                 logger.info("extraction.attempt", mode="fast")
                 state.attempted_modes.append(ExtractionMode.FAST)
                 
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    items, raw_response = loop.run_until_complete(
-                        self._extract_fast(content)
-                    )
-                finally:
-                    loop.close()
+                items, raw_response = self._loop.run_until_complete(
+                    self._extract_fast(content, config)
+                )
                 
                 state.raw_response = raw_response
                 
@@ -314,8 +338,7 @@ Content to analyze:
                               items_found=len(items))
                     return ItemIterator(state)
                     
-                if (self.allow_fallback and 
-                    ExtractionMode.SLOW in self.modes):
+                if self.allow_fallback and ExtractionMode.SLOW in self.modes:
                     logger.info("extraction.fallback_to_slow")
                     state.current_mode = ExtractionMode.SLOW
                     state.attempted_modes.append(ExtractionMode.SLOW)
@@ -327,13 +350,35 @@ Content to analyze:
                 state.attempted_modes.append(ExtractionMode.SLOW)
                 return ItemIterator(state)
 
-            logger.info("extraction.complete",
-                       mode=state.current_mode.value,
-                       attempted_modes=[m.value for m in state.attempted_modes],
-                       items_found=len(state.items))
-                    
-        except Exception as e:
-            logger.error("extraction.failed", error=str(e))
-            state.error = str(e)
+            return ItemIterator(state)
             
-        return ItemIterator(state)
+        except Exception as e:
+            logger.error("iterator.creation_failed", error=str(e))
+            return ItemIterator(ExtractionState(
+                current_mode=ExtractionMode.FAST,
+                attempted_modes=[],
+                items=[],
+                position=0
+            ))
+        
+    def get_progress(self) -> Dict[str, Any]:
+        """Get current extraction progress"""
+        return {
+            "position": self._state.position,
+            "mode": self._state.current_mode.value,
+            "attempted_modes": [m.value for m in self._state.attempted_modes],
+            "has_error": bool(self._state.error),
+            "error": self._state.error
+        }
+
+    def get_state(self) -> ExtractionState:
+        """Access current state"""
+        return self._state
+
+    def set_mode(self, mode: Union[str, ExtractionMode]) -> None:
+        """Explicitly set extraction mode"""
+        if isinstance(mode, str):
+            mode = ExtractionMode(mode)
+        self._state.current_mode = mode
+        if mode not in self._state.attempted_modes:
+            self._state.attempted_modes.append(mode)

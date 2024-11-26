@@ -58,20 +58,19 @@ def process_items(config: IteratorConfig, mode: ExtractionMode) -> None:
         print_section("EXTRACTION PROMPT", config.instruction)
         
         # Initialize iterator
+        """Process items using semantic iterator"""
         iterator = SemanticIterator(
-            [{
-                'provider': config.provider,
-                'model': config.model,
-                'temperature': config.temperature,
-                'config': {
-                    'providers': {
-                        config.provider: {
-                            'api_base': config.api_base,
-                            'env_var': config.env_var
-                        }
+            provider=config.provider,
+            model=config.model,
+            temperature=config.temperature,
+            config={
+                'providers': {
+                    config.provider: {
+                        'api_base': config.api_base,
+                        'env_var': config.env_var
                     }
                 }
-            }],
+            },
             extraction_modes=[mode.value]
         )
         
