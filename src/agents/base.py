@@ -12,12 +12,15 @@ from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
 from enum import Enum
 import os
-import asyncio
 
 logger = structlog.get_logger()
 
 class LLMProviderError(Exception):
     """Custom exception for LLM provider configuration and runtime errors"""
+    pass
+
+class LLMConfigError(Exception):
+    """Custom exception for LLM configuration errors"""
     pass
 
 class LLMProvider(str, Enum):
@@ -55,7 +58,6 @@ class BaseAgent(ABC):
         # Load agent-specific configuration
         self.agent_config = self._load_agent_config()
         
-        # Set up structured logging
         self.logger = structlog.get_logger().bind(
             agent=self._get_agent_name(),
             provider=provider.value,
@@ -65,7 +67,7 @@ class BaseAgent(ABC):
         self.logger.info("agent.initialized",
                         temperature=temperature,
                         max_retries=max_retries)
-        
+
     def _load_agent_config(self) -> Dict[str, Any]:
         """Load agent-specific configuration including prompts"""
         agent_name = self._get_agent_name()
@@ -81,17 +83,6 @@ class BaseAgent(ABC):
             raise LLMConfigError(f"No system prompt configured for agent: {agent_name}")
             
         return agent_config
-
-    def _get_prompt(self, prompt_type: str) -> str:
-        """Get prompt by type from configuration"""
-        prompts = self.agent_config.get('prompts', {})
-        if prompt_type not in prompts:
-            raise LLMConfigError(f"Prompt type '{prompt_type}' not found for agent: {self._get_agent_name()}")
-        return prompts[prompt_type]
-
-    def _get_system_message(self) -> str:
-        """Get system message from configuration"""
-        return self._get_prompt('system')
 
     def _validate_init_params(self, provider: LLMProvider, model: str, config: Dict[str, Any]) -> None:
         """Centralized parameter validation"""
@@ -124,8 +115,30 @@ class BaseAgent(ABC):
         if not os.getenv(env_var):
             raise LLMProviderError(f"Environment variable {env_var} not set")
 
-    async def _handle_llm_request(self, request: Dict[str, Any]) -> AgentResponse:
-        """Centralized LLM request handling"""
+    def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
+        """Main synchronous processing with retries and error handling"""
+        if not isinstance(context, dict):
+            return AgentResponse(
+                success=False,
+                data={},
+                error="Context must be a dictionary"
+            )
+
+        for attempt in range(self.max_retries):
+            try:
+                self.logger.info("request.attempt", attempt=attempt + 1)
+                return self._handle_llm_request(context)
+            except Exception as e:
+                if attempt == self.max_retries - 1:
+                    self.logger.error("request.failed", error=str(e))
+                    return AgentResponse(
+                        success=False,
+                        data={},
+                        error=f"Failed after {self.max_retries} attempts: {str(e)}"
+                    )
+
+    def _handle_llm_request(self, request: Dict[str, Any]) -> AgentResponse:
+        """Centralized synchronous LLM request handling"""
         try:
             provider_config = self.config['providers'][self.provider.value]
             api_key = os.getenv(provider_config["env_var"])
@@ -176,28 +189,6 @@ class BaseAgent(ABC):
             "timestamp": datetime.utcnow().isoformat()
         }
 
-    async def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
-        """Main processing with retries and error handling"""
-        if not isinstance(context, dict):
-            return AgentResponse(
-                success=False,
-                data={},
-                error="Context must be a dictionary"
-            )
-
-        for attempt in range(self.max_retries):
-            try:
-                self.logger.info("request.attempt", attempt=attempt + 1)
-                return await self._handle_llm_request(context)
-            except Exception as e:
-                if attempt == self.max_retries - 1:
-                    self.logger.error("request.failed", error=str(e))
-                    return AgentResponse(
-                        success=False,
-                        data={},
-                        error=f"Failed after {self.max_retries} attempts: {str(e)}"
-                    )
-
     def _format_messages(self, user_content: str) -> List[Dict[str, str]]:
         """Format messages based on provider"""
         system_msg = self._get_system_message()
@@ -215,11 +206,17 @@ class BaseAgent(ABC):
         """Format request message"""
         return str(context)
 
-    @abstractmethod
+    def _get_prompt(self, prompt_type: str) -> str:
+        """Get prompt by type from configuration"""
+        prompts = self.agent_config.get('prompts', {})
+        if prompt_type not in prompts:
+            raise LLMConfigError(f"Prompt type '{prompt_type}' not found for agent: {self._get_agent_name()}")
+        return prompts[prompt_type]
+
     def _get_system_message(self) -> str:
-        """Get system message for this agent type"""
-        raise NotImplementedError()
-        
+        """Get system message from configuration"""
+        return self._get_prompt('system')
+
     @abstractmethod
     def _get_agent_name(self) -> str:
         """Get name for this agent type"""

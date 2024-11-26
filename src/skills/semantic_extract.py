@@ -1,5 +1,5 @@
 """
-Enhanced semantic extraction with proper response preservation.
+Enhanced semantic extraction following agent design principles.
 Path: src/skills/semantic_extract.py
 """
 
@@ -21,17 +21,35 @@ class ExtractResult:
 class SemanticExtract(BaseAgent):
     """Base extractor that follows given instructions without imposing structure"""
     
+    def __init__(self, 
+                provider: LLMProvider,
+                model: str,
+                temperature: float = 0,
+                config: Optional[Dict[str, Any]] = None):
+        """Initialize with standard agent configuration"""
+        super().__init__(
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            config=config
+        )
+
     def _get_agent_name(self) -> str:
         return "semantic_extract"
 
-    def _get_system_message(self) -> str:
-        return """You are a precise information extractor.
-        When given content and instructions:
-        1. Follow the instructions exactly as given
-        2. Extract ONLY the specific information requested
-        3. Return in exactly the format specified
-        4. Do not add explanations or extra content
-        5. Do not modify or enhance the instructions"""
+    def _format_request(self, context: Dict[str, Any]) -> str:
+        """Format extraction request with proper prompting"""
+        content = context.get('content', '')
+        prompt = context.get('prompt', '')
+        format_hint = context.get('format_hint', 'default')
+        
+        return f"""Content to analyze:
+{content}
+
+Extraction instructions:
+{prompt}
+
+Return format: {format_hint}"""
 
     async def extract(self,
                      content: Any,
@@ -57,18 +75,10 @@ class SemanticExtract(BaseAgent):
                     error=response.error
                 )
 
-            # Important: Get actual LLM response content
-            raw_response = response.data.get("raw_content", "")
-            
-            # Try to parse structured response if available
-            value = response.data.get("response")
-            if not value and raw_response:
-                value = raw_response
-
             return ExtractResult(
                 success=True,
-                value=value,
-                raw_response=raw_response  # Preserve actual LLM response
+                value=response.data.get("response"),
+                raw_response=response.data.get("raw_content", "")
             )
             
         except Exception as e:
