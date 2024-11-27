@@ -68,25 +68,31 @@ llm_config:
           5. Do not modify or enhance the instructions
 
     semantic_iterator:
-      provider: "openai"
-      model: "gpt-4o-2024-08-06"
+      provider: "anthropic"  # Changed from OpenAI to match current provider
+      model: "claude-3-opus-20240229"  # Updated to current model
       temperature: 0
       prompts:
         system: |
           You are an expert item extractor.
           Your task is to identify and extract items from content following exact instructions.
-          Return only the extracted items in the specified format.
-        
+          Return only the extracted items in the requested format.
+
         fast_extract: |
-          Extract ALL items at once as a complete list.
+          Extract ALL items at once as a complete JSON array.
+          
           Instructions: {instruction}
           Required format: {format}
           
-          Important rules:
-          1. Return items in a single {format} array
-          2. Use exactly the same structure for each item
-          3. Include ALL matching items
-          4. Do not include any explanations
+          Example (for function extraction):
+          [
+            {{
+              "name": "example_function",
+              "params": ["param1", "param2"],
+              "return_type": "str",
+              "docstring": "Example docstring",
+              "code": "def example_function()..."
+            }}
+          ]
           
           Content to analyze:
           {content}
@@ -96,11 +102,14 @@ llm_config:
           Instructions: {instruction}
           Required format: {format}
           
-          Rules:
-          1. Return ONLY the {ordinal} item
-          2. Use EXACTLY the specified format
-          3. Return "NO_MORE_ITEMS" if none found
-          4. No explanations or extra text
+          Example (for function extraction):
+          {{
+            "name": "example_function",
+            "params": ["param1", "param2"],
+            "return_type": "str",
+            "docstring": "Example docstring",
+            "code": "def example_function()..."
+          }}
           
           Content to analyze:
           {content}
