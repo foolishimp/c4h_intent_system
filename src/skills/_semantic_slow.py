@@ -1,7 +1,4 @@
-"""
-Slow extraction mode implementation.
-Path: src/skills/_semantic_slow.py
-"""
+# src/skills/_semantic_slow.py
 
 from typing import Dict, Any, Optional
 import structlog
@@ -20,12 +17,13 @@ class SlowItemIterator:
         self._position = 0
         self._exhausted = False
         self._has_items = False
+        self._max_attempts = 10  # Add safety limit
 
     def __aiter__(self):
         return self
 
     async def __anext__(self):
-        if self._exhausted:
+        if self._exhausted or self._position >= self._max_attempts:
             raise StopAsyncIteration
 
         try:
@@ -35,7 +33,7 @@ class SlowItemIterator:
                 self._position
             )
 
-            if result.get('completed', False):
+            if result.get('completed', False) or 'NO_MORE_ITEMS' in str(result.get('response', '')):
                 self._exhausted = True
                 raise StopAsyncIteration
 
@@ -44,7 +42,7 @@ class SlowItemIterator:
             return result.get('item')
 
         except Exception as e:
-            logger.error("slow_iteration.failed", error=str(e))
+            logger.error("slow_iteration.failed", error=str(e), position=self._position)
             self._exhausted = True
             raise StopAsyncIteration
 
@@ -58,20 +56,20 @@ class SlowExtractor(BaseAgent):
         return "semantic_slow_extractor"
 
     def _format_request(self, context: Dict[str, Any]) -> str:
-        """Format extraction request for slow mode"""
+        """Format extraction request for slow mode using config template"""
+        if not context.get('config'):
+            raise ValueError("Extract config required")
+
+        extract_template = self._get_prompt('extract')
         position = context.get('position', 0)
-        return f"""Extract the {self._get_ordinal(position + 1)} item matching these requirements:
-
-Content to analyze:
-{context.get('content', '')}
-
-Extraction instructions:
-{context.get('config').instruction}
-
-Return format:
-{context.get('config').format}
-
-If no more items exist, respond with exactly: NO_MORE_ITEMS"""
+        
+        # Add explicit completion marker to prompt
+        return extract_template.format(
+            ordinal=self._get_ordinal(position + 1),
+            content=context.get('content', ''),
+            instruction=f"{context['config'].instruction}\nIf no more items exist, respond exactly with 'NO_MORE_ITEMS'",
+            format=context['config'].format
+        )
 
     @staticmethod
     def _get_ordinal(n: int) -> str:
@@ -89,10 +87,14 @@ If no more items exist, respond with exactly: NO_MORE_ITEMS"""
             })
 
             if not result.success:
+                logger.warning("slow_extraction.failed", error=result.error, position=position)
                 return {'completed': True}
 
             response_content = result.data.get('response', '')
+            
+            # Check for completion marker
             if 'NO_MORE_ITEMS' in str(response_content):
+                logger.info("slow_extraction.completed", position=position)
                 return {'completed': True}
 
             try:
@@ -101,7 +103,8 @@ If no more items exist, respond with exactly: NO_MORE_ITEMS"""
                 else:
                     item = response_content
             except json.JSONDecodeError:
-                item = response_content
+                logger.error("slow_extraction.parse_error", position=position)
+                return {'completed': True}
 
             return {
                 'completed': False,
@@ -109,5 +112,5 @@ If no more items exist, respond with exactly: NO_MORE_ITEMS"""
             }
 
         except Exception as e:
-            logger.error("slow_extraction.failed", error=str(e))
+            logger.error("slow_extraction.failed", error=str(e), position=position)
             return {'completed': True}

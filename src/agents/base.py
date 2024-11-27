@@ -86,6 +86,13 @@ class BaseAgent(ABC):
 
     def _validate_init_params(self, provider: LLMProvider, model: str, config: Dict[str, Any]) -> None:
         """Centralized parameter validation"""
+        logger.debug("validate_init_params.input",
+                    provider=str(provider) if provider else None,
+                    model=model,
+                    config_type=type(config).__name__,
+                    config_is_none=config is None,
+                    config_keys=list(config.keys()) if isinstance(config, dict) else None)
+
         if not isinstance(provider, LLMProvider):
             raise LLMProviderError(f"Invalid provider type. Must be LLMProvider enum, got {type(provider)}")
         
@@ -93,11 +100,17 @@ class BaseAgent(ABC):
             raise LLMProviderError(f"Model must be specified for agent {self._get_agent_name()}")
             
         if not config or not isinstance(config, dict):
+            logger.error("invalid_config", 
+                        config_value=str(config)[:100], # Truncate long values
+                        config_type=type(config).__name__)
             raise LLMProviderError("Valid configuration dictionary is required")
             
         if 'providers' not in config:
+            available_keys = list(config.keys()) if isinstance(config, dict) else None
+            logger.error("missing_providers_config",
+                        available_keys=available_keys)
             raise LLMProviderError("Provider configurations missing from config")
-            
+           
         provider_config = config.get('providers', {}).get(provider.value)
         if not provider_config:
             available = list(config.get('providers', {}).keys())

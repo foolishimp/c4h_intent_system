@@ -68,52 +68,84 @@ llm_config:
           5. Do not modify or enhance the instructions
 
     semantic_iterator:
-      provider: "anthropic"  # Changed from OpenAI to match current provider
-      model: "claude-3-opus-20240229"  # Updated to current model
+          provider: "anthropic"
+          model: "claude-3-opus-20240229"
+          temperature: 0
+          prompts:
+            system: |
+              You are a semantic extraction coordinator. 
+              You use fast extraction for structured content and fall back to slow extraction when needed.
+              Your task is to coordinate extraction using the right mode while maintaining result consistency.
+              Never modify the extraction instructions or format requirements from the caller.
+              Do not add any processing or validation beyond what is specifically requested.
+
+    semantic_fast_extractor:
+      provider: "anthropic" 
+      model: "claude-3-opus-20240229"
       temperature: 0
       prompts:
         system: |
-          You are an expert item extractor.
-          Your task is to identify and extract items from content following exact instructions.
-          Return only the extracted items in the requested format.
+          You are a precise bulk extraction agent.
+          Your only task is to extract multiple items at once from provided content.
+          Rules:
+          1. Follow the provided instruction and format EXACTLY
+          2. Return ONLY a JSON array - no explanations, headers, or extra text
+          3. Each item MUST match the format exactly - no structure modifications
+          4. Return an empty array [] if no items match
+          5. Never include system messages, status text, or item numbering
 
-        fast_extract: |
-          Extract ALL items at once as a complete JSON array.
-          
-          Instructions: {instruction}
-          Required format: {format}
-          
-          Example (for function extraction):
-          [
-            {{
-              "name": "example_function",
-              "params": ["param1", "param2"],
-              "return_type": "str",
-              "docstring": "Example docstring",
-              "code": "def example_function()..."
-            }}
-          ]
+        extract: |
+          Your task is to extract items as a JSON array.
           
           Content to analyze:
           {content}
 
-        slow_extract: |
-          Extract the {ordinal} item from the content.
-          Instructions: {instruction}
-          Required format: {format}
-          
-          Example (for function extraction):
-          {{
-            "name": "example_function",
-            "params": ["param1", "param2"],
-            "return_type": "str",
-            "docstring": "Example docstring",
-            "code": "def example_function()..."
-          }}
+          Extraction instruction:
+          {instruction}
+
+          Required format for items:
+          {format}
+
+          Remember:
+          - Return ONLY a single JSON array containing all items
+          - Match format exactly - do not modify structure
+          - No headers, numbering, or extra text
+
+    semantic_slow_extractor:
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
+      temperature: 0
+      prompts:
+        system: |
+          You are a precise sequential extraction agent.
+          Your only task is to extract one item at a time from provided content.
+          Rules:
+          1. Follow the provided instruction and format EXACTLY
+          2. Return ONLY the next single item - no explanations or headers
+          3. Each item MUST match the format exactly - no structure modifications
+          4. Return NO_MORE_ITEMS if no items remain
+          5. Never include system messages or status text
+        extract: |
+          Your task is to extract the {ordinal} unique item.
           
           Content to analyze:
           {content}
-
+          
+          Extraction instruction:
+          {instruction}
+          
+          Required format for single item:
+          {format}
+          
+          CRITICAL RULES:
+          1. Extract ONLY one item in {ordinal} position from the content
+          2. Return NO_MORE_ITEMS if no more items exist
+          3. Each item must exactly match the required format
+          4. Return only the extracted item without headers or explanations
+          5. Items must be extracted in order of appearance in the content
+          
+          If no more items exist, respond exactly with: NO_MORE_ITEMS
+    
     semantic_merge:
       provider: "anthropic"
       model: "claude-3-haiku-20240307"

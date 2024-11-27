@@ -37,17 +37,16 @@ class FastExtractor(BaseAgent):
         return "semantic_fast_extractor"
 
     def _format_request(self, context: Dict[str, Any]) -> str:
-        """Format extraction request for fast mode"""
-        return f"""Extract ALL items at once matching these requirements:
+        """Format extraction request for fast mode using config template"""
+        if not context.get('config'):
+            raise ValueError("Extract config required")
 
-Content to analyze:
-{context.get('content', '')}
-
-Extraction instructions:
-{context.get('config').instruction}
-
-Return format:
-{context.get('config').format}"""
+        extract_template = self._get_prompt('extract')
+        return extract_template.format(
+            content=context.get('content', ''),
+            instruction=context['config'].instruction,
+            format=context['config'].format
+        )
 
     async def create_iterator(self, content: Any, config: ExtractConfig) -> FastItemIterator:
         """Create iterator for fast extraction results"""
