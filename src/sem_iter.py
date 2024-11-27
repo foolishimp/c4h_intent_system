@@ -8,14 +8,14 @@ import yaml
 from pathlib import Path
 from typing import Dict, Any
 import structlog
-from enum import Enum
+import asyncio
+from dataclasses import dataclass
+
+from src.skills.semantic_iterator import SemanticIterator, ExtractorConfig, ExtractionMode
+from src.skills.shared.types import ExtractConfig
+from src.agents.base import LLMProvider
 
 logger = structlog.get_logger()
-
-class ExtractionMode(str, Enum):
-    """Available extraction modes"""
-    FAST = "fast"
-    SLOW = "slow"
 
 def print_separator(title: str) -> None:
     print("\n" + "="*80)
@@ -24,47 +24,63 @@ def print_separator(title: str) -> None:
 
 def load_configs(test_config_path: str) -> Dict[str, Any]:
     """Load and merge system and test configurations"""
-    # Load system config first
-    system_config_path = Path("config/system_config.yml")
     try:
-        with open(system_config_path) as f:
-            system_config = yaml.safe_load(f)
+        # Load test config
+        with open(test_config_path) as f:
+            test_config = yaml.safe_load(f)
+
+        # Build provider configuration
+        config = {
+            'providers': {
+                'anthropic': {
+                    'api_base': test_config.get('api_base', 'https://api.anthropic.com'),
+                    'env_var': test_config.get('env_var', 'ANTHROPIC_API_KEY'),
+                    'context_length': 200000
+                }
+            },
+            'llm_config': {
+                'default_provider': 'anthropic',
+                'default_model': test_config.get('model', 'claude-3-opus-20240229'),
+                'agents': {
+                    'semantic_iterator': {
+                        'provider': 'anthropic',
+                        'model': test_config.get('model', 'claude-3-opus-20240229'),
+                        'temperature': test_config.get('temperature', 0)
+                    },
+                    'semantic_fast_extractor': {
+                        'provider': 'anthropic',
+                        'model': test_config.get('model', 'claude-3-opus-20240229'),
+                        'temperature': test_config.get('temperature', 0)
+                    },
+                    'semantic_slow_extractor': {
+                        'provider': 'anthropic',
+                        'model': test_config.get('model', 'claude-3-opus-20240229'),
+                        'temperature': test_config.get('temperature', 0)
+                    }
+                }
+            }
+        }
+
+        # Add test inputs
+        config.update({
+            'input_data': test_config['input_data'],
+            'instruction': test_config['instruction'],
+            'format': test_config.get('format', 'json'),
+            'extractor_config': test_config.get('extractor_config', {})
+        })
+
+        return config
+
     except Exception as e:
-        logger.error("system_config.load_failed", error=str(e))
+        logger.error("config.load_failed", error=str(e))
         raise
 
-    # Load test config
-    with open(test_config_path) as f:
-        test_config = yaml.safe_load(f)
-
-    # Merge configurations
-    config = {
-        'providers': system_config['providers'],
-        'llm_config': system_config['llm_config'],
-        # Add test-specific settings
-        'provider': test_config['provider'],
-        'model': test_config['model'],
-        'temperature': test_config['temperature'],
-        'env_var': test_config['env_var'],
-        'api_base': test_config['api_base'],
-        'input_data': test_config['input_data'],
-        'instruction': test_config['instruction'],
-        'format': test_config['format']
-    }
-
-    return config
-
-def process_items(config_path: str, mode: str) -> None:
+async def process_items(config_path: str, mode: str) -> None:
     """Process items using semantic iterator"""
     try:
-        # Late import to avoid cycles
-        from src.skills.semantic_iterator import SemanticIterator
-        from src.skills.shared.types import ExtractConfig
-        from src.agents.base import LLMProvider
-
-        # Load merged configuration
+        # Load configuration
         config = load_configs(config_path)
-
+        
         # Print test setup
         print_separator("TEST CONFIGURATION")
         print(f"Config File: {config_path}")
@@ -76,32 +92,43 @@ def process_items(config_path: str, mode: str) -> None:
         print_separator("EXTRACTION PROMPT") 
         print(config["instruction"])
 
-        # Initialize iterator with full config
+        # Create extractor configuration
+        extractor_config = ExtractorConfig(
+            initial_mode=ExtractionMode(mode),
+            allow_fallback=config.get("extractor_config", {}).get("allow_fallback", True),
+            fallback_modes=[ExtractionMode(m) for m in 
+                          config.get("extractor_config", {}).get("fallback_modes", [])]
+        )
+
+        # Initialize iterator
         iterator = SemanticIterator(
-            provider=LLMProvider(config["provider"]),
-            model=config["model"],
-            temperature=config["temperature"],
-            config=config,  # Now includes both system and test config
-            extraction_modes=[mode]
+            provider=LLMProvider(config['llm_config']['default_provider']),
+            model=config['llm_config']['default_model'],
+            temperature=config['llm_config']['agents']['semantic_iterator']['temperature'],
+            config=config,
+            extractor_config=extractor_config
         )
 
         # Create extraction config
         extract_config = ExtractConfig(
             instruction=config["instruction"],
-            format=config["format"]
+            format=config.get("format", "json")
         )
 
         # Get items
         print_separator("EXTRACTED ITEMS")
-        item_iterator = iterator.iter_extract(config["input_data"], extract_config)
+        item_iterator = await iterator.iter_extract(config["input_data"], extract_config)
         
         count = 0
-        for item in item_iterator:
+        async for item in item_iterator:
             if item:
                 count += 1
                 print(f"\nItem {count}:")
                 print("-" * 40)
                 print(item)
+
+        if count == 0:
+            print("\nNo items extracted")
 
     except Exception as e:
         logger.error("process.failed", error=str(e))
@@ -125,7 +152,7 @@ def main() -> None:
     args = parser.parse_args()
     
     try:
-        process_items(args.config, args.mode)
+        asyncio.run(process_items(args.config, args.mode))
     except Exception as e:
         logger.error("execution_failed", error=str(e))
         raise
