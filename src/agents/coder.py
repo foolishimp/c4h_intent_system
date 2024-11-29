@@ -1,226 +1,156 @@
 """
-Code modification agent using semantic tools.
+Coder orchestrator for managing semantic operations on assets.
 Path: src/agents/coder.py
 """
 
+from typing import Dict, Any, List, Optional
 from pathlib import Path
-import structlog
-import shutil
-from enum import Enum
-from typing import Dict, Any, Optional, List, Union
 from dataclasses import dataclass
-from .base import BaseAgent, LLMProvider, AgentResponse
-from src.skills.semantic_iterator import SemanticIterator
+import structlog
+from src.skills.semantic_iterator import SemanticIterator, ExtractConfig
 from src.skills.semantic_merge import SemanticMerge, MergeConfig
-from src.skills.shared.types import ExtractConfig
+from src.skills.asset_manager import AssetManager, AssetChange
 
 logger = structlog.get_logger()
 
-class MergeMethod(str, Enum):
-    """Available merge strategies"""
-    INLINE = "inline"
-    SMART = "smart"
-
 @dataclass
 class ChangeResult:
-    """Result of a single file change"""
-    file_path: str
+    """Result of a single change operation"""
+    path: str
     success: bool
     backup_path: Optional[str] = None
     error: Optional[str] = None
 
 @dataclass
-class CoderConfig:
-    """Configuration for code changes"""
-    merge_method: MergeMethod = MergeMethod.SMART
-    create_backups: bool = True
-    backup_suffix: str = '.bak'
-    validate_changes: bool = True
+class CoderResult:
+    """Result of code processing"""
+    success: bool
+    changes: List[ChangeResult]
+    error: Optional[str] = None
 
-class Coder(BaseAgent):
-    """Agent responsible for safely applying code changes"""
+class Coder:
+    """Orchestrates semantic operations on code assets"""
     
-    def __init__(self,
-                 provider: LLMProvider,
-                 model: Optional[str] = None,
-                 temperature: float = 0,
-                 config: Optional[Dict[str, Any]] = None,
-                 coder_config: Optional[CoderConfig] = None):
-        """Initialize coder with semantic tools"""
-        super().__init__(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            config=config
-        )
+    def __init__(self, config: Dict[str, Any]):
+        """Initialize with configuration dictionary.
         
-        self.coder_config = coder_config or CoderConfig()
+        Args:
+            config: Configuration including:
+                - provider: LLM provider
+                - model: Model name
+                - merge_style: Merge strategy
+                - backup_enabled: Whether to create backups
+                - backup_dir: Optional backup directory
+        """
+        self.config = config
         
-        # Initialize semantic tools with same configuration
+        # Initialize skills
         self.iterator = SemanticIterator(
-            provider=provider,
-            model=model,
-            temperature=temperature,
+            provider=config['provider'],
+            model=config['model'],
             config=config
         )
         
         self.merger = SemanticMerge(
-            provider=provider,
-            model=model,
-            temperature=temperature,
+            provider=config['provider'],
+            model=config['model'],
             config=config,
             merge_config=MergeConfig(
-                style=self.coder_config.merge_method.value,
+                style=config.get('merge_style', 'smart'),
                 preserve_formatting=True
             )
         )
         
-        logger.info("coder.initialized",
-                   merge_method=self.coder_config.merge_method.value,
-                   create_backups=self.coder_config.create_backups)
-
-    def _get_agent_name(self) -> str:
-        return "coder"
-
-    async def _apply_change(self, change: Dict[str, Any]) -> ChangeResult:
-        """Apply a single code change with safety checks"""
-        file_path = Path(change.get('file_path', ''))
+        self.asset_manager = AssetManager(
+            backup_enabled=config.get('backup_enabled', True),
+            backup_dir=Path(config['backup_dir']) if config.get('backup_dir') else None
+        )
         
-        try:
-            # Validate file path
-            if not file_path.suffix:
-                return ChangeResult(
-                    file_path=str(file_path),
-                    success=False,
-                    error="Invalid file path - no extension"
-                )
-            
-            # Create parent directories if needed
-            file_path.parent.mkdir(parents=True, exist_ok=True)
-            
-            # Handle backup if needed
-            backup_path = None
-            if self.coder_config.create_backups and file_path.exists():
-                backup_path = file_path.with_suffix(file_path.suffix + self.coder_config.backup_suffix)
-                shutil.copy2(file_path, backup_path)
-                logger.info("change.backup_created",
-                          original=str(file_path),
-                          backup=str(backup_path))
-            
-            try:
-                # Get original content or empty string for new files
-                original_content = file_path.read_text() if file_path.exists() else ""
-                
-                # Get change content from either content or diff field
-                change_content = change.get('content') or change.get('diff', '')
-                if not change_content:
-                    return ChangeResult(
-                        file_path=str(file_path),
-                        success=False,
-                        error="No content or diff provided for change"
-                    )
-                
-                # Apply merge
-                merge_result = await self.merger.merge(original_content, change_content)
-                
-                if not merge_result.success:
-                    if backup_path:
-                        shutil.copy2(backup_path, file_path)
-                    return ChangeResult(
-                        file_path=str(file_path),
-                        success=False,
-                        backup_path=str(backup_path) if backup_path else None,
-                        error=f"Merge failed: {merge_result.error}"
-                    )
-                
-                # Write merged content
-                file_path.write_text(merge_result.content)
-                return ChangeResult(
-                    file_path=str(file_path),
-                    success=True,
-                    backup_path=str(backup_path) if backup_path else None
-                )
-                    
-            except Exception as e:
-                # Restore backup on error if exists
-                if backup_path:
-                    shutil.copy2(backup_path, file_path)
-                return ChangeResult(
-                    file_path=str(file_path),
-                    success=False,
-                    backup_path=str(backup_path) if backup_path else None,
-                    error=f"Change failed: {str(e)}"
-                )
-                
-        except Exception as e:
-            logger.error("change.failed", error=str(e))
-            return ChangeResult(
-                file_path=str(file_path),
-                success=False,
-                error=f"Unexpected error: {str(e)}"
-            )
+        logger.info("coder.initialized",
+                   provider=config['provider'],
+                   model=config['model'])
 
-    async def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process code changes using iterator pattern"""
+    def process(self, input_data: str, description: str) -> CoderResult:
+        """Process asset modifications.
+        
+        Args:
+            input_data: Input containing changes to process
+            description: Description of how to extract changes
+            
+        Returns:
+            CoderResult with success status and changes
+        """
         try:
-            changes_input = context.get('changes', [])
-            if not changes_input:
-                return AgentResponse(
-                    success=False,
-                    data={},
-                    error="No changes provided"
-                )
-
             # Configure extraction
             extract_config = ExtractConfig(
-                instruction="Extract each code change with file_path, type, and content/diff fields",
+                instruction=description,
                 format="json"
             )
-
-            results = []
             
-            # Use iterator to process changes
-            async for change in await self.iterator.iter_extract(changes_input, extract_config):
-                if not isinstance(change, dict):
-                    logger.warning("change.invalid_format", change=change)
-                    continue
+            changes: List[ChangeResult] = []
+            
+            # Extract and process changes
+            for item in self.iterator.extract_all(input_data, extract_config):
+                try:
+                    # Validate required fields
+                    if not item.get('file_path') or not (item.get('content') or item.get('diff')):
+                        logger.warning("invalid_change_format", item=item)
+                        continue
+
+                    path = Path(item['file_path'])
                     
-                result = await self._apply_change(change)
-                results.append({
-                    "file": result.file_path,
-                    "success": result.success,
-                    "backup_path": result.backup_path,
-                    "error": result.error
-                })
+                    # Get original content
+                    original = self.asset_manager.read_asset(path)
+                    
+                    # Merge changes
+                    merge_result = self.merger.merge(
+                        original,
+                        item.get('content', item.get('diff'))
+                    )
+                    
+                    if merge_result.success:
+                        # Apply merged changes
+                        asset_change = AssetChange(
+                            path=path,
+                            content=merge_result.content
+                        )
+                        
+                        success = self.asset_manager.write_change(asset_change)
+                        
+                        changes.append(ChangeResult(
+                            path=str(path),
+                            success=success,
+                            backup_path=str(asset_change.backup_path) if asset_change.backup_path else None
+                        ))
+                    else:
+                        changes.append(ChangeResult(
+                            path=str(path),
+                            success=False,
+                            error=merge_result.error
+                        ))
+                        
+                except Exception as e:
+                    logger.error("change_failed",
+                               path=str(item.get('file_path')),
+                               error=str(e))
+                    changes.append(ChangeResult(
+                        path=str(item.get('file_path', 'unknown')),
+                        success=False,
+                        error=str(e)
+                    ))
 
             # Overall success if any changes succeeded
-            success = any(r["success"] for r in results)
-            return AgentResponse(
+            success = any(c.success for c in changes)
+            return CoderResult(
                 success=success,
-                data={"changes": results},
+                changes=changes,
                 error=None if success else "All changes failed"
             )
 
         except Exception as e:
-            logger.error("coder.process_failed", error=str(e))
-            return AgentResponse(
+            logger.error("process_failed", error=str(e))
+            return CoderResult(
                 success=False,
-                data={},
+                changes=[],
                 error=str(e)
             )
-
-    def _create_extract_config(self) -> ExtractConfig:
-        """Create extraction configuration for iterator"""
-        return ExtractConfig(
-            instruction="""
-            Extract code changes from the input.
-            Each change should have:
-            - file_path: Path to the file to modify
-            - type: Type of change (create/modify/delete)
-            - content: New content for the file
-            - diff: Optional git-style diff (alternative to content)
-            
-            Return each change as a JSON object.
-            """,
-            format="json"
-        )

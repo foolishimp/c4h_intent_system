@@ -1,10 +1,10 @@
 """
-System configuration handling.
+System configuration handling with app config merging.
 Path: src/config.py
 """
 
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import yaml
 from pydantic import BaseModel, Field, validator
 from enum import Enum
@@ -88,6 +88,25 @@ class ProviderConfig(BaseModel):
             raise ConfigValidationError(f"Environment variable '{v}' not set")
         return v
 
+class AppConfig(BaseModel):
+    """Application runtime configuration"""
+    provider: str
+    model: str
+    temperature: float = 0
+    project_path: Optional[str] = None
+    input_data: str 
+    instruction: str
+    format: str = "json"
+    merge_method: str = "smart"
+
+    @validator('provider')
+    def valid_provider(cls, v):
+        try:
+            LLMProvider(v)
+            return v
+        except ValueError:
+            raise ConfigValidationError(f"Invalid provider '{v}'. Must be one of: {[p.value for p in LLMProvider]}")
+
 class SystemConfig(BaseModel):
     """System-wide configuration"""
     providers: Dict[str, ProviderConfig] = Field(..., description="Provider configurations (required)")
@@ -95,13 +114,13 @@ class SystemConfig(BaseModel):
     backup: Dict[str, Any] = Field(default_factory=dict)
     logging: Dict[str, Any] = Field(default_factory=dict)
     project: ProjectConfig = Field(default_factory=ProjectConfig)
+    runtime: Optional[Dict[str, Any]] = None
     
     @validator('providers')
     def validate_providers(cls, v):
         if not v:
             raise ConfigValidationError("At least one provider must be configured")
         
-        # Validate all required providers are present
         required_providers = {p.value for p in LLMProvider}
         missing_providers = required_providers - set(v.keys())
         if missing_providers:
@@ -115,12 +134,10 @@ class SystemConfig(BaseModel):
         if missing:
             raise ConfigValidationError(f"Missing required LLM config fields: {missing}")
         
-        # Validate default provider exists
         default_provider = v.get('default_provider')
         if default_provider not in [p.value for p in LLMProvider]:
             raise ConfigValidationError(f"Invalid default_provider: {default_provider}")
         
-        # Validate agents configuration
         agents = v.get('agents', {})
         if not isinstance(agents, dict):
             raise ConfigValidationError("agents config must be a dictionary")
@@ -167,3 +184,38 @@ class SystemConfig(BaseModel):
         except Exception as e:
             logger.error("config.load_failed", error=str(e))
             raise ConfigValidationError(f"Failed to load configuration: {str(e)}")
+
+    @classmethod
+    def load_with_app_config(cls, system_path: Path, app_path: Path) -> 'SystemConfig':
+        """Load system config and merge with app config"""
+        try:
+            # Load base system config
+            system_config = cls.load(system_path)
+            
+            # Load and validate app config
+            with open(app_path) as f:
+                app_data = yaml.safe_load(f)
+                app_config = AppConfig(**app_data)
+            
+            # Update with app-specific settings
+            merged_config = system_config.dict()
+            merged_config['runtime'] = {
+                'provider': app_config.provider,
+                'model': app_config.model,
+                'temperature': app_config.temperature,
+                'project_path': app_config.project_path,
+                'input_data': app_config.input_data, 
+                'instruction': app_config.instruction,
+                'format': app_config.format,
+                'merge_method': app_config.merge_method
+            }
+            
+            return cls(**merged_config)
+            
+        except Exception as e:
+            logger.error("config.merge_failed", error=str(e))
+            raise ConfigValidationError(f"Failed to merge configurations: {str(e)}")
+
+    def get_runtime_config(self) -> Dict[str, Any]:
+        """Get runtime configuration settings"""
+        return self.runtime or {}
