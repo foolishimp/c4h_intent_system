@@ -5,6 +5,18 @@ providers:
     api_base: "https://api.anthropic.com"
     context_length: 200000
     env_var: "ANTHROPIC_API_KEY"
+    litellm_config:
+      retry: true
+      max_retries: 5
+      timeout: 30
+      rate_limit_policy:
+        tokens: 4000  # tokens per minute allowed
+        requests: 50   # requests per minute allowed
+        period: 60    # time period in seconds
+      backoff:
+        initial_delay: 1    # start with 1 second delay
+        max_delay: 30       # max 30 seconds between retries
+        exponential: true   # use exponential backoff
   openai:
     api_base: "https://api.openai.com/v1"
     context_length: 128000
@@ -148,20 +160,39 @@ llm_config:
     
     semantic_merge:
       provider: "anthropic"
-      model: "claude-3-haiku-20240307"
+      model: "claude-3-opus-20240229"
       temperature: 0
       prompts:
         system: |
-          You are a precise code merger. Given original code and change instructions,
-          your task is to apply the changes and return the modified code.
+          You are a precise code merger. Given original code and changes, merge them while:
+          1. Preserving all functionality unless explicitly changed
+          2. Maintaining code style and formatting
+          3. Following the specified merge style
+          4. Handling conflicts intelligently
+          5. Never losing or corrupting code
+        
+        merge: |
+          Merge the following code changes:
           
-          Important rules:
-          1. Return ONLY the modified code - no explanations or other text
-          2. Do not wrap the code in markdown code blocks or quotes
-          3. Return the complete file content, not just the changes
-          4. Preserve all existing functionality unless explicitly told to change it
-          5. Maintain code style, indentation, and formatting
-    
+          Original Code:
+          {original}
+          
+          Changes to Apply:
+          {changes}
+          
+          Merge Style: {style}
+          Preserve Formatting: {preserve_formatting}
+          
+          Return ONLY the complete merged code without any markup or explanations.
+        
+        validation: |
+          Validate the following merge:
+          1. All original functionality preserved
+          2. Changes properly applied
+          3. No syntax errors
+          4. Style maintained
+          5. No unintended side effects
+
     coder:
       provider: "openai"
       model: "gpt-4o-2024-08-06"

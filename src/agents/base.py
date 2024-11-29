@@ -63,10 +63,6 @@ class BaseAgent(ABC):
             provider=provider.value,
             model=model
         )
-        
-        self.logger.info("agent.initialized",
-                        temperature=temperature,
-                        max_retries=max_retries)
 
     def _load_agent_config(self) -> Dict[str, Any]:
         """Load agent-specific configuration including prompts"""
