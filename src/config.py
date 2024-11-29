@@ -9,7 +9,7 @@ import yaml
 from pydantic import BaseModel, Field, validator
 from enum import Enum
 import structlog
-from .agents.base import LLMProvider
+from agents.base import LLMProvider
 import os
 
 logger = structlog.get_logger()

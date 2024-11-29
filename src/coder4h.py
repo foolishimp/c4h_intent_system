@@ -7,9 +7,9 @@ import argparse
 import asyncio
 from pathlib import Path
 import structlog
-from src.agents.coder import Coder
-from src.agents.base import LLMProvider
-from src.config import SystemConfig, ConfigValidationError
+from agents.coder import Coder
+from agents.base import LLMProvider
+from config import SystemConfig, ConfigValidationError
 
 logger = structlog.get_logger()
 
@@ -21,20 +21,24 @@ async def run_coder(config_path: str) -> None:
             Path("config/system_config.yml"),
             Path(config_path)
         )
+        config_dict = config.model_dump()  # Updated from dict() to model_dump()
         runtime = config.get_runtime_config()
         
-        # Initialize coder and let it handle extraction
+        # Get coder agent config
+        coder_config = config.get_agent_config("coder")
+        
+        # Initialize coder with proper configuration
         coder = Coder(
-            provider=LLMProvider(runtime['provider']),
-            model=runtime['model'],
-            temperature=runtime['temperature'],
-            config=config.dict()
+            provider=coder_config.provider_enum,
+            model=coder_config.model,
+            temperature=coder_config.temperature,
+            config=config_dict
         )
 
         result = await coder.process(runtime)
         if not result.success:
             logger.info("coder.completed", success=False, error=result.error)
-            return  # Graceful exit on expected failures
+            return
 
     except Exception as e:
         logger.error("execution_failed", error=str(e))

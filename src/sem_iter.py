@@ -10,9 +10,9 @@ from typing import Dict, Any
 import structlog
 from dataclasses import dataclass
 
-from src.skills.semantic_iterator import SemanticIterator, ExtractorConfig, ExtractionMode
-from src.skills.shared.types import ExtractConfig
-from src.agents.base import LLMProvider
+from skills.semantic_iterator import SemanticIterator, ExtractorConfig, ExtractionMode
+from skills.shared.types import ExtractConfig
+from agents.base import LLMProvider
 
 logger = structlog.get_logger()
 

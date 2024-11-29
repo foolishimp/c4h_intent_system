@@ -10,7 +10,7 @@ from rich.syntax import Syntax
 from typing import Dict, Any
 import structlog
 import json
-from src.cli.displays.base_display import BaseDisplay
+from cli.displays.base_display import BaseDisplay
 
 logger = structlog.get_logger()
 

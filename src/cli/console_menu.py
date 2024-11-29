@@ -18,11 +18,11 @@ from rich.box import ROUNDED
 from rich.padding import Padding
 from rich.align import Align
 
-from src.agents.intent_agent import IntentAgent
-from src.cli.displays.workflow_display import WorkflowDisplay
-from src.cli.menu_handlers import MenuHandlers
-from src.cli.base_menu import BaseMenu, MenuItem
-from src.config import SystemConfig
+from agents.intent_agent import IntentAgent
+from cli.displays.workflow_display import WorkflowDisplay
+from cli.menu_handlers import MenuHandlers
+from cli.base_menu import BaseMenu, MenuItem
+from config import SystemConfig
 
 logger = structlog.get_logger()
 
@@ -38,7 +38,7 @@ class ConsoleMenu(BaseMenu):
         
         # Use provided config or load default
         if config is None:
-            from src.main import load_config
+            from main import load_config
             try:
                 config = load_config()
             except ValueError as e:

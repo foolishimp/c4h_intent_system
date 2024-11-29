@@ -8,10 +8,10 @@ from typing import Optional
 import structlog
 from pathlib import Path
 from rich.panel import Panel
-from src.cli.displays.solution_display import SolutionDisplay
-from src.cli.displays.discovery_display import DiscoveryDisplay
-from src.cli.displays.impl_display import ImplementationDisplay
-from src.cli.displays.validation_display import ValidationDisplay
+from cli.displays.solution_display import SolutionDisplay
+from cli.displays.discovery_display import DiscoveryDisplay
+from cli.displays.impl_display import ImplementationDisplay
+from cli.displays.validation_display import ValidationDisplay
 
 logger = structlog.get_logger()
 

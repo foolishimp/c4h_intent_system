@@ -9,7 +9,7 @@ from rich.table import Table
 from typing import Dict, Any
 import structlog
 
-from src.cli.displays.base_display import BaseDisplay
+from cli.displays.base_display import BaseDisplay
 
 logger = structlog.get_logger()
 

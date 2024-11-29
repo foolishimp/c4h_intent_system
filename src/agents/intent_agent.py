@@ -12,13 +12,13 @@ import asyncio
 import shutil
 import structlog
 
-from src.models.intent import Intent, IntentStatus, AgentState
-from src.agents.discovery import DiscoveryAgent 
-from src.agents.solution_designer import SolutionDesigner
-from src.agents.coder import Coder, MergeMethod  
-from src.agents.assurance import AssuranceAgent
-from src.config import SystemConfig
-from src.agents.base import AgentResponse
+from models.intent import Intent, IntentStatus, AgentState
+from agents.discovery import DiscoveryAgent 
+from agents.solution_designer import SolutionDesigner
+from agents.coder import Coder, MergeMethod  
+from agents.assurance import AssuranceAgent
+from config import SystemConfig
+from agents.base import AgentResponse
 
 logger = structlog.get_logger()
 

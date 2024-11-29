@@ -4,7 +4,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 from typing import Dict, Any, List, Optional
-from src.cli.displays.base_display import BaseDisplay
+from cli.displays.base_display import BaseDisplay
 
 class ImplementationDisplay(BaseDisplay):
     """Handles display of implementation results"""

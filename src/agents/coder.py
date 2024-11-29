@@ -7,9 +7,11 @@ from typing import Dict, Any, List, Optional
 from pathlib import Path
 from dataclasses import dataclass
 import structlog
-from src.skills.semantic_iterator import SemanticIterator, ExtractConfig
-from src.skills.semantic_merge import SemanticMerge, MergeConfig
-from src.skills.asset_manager import AssetManager, AssetResult
+from datetime import datetime
+from skills.semantic_iterator import SemanticIterator
+from skills.semantic_merge import SemanticMerge, MergeConfig
+from skills.asset_manager import AssetManager, AssetResult
+from agents.base import BaseAgent, LLMProvider
 
 logger = structlog.get_logger()
 
@@ -19,82 +21,107 @@ class CoderResult:
     success: bool
     changes: List[AssetResult]
     error: Optional[str] = None
+    metrics: Optional[Dict[str, Any]] = None
 
-class Coder:
+class Coder(BaseAgent):
     """Orchestrates semantic operations on code assets"""
     
-    def __init__(self, config: Dict[str, Any]):
-        """Initialize with configuration dictionary.
-        
-        Args:
-            config: Configuration including:
-                - provider: LLM provider
-                - model: Model name
-                - merge_style: Merge strategy
-                - backup_enabled: Whether to create backups
-                - backup_dir: Optional backup directory
-        """
-        # Initialize semantic tools
+    def __init__(self,
+                provider: LLMProvider = LLMProvider.ANTHROPIC,
+                model: Optional[str] = None,
+                temperature: float = 0,
+                config: Optional[Dict[str, Any]] = None):
+        """Initialize with configuration"""
+        super().__init__(
+            provider=provider,
+            model=model,
+            temperature=temperature,
+            config=config
+        )
+
         self.iterator = SemanticIterator(
-            provider=config['provider'],
-            model=config['model'],
+            provider=provider,
+            model=model,
+            temperature=temperature,
             config=config
         )
         
         merger = SemanticMerge(
-            provider=config['provider'],
-            model=config['model'],
+            provider=provider,
+            model=model,
+            temperature=temperature,
             config=config,
             merge_config=MergeConfig(
-                style=config.get('merge_style', 'smart'),
                 preserve_formatting=True
             )
         )
         
-        # Initialize asset manager with merger
         self.asset_manager = AssetManager(
-            backup_enabled=config.get('backup_enabled', True),
+            backup_enabled=True,
             backup_dir=Path(config['backup_dir']) if config.get('backup_dir') else None,
             merger=merger
         )
-        
-        logger.info("coder.initialized",
-                   provider=config['provider'],
-                   model=config['model'])
 
-    def process(self, input_data: str, description: str) -> CoderResult:
-        """Process asset modifications.
+        logger.info("coder.initialized")
+
+    def _get_agent_name(self) -> str:
+        return "coder"
         
-        Args:
-            input_data: Input containing changes to process
-            description: Description of how to extract changes
-        """
+    async def process(self, context: Dict[str, Any]) -> CoderResult:
+        """Process changes using the asset manager."""
+        metrics = {
+            "start_time": datetime.utcnow().isoformat(),
+            "total_changes": 0,
+            "successful_changes": 0,
+            "failed_changes": 0
+        }
+
         try:
-            # Configure extraction
-            extract_config = ExtractConfig(
-                instruction=description,
-                format="json"
-            )
-            
             changes = []
-            
-            # Process each action through asset manager
-            for action in self.iterator.extract_all(input_data, extract_config):
-                result = self.asset_manager.process_action(action)
-                changes.append(result)
+            input_data = context.get('changes', [])
 
-            # Overall success if any changes succeeded
+            # Process each change and collect metrics
+            for action in self.iterator.extract_all(input_data, context):
+                metrics["total_changes"] += 1
+                try:
+                    result = self.asset_manager.process_action(action)
+                    changes.append(result)
+                    if result.success:
+                        metrics["successful_changes"] += 1
+                        logger.info("change.succeeded", 
+                                  path=str(result.path) if result.path else None)
+                    else:
+                        metrics["failed_changes"] += 1
+                        logger.error("change.failed",
+                                   path=str(result.path) if result.path else None,
+                                   error=result.error)
+                except Exception as e:
+                    metrics["failed_changes"] += 1
+                    logger.error("change.processing_failed", error=str(e))
+                    changes.append(AssetResult(success=False, path=None, error=str(e)))
+
             success = any(c.success for c in changes)
+            metrics["end_time"] = datetime.utcnow().isoformat()
+            
+            if not success:
+                logger.warning("coder.no_successful_changes",
+                             total_changes=metrics["total_changes"])
+
             return CoderResult(
                 success=success,
                 changes=changes,
-                error=None if success else "All changes failed"
+                error=None if success else "All changes failed",
+                metrics=metrics
             )
 
         except Exception as e:
-            logger.error("process_failed", error=str(e))
+            logger.error("coder.process_failed", error=str(e))
+            metrics["end_time"] = datetime.utcnow().isoformat()
+            metrics["error"] = str(e)
+            
             return CoderResult(
                 success=False,
                 changes=[],
-                error=str(e)
+                error=str(e),
+                metrics=metrics
             )

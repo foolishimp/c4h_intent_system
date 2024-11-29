@@ -6,7 +6,7 @@ Path: src/skills/semantic_extract.py
 from typing import Dict, Any, Optional
 import structlog
 from dataclasses import dataclass
-from src.agents.base import BaseAgent, LLMProvider, AgentResponse
+from agents.base import BaseAgent, LLMProvider, AgentResponse
 
 logger = structlog.get_logger()
 

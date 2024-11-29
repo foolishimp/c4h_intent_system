@@ -13,10 +13,10 @@ from typing import Optional, Dict, Any
 import uuid
 from dataclasses import dataclass
 
-from src.cli.console_menu import ConsoleMenu
-from src.agents.intent_agent import IntentAgent
-from src.agents.coder import MergeMethod
-from src.config import SystemConfig
+from cli.console_menu import ConsoleMenu
+from agents.intent_agent import IntentAgent
+from agents.coder import MergeMethod
+from config import SystemConfig
 
 logger = structlog.get_logger()
 

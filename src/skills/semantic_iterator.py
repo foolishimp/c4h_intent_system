@@ -8,10 +8,10 @@ from enum import Enum
 import structlog
 from dataclasses import dataclass
 import json
-from src.agents.base import BaseAgent, LLMProvider, AgentResponse
-from src.skills.shared.types import ExtractConfig
-from src.skills._semantic_fast import FastExtractor, FastItemIterator
-from src.skills._semantic_slow import SlowExtractor, SlowItemIterator
+from agents.base import BaseAgent, LLMProvider, AgentResponse
+from skills.shared.types import ExtractConfig
+from skills._semantic_fast import FastExtractor, FastItemIterator
+from skills._semantic_slow import SlowExtractor, SlowItemIterator
 
 logger = structlog.get_logger()
 

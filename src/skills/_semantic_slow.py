@@ -5,8 +5,8 @@ Path: src/skills/_semantic_slow.py
 
 from typing import Dict, Any, Optional
 import structlog
-from src.agents.base import BaseAgent, LLMProvider, AgentResponse
-from src.skills.shared.types import ExtractConfig
+from agents.base import BaseAgent, LLMProvider, AgentResponse
+from skills.shared.types import ExtractConfig
 import json
 
 logger = structlog.get_logger()

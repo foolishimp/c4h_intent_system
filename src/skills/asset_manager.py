@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 import structlog
 import shutil
-from src.skills.semantic_merge import SemanticMerge
+from skills.semantic_merge import SemanticMerge
 
 logger = structlog.get_logger()
 
