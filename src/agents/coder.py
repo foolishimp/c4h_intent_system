@@ -66,8 +66,8 @@ class Coder(BaseAgent):
     def _get_agent_name(self) -> str:
         return "coder"
 
-    async def process(self, context: Dict[str, Any]) -> CoderResult:
-        """Process code changes"""
+    def process(self, context: Dict[str, Any]) -> CoderResult:
+        """Process code changes synchronously"""
         logger.info("coder.input_context", context=json.dumps(context, indent=2))
         metrics = {"start_time": datetime.utcnow().isoformat()}
         changes = []
@@ -83,22 +83,25 @@ class Coder(BaseAgent):
                 format=context.get('format', 'json')
             )
 
-            # Extract and process changes
-            async for change in self.iterator.iter_extract(input_data, extract_config):
+            # Configure iterator BEFORE using it
+            self.iterator.configure(input_data, extract_config)
+
+            # Extract and process changes using configured iterator
+            for change in self.iterator:
                 logger.info("coder.processing_change", change=json.dumps(change, indent=2))
                 result = self.asset_manager.process_action(change)
                 logger.info("coder.change_result", 
-                          success=result.success,
-                          path=str(result.path) if result.path else None,
-                          error=result.error if result.error else None)
+                            success=result.success,
+                            path=str(result.path) if result.path else None,
+                            error=result.error if result.error else None)
                 changes.append(result)
 
             # Determine overall success
             success = any(c.success for c in changes)
             logger.info("coder.results", 
-                       success=success,
-                       total_changes=len(changes),
-                       successful_changes=sum(1 for c in changes if c.success))
+                        success=success,
+                        total_changes=len(changes),
+                        successful_changes=sum(1 for c in changes if c.success))
 
             return CoderResult(
                 success=success,
