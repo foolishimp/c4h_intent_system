@@ -58,9 +58,22 @@ def load_configs(test_config_path: str) -> Dict[str, Any]:
         raise
 
 def process_items(config_path: str, mode: str) -> None:
+    """Process and display items using semantic iterator"""
     try:
         # Load configuration
         config = load_configs(config_path)
+        
+        # Create both configs first
+        extractor_config = ExtractorConfig(
+            initial_mode=ExtractionMode(mode),
+            allow_fallback=True,
+            fallback_modes=[ExtractionMode.SLOW] if mode == "fast" else []
+        )
+
+        extract_config = ExtractConfig(
+            instruction=config["instruction"],
+            format=config.get("format", "json")
+        )
         
         # Debug log the full config structure
         logger.debug("process_items.config_loaded",
@@ -80,13 +93,6 @@ def process_items(config_path: str, mode: str) -> None:
         print_separator("EXTRACTION PROMPT") 
         print(config["instruction"])
 
-        # Create extractor configuration
-        extractor_config = ExtractorConfig(
-            initial_mode=ExtractionMode(mode),
-            allow_fallback=True,
-            fallback_modes=[ExtractionMode.SLOW] if mode == "fast" else []
-        )
-
         # Get settings from config
         llm_config = config.get('llm_config', {})
         provider = LLMProvider(llm_config.get('default_provider', 'anthropic'))
@@ -101,23 +107,20 @@ def process_items(config_path: str, mode: str) -> None:
             extractor_config=extractor_config
         )
 
-        # Create extraction config
-        extract_config = ExtractConfig(
-            instruction=config["instruction"],
-            format=config.get("format", "json")
-        )
+        # Configure the iterator
+        iterator.configure(config["input_data"], extract_config)
 
-        # Get items
+        # Get items using standard iterator interface
         print_separator("EXTRACTED ITEMS")
-        items = iterator.extract_all(config["input_data"], extract_config)
-        
-        for i, item in enumerate(items, 1):
+        item_count = 0
+        for item in iterator:
             if item:
-                print(f"\nItem {i}:")
+                item_count += 1
+                print(f"\nItem {item_count}:")
                 print("-" * 40)
                 print(item)
 
-        if not items:
+        if item_count == 0:
             print("\nNo items extracted")
 
     except Exception as e:

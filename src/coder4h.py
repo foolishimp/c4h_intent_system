@@ -1,3 +1,4 @@
+
 """
 Bootstrap configuration and invoke coder agent.
 Path: src/coder4h.py
@@ -7,6 +8,7 @@ import argparse
 import asyncio
 from pathlib import Path
 import structlog
+import json
 from agents.coder import Coder
 from agents.base import LLMProvider
 from config import SystemConfig, ConfigValidationError
@@ -14,18 +16,22 @@ from config import SystemConfig, ConfigValidationError
 logger = structlog.get_logger()
 
 async def run_coder(config_path: str) -> None:
-    """Bootstrap coder agent with merged config"""
     try:
         # Load and merge configs 
         config = SystemConfig.load_with_app_config(
             Path("config/system_config.yml"),
             Path(config_path)
         )
-        config_dict = config.model_dump()  # Updated from dict() to model_dump()
+        config_dict = config.model_dump()
         runtime = config.get_runtime_config()
         
+        # Log full configuration and runtime context
+        logger.info("bootstrap.config", config=json.dumps(config_dict, indent=2))
+        logger.info("bootstrap.runtime", runtime=json.dumps(runtime, indent=2))
+
         # Get coder agent config
         coder_config = config.get_agent_config("coder")
+        logger.info("bootstrap.coder_config", config=json.dumps(coder_config.model_dump(), indent=2))
         
         # Initialize coder with proper configuration
         coder = Coder(
@@ -36,9 +42,11 @@ async def run_coder(config_path: str) -> None:
         )
 
         result = await coder.process(runtime)
-        if not result.success:
-            logger.info("coder.completed", success=False, error=result.error)
-            return
+        logger.info("bootstrap.result", 
+                   success=result.success,
+                   error=result.error,
+                   metrics=json.dumps(result.metrics, indent=2),
+                   changes=len(result.changes))
 
     except Exception as e:
         logger.error("execution_failed", error=str(e))
