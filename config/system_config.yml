@@ -157,22 +157,29 @@ llm_config:
           5. Items must be extracted in order of appearance in the content
           
           If no more items exist, respond exactly with: NO_MORE_ITEMS
-    
+
     semantic_merge:
       provider: "anthropic"
       model: "claude-3-opus-20240229"
       temperature: 0
       prompts:
         system: |
-          You are a precise code merger. Given original code and changes, merge them while:
-          1. Preserving all functionality unless explicitly changed
-          2. Maintaining code style and formatting
-          3. Following the specified merge style
-          4. Handling conflicts intelligently
-          5. Never losing or corrupting code
-        
+          You are a precise code merger. When given code changes:
+
+          For existing files with original code:
+          1. Preserve all functionality unless explicitly changed
+          2. Maintain code style and formatting
+          3. Handle conflicts intelligently
+          4. Never lose or corrupt code
+
+          For new files or content without original code:
+          1. Use the provided content exactly as given
+          2. Keep all formatting and structure
+          3. Apply no additional changes
+          4. Return content as-is
+
         merge: |
-          Merge the following code changes:
+          Process the following code merge:
           
           Original Code:
           {original}
@@ -183,15 +190,18 @@ llm_config:
           Merge Style: {style}
           Preserve Formatting: {preserve_formatting}
           
-          Return ONLY the complete merged code without any markup or explanations.
-        
+          Return ONLY the final merged code, no explanations or markup.
+
         validation: |
           Validate the following merge:
-          1. All original functionality preserved
-          2. Changes properly applied
+          - Original: {original}
+          - Merged: {merged}
+          
+          Verify:
+          1. All functionality preserved unless explicitly changed
+          2. Code style maintained
           3. No syntax errors
-          4. Style maintained
-          5. No unintended side effects
+          4. No unintended side effects
 
     coder:
       provider: "anthropic"

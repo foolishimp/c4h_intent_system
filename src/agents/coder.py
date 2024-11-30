@@ -73,7 +73,6 @@ class Coder(BaseAgent):
         changes = []
 
         try:
-            # Log raw input for debugging
             input_data = context.get('input_data')
             logger.info("coder.raw_input", data=input_data)
 
@@ -83,25 +82,39 @@ class Coder(BaseAgent):
                 format=context.get('format', 'json')
             )
 
-            # Configure iterator BEFORE using it
+            # Configure iterator - it handles its own async/sync boundary
             self.iterator.configure(input_data, extract_config)
 
-            # Extract and process changes using configured iterator
-            for change in self.iterator:
+            # Process changes using configured iterator
+            for raw_change in self.iterator:
+                # Infrastructure concern: ensure we have valid JSON structure
+                try:
+                    if isinstance(raw_change, str):
+                        # Handle potentially double-encoded JSON
+                        change = json.loads(raw_change.strip('"').replace('\\"', '"'))
+                    else:
+                        change = raw_change
+                        
+                    logger.debug("coder.parsed_change", change=change)
+                except json.JSONDecodeError as e:
+                    logger.error("coder.parse_error", error=str(e))
+                    continue
+
                 logger.info("coder.processing_change", change=json.dumps(change, indent=2))
+                
                 result = self.asset_manager.process_action(change)
                 logger.info("coder.change_result", 
-                            success=result.success,
-                            path=str(result.path) if result.path else None,
-                            error=result.error if result.error else None)
+                        success=result.success,
+                        path=str(result.path) if result.path else None,
+                        error=result.error if result.error else None)
                 changes.append(result)
 
             # Determine overall success
             success = any(c.success for c in changes)
             logger.info("coder.results", 
-                        success=success,
-                        total_changes=len(changes),
-                        successful_changes=sum(1 for c in changes if c.success))
+                    success=success,
+                    total_changes=len(changes),
+                    successful_changes=sum(1 for c in changes if c.success))
 
             return CoderResult(
                 success=success,

@@ -8,6 +8,7 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 import structlog
 import shutil
+import asyncio
 from skills.semantic_merge import SemanticMerge
 
 logger = structlog.get_logger()
@@ -51,12 +52,22 @@ class AssetManager:
                 backup_path = self._get_next_backup_path(path)
                 shutil.copy2(path, backup_path)
 
-            # Merge and write
+            # Merge and write - use BaseAgent's synchronous interface
             if self.merger:
-                result = self.merger.merge(current_content, changes)
-                if not result.success:
-                    return AssetResult(success=False, path=path, error=result.error)
-                final_content = result.content
+                # Use _loop.run_until_complete if needed for the merge
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = self.merger.process({  # Use process instead of merge
+                        'original_code': current_content,
+                        'changes': changes,
+                        'style': 'smart'
+                    })
+                    if not result.success:
+                        return AssetResult(success=False, path=path, error=result.error)
+                    final_content = result.data.get('response')
+                finally:
+                    loop.close()
             else:
                 final_content = changes
 
@@ -67,17 +78,3 @@ class AssetManager:
         except Exception as e:
             logger.error("asset.process_failed", error=str(e))
             return AssetResult(success=False, path=path, error=str(e))
-
-    def _get_next_backup_path(self, path: Path) -> Path:
-        """Get next available backup path with incrementing number."""
-        if self.backup_dir:
-            base = self.backup_dir / path.name
-        else:
-            base = path
-
-        counter = 0
-        while True:
-            backup_path = base.with_suffix(f".{counter:03d}.bak")
-            if not backup_path.exists():
-                return backup_path
-            counter += 1

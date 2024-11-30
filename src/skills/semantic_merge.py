@@ -53,12 +53,9 @@ class SemanticMerge(BaseAgent):
 
     def _format_request(self, context: Dict[str, Any]) -> str:
         """Format merge request using config template"""
-        if not context.get('original_code'):
-            raise ValueError("Original code required for merge")
-            
         merge_template = self._get_prompt('merge')
         return merge_template.format(
-            original=context.get('original_code', ''),
+            original=context.get('original_code', ''),  # Empty string for new files
             changes=context.get('changes', ''),
             style=self.merge_config.style,
             preserve_formatting=str(self.merge_config.preserve_formatting).lower()
@@ -73,7 +70,7 @@ class SemanticMerge(BaseAgent):
         if not content:
             content = response.get('raw_content', '')
             
-        # Remove any markdown code block markers
+        # Remove any markdown code block markers if present
         content = content.strip()
         if content.startswith('```'):
             content = '\n'.join(content.split('\n')[1:-1])
@@ -83,14 +80,14 @@ class SemanticMerge(BaseAgent):
     async def merge(self, original: str, changes: Union[str, Dict[str, Any]]) -> MergeResult:
         """Process a merge operation"""
         try:
-            # Prepare merge context
+            # Trust LLM to handle empty/missing original code
             context = {
                 'original_code': original,
                 'changes': changes,
                 'style': self.merge_config.style
             }
             
-            # Process through LLM
+            # Pass through to LLM without validation
             response = await self.process(context)
             
             if not response.success:
@@ -101,16 +98,8 @@ class SemanticMerge(BaseAgent):
                     raw_response=response.raw_response
                 )
 
-            # Extract and validate merged content
+            # Extract and return merged content
             merged_content = self._extract_code_content(response.data)
-            if not merged_content or merged_content.isspace():
-                return MergeResult(
-                    success=False,
-                    content="",
-                    error="Empty merge result",
-                    raw_response=response.raw_response
-                )
-
             return MergeResult(
                 success=True,
                 content=merged_content,
@@ -124,20 +113,3 @@ class SemanticMerge(BaseAgent):
                 content="",
                 error=str(e)
             )
-
-    async def validate_merge(self, original: str, merged: str) -> bool:
-        """Validate merged code meets requirements"""
-        try:
-            validation_prompt = self._get_prompt('validation')
-            
-            response = await self.process({
-                'original': original,
-                'merged': merged,
-                'validation_prompt': validation_prompt
-            })
-            
-            return response.success and response.data.get('is_valid', False)
-            
-        except Exception as e:
-            logger.error("merge.validation_failed", error=str(e))
-            return False
