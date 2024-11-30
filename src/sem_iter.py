@@ -9,17 +9,66 @@ from pathlib import Path
 from typing import Dict, Any
 import structlog
 from dataclasses import dataclass
+import logging.config
+from enum import Enum
 
 from skills.semantic_iterator import SemanticIterator, ExtractorConfig, ExtractionMode
 from skills.shared.types import ExtractConfig
 from agents.base import LLMProvider
 
+# Configure structured logging with different processors for debug/normal modes
+class LogMode(str, Enum):
+    DEBUG = "debug"
+    NORMAL = "normal"
+
+def setup_logging(mode: LogMode = LogMode.NORMAL) -> None:
+    """Configure structured logging based on mode"""
+    processors = [
+        structlog.stdlib.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso"),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+    ]
+    
+    if mode == LogMode.DEBUG:
+        processors.extend([
+            structlog.processors.dict_tracebacks,
+            structlog.dev.ConsoleRenderer(colors=True, exception_formatter=structlog.dev.exception_formatter)
+        ])
+    else:
+        processors.append(
+            structlog.processors.JSONRenderer(indent=None)
+        )
+
+    structlog.configure(
+        processors=processors,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        wrapper_class=structlog.stdlib.BoundLogger,
+        cache_logger_on_first_use=True,
+    )
+
+    # Configure standard logging
+    logging.config.dictConfig({
+        'version': 1,
+        'disable_existing_loggers': False,
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+                'level': 'DEBUG' if mode == LogMode.DEBUG else 'INFO',
+            },
+        },
+        'root': {
+            'handlers': ['console'],
+            'level': 'DEBUG' if mode == LogMode.DEBUG else 'INFO',
+        }
+    })
+
 logger = structlog.get_logger()
 
 def print_separator(title: str) -> None:
-    print("\n" + "="*80)
     print(f" {title} ".center(80, "="))
-    print("="*80)
 
 def load_configs(test_config_path: str) -> Dict[str, Any]:
     """Load and merge system and test configurations"""
@@ -57,9 +106,11 @@ def load_configs(test_config_path: str) -> Dict[str, Any]:
         logger.error("config.load_failed", error=str(e))
         raise
 
-def process_items(config_path: str, mode: str) -> None:
+def process_items(config_path: str, mode: str, log_mode: LogMode) -> None:
     """Process and display items using semantic iterator"""
     try:
+        setup_logging(log_mode)
+        
         # Load configuration
         config = load_configs(config_path)
         
@@ -75,12 +126,12 @@ def process_items(config_path: str, mode: str) -> None:
             format=config.get("format", "json")
         )
         
-        # Debug log the full config structure
-        logger.debug("process_items.config_loaded",
-                    config_keys=list(config.keys()),
-                    has_providers=bool(config.get('providers')),
-                    has_llm_config=bool(config.get('llm_config')),
-                    provider_keys=list(config.get('providers', {}).keys()))
+        if log_mode == LogMode.DEBUG:
+            logger.debug("process_items.config_loaded",
+                        config_keys=list(config.keys()),
+                        has_providers=bool(config.get('providers')),
+                        has_llm_config=bool(config.get('llm_config')),
+                        provider_keys=list(config.get('providers', {}).keys()))
         
         # Print test setup
         print_separator("TEST CONFIGURATION")
@@ -116,11 +167,16 @@ def process_items(config_path: str, mode: str) -> None:
         for item in iterator:
             if item:
                 item_count += 1
+                # Always log item count and content at INFO level
+                logger.info(f"item.extracted", 
+                          item_number=item_count,
+                          content=item)
                 print(f"\nItem {item_count}:")
                 print("-" * 40)
                 print(item)
 
         if item_count == 0:
+            logger.warning("extraction.no_items")
             print("\nNo items extracted")
 
     except Exception as e:
@@ -141,11 +197,18 @@ def main() -> None:
         default="fast",
         help="Extraction mode to use (default: fast)"
     )
+    parser.add_argument(
+        "--log-mode",
+        type=LogMode,
+        choices=list(LogMode),
+        default=LogMode.NORMAL,
+        help="Logging mode (default: normal)"
+    )
     
     args = parser.parse_args()
     
     try:
-        process_items(args.config, args.mode)
+        process_items(args.config, args.mode, args.log_mode)
     except Exception as e:
         logger.error("execution_failed", error=str(e))
         raise
