@@ -102,7 +102,34 @@ async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
         
         # Use config values if CLI values not provided
         project_path = cli_config.project_path or Path(runtime_config.get('project_path', ''))
-        intent_desc = cli_config.intent or runtime_config.get('intent', {}).get('description')
+        
+        # Build complete intent context from both CLI and config
+        intent_context = {}
+        
+        # Start with config intent if available
+        config_intent = runtime_config.get('intent', {})
+        if isinstance(config_intent, dict):
+            intent_context.update(config_intent)
+        elif isinstance(config_intent, str):
+            intent_context['description'] = config_intent
+            
+        # Add/override with CLI values if provided
+        if cli_config.intent:
+            intent_context['description'] = cli_config.intent
+        if cli_config.merge_strategy:
+            intent_context['merge_strategy'] = cli_config.merge_strategy
+            
+        # Add runtime settings
+        intent_context.update({
+            'max_iterations': cli_config.max_iterations,
+            'runtime_settings': runtime_config.get('runtime', {}),
+            'scope': config_intent.get('scope', ['*.py']) if isinstance(config_intent, dict) else ['*.py']
+        })
+        
+        logger.debug("refactoring.context_built", 
+                    project_path=str(project_path),
+                    intent_context=intent_context,
+                    runtime_config=runtime_config)
         
         if cli_config.interactive:
             workspace_dir = Path(sys_config.project.workspace_root) / "current"
@@ -113,16 +140,19 @@ async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
             # Set values from config
             if project_path:
                 menu.project_path = project_path
-            if intent_desc:
-                menu.intent_description = intent_desc
+            if intent_context.get('description'):
+                menu.intent_description = intent_context['description']
+                
+            # Store complete context for use by agents
+            menu.intent_context = intent_context
                 
             await menu.main_menu()
             return {"status": "completed"}
         else:
-            if not project_path or not intent_desc:
+            if not project_path or not intent_context.get('description'):
                 return {
                     "status": "error",
-                    "error": "Project path and intent required in non-interactive mode"
+                    "error": "Project path and intent description required in non-interactive mode"
                 }
                 
             agent = IntentAgent(
@@ -132,15 +162,13 @@ async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
             
             result = await agent.process(
                 project_path=project_path,
-                intent_desc={
-                    "description": intent_desc,
-                    "merge_strategy": cli_config.merge_strategy
-                }
+                intent_desc=intent_context
             )
             
             return result
             
     except Exception as e:
+        logger.error("refactoring.failed", error=str(e))
         return {
             "status": "error",
             "error": str(e)

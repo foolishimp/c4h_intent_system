@@ -1,7 +1,6 @@
-# src/cli/console_menu.py
 """
 Console menu interface for the refactoring workflow management system.
-Provides interactive command-line interface with shortcut keys and rich status display.
+Path: src/cli/console_menu.py
 """
 
 import uuid
@@ -54,12 +53,31 @@ class ConsoleMenu(BaseMenu):
             'implementation_data': {},
             'validation_data': {}
         }
+        
+        # Initialize from runtime config
+        runtime_config = config.get_runtime_config()
         self.project_path: Optional[Path] = None
         self.intent_description: Optional[str] = None
+        self.intent_context: Dict[str, Any] = {}
+        
+        if runtime_config:
+            if 'project_path' in runtime_config:
+                self.project_path = Path(runtime_config['project_path'])
+            
+            intent_config = runtime_config.get('intent', {})
+            if isinstance(intent_config, dict):
+                self.intent_description = intent_config.get('description')
+                self.intent_context = intent_config
+            else:
+                self.intent_description = intent_config
+                self.intent_context = {'description': intent_config}
 
+        # Log initialization after all instance variables are set
         logger.info("console_menu.initialized",
-                   workspace_path=str(workspace_path),
-                   has_config=bool(config))
+                   workspace=str(self.workspace_path),
+                   has_config=bool(config),
+                   project_path=str(self.project_path) if self.project_path else None,
+                   intent_description=self.intent_description)
 
     def get_menu_items(self) -> List[MenuItem]:
         """Get menu items with shortcuts"""
@@ -129,7 +147,6 @@ class ConsoleMenu(BaseMenu):
         header.add_row(Align.center(border))
         header.add_row(Align.center(title, style="bold cyan"))
         header.add_row(Align.center(border))
-        self.console.print(header)
         self.console.print()
 
     def show_error(self, error: str) -> None:
@@ -201,7 +218,7 @@ class ConsoleMenu(BaseMenu):
             with self.console.status("[yellow]Executing workflow step...[/]", spinner="dots"):
                 result = await self.intent_agent.process(
                     self.project_path,
-                    {"description": self.intent_description}
+                    self.intent_context
                 )
 
             # Update workflow data with proper structure
