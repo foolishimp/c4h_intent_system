@@ -12,20 +12,28 @@ import json
 logger = structlog.get_logger()
 
 class FastItemIterator:
-    """Iterator for fast extraction results"""
+    """Iterator for fast extraction results with indexing support"""
     def __init__(self, items: List[Any]):
-        self._items = items
+        self._items = items if items else []
         self._position = 0
 
-    def __aiter__(self):
+    def __iter__(self):
         return self
 
-    async def __anext__(self):
+    def __next__(self):
         if self._position >= len(self._items):
-            raise StopAsyncIteration
+            raise StopIteration
         item = self._items[self._position]
         self._position += 1
         return item
+
+    def __len__(self):
+        """Support length checking"""
+        return len(self._items)
+
+    def __getitem__(self, idx):
+        """Support array-style access"""
+        return self._items[idx]
 
     def has_items(self) -> bool:
         return bool(self._items)
@@ -48,10 +56,11 @@ class FastExtractor(BaseAgent):
             format=context['config'].format
         )
 
-    async def create_iterator(self, content: Any, config: ExtractConfig) -> FastItemIterator:
-        """Create iterator for fast extraction results"""
+    def create_iterator(self, content: Any, config: ExtractConfig) -> FastItemIterator:
+        """Create iterator for fast extraction - synchronous interface"""
         try:
-            result = await self.process({
+            # Use synchronous process instead of async
+            result = self.process({
                 'content': content,
                 'config': config
             })

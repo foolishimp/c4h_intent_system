@@ -90,14 +90,11 @@ class SemanticIterator(BaseAgent):
             asyncio.set_event_loop(self._loop)
 
     def __iter__(self):
-        """Initialize iteration"""
-        self._ensure_event_loop()
-        self._current_mode = self.extractor_config.initial_mode
-        
-        # For FAST mode, pre-extract all items
+        """Initialize iteration - synchronous interface"""
         if self._current_mode == ExtractionMode.FAST:
-            self._current_items = self._loop.run_until_complete(
-                self._fast_extractor.create_iterator(self._content, self._config)
+            self._current_items = self._fast_extractor.create_iterator(
+                self._content, 
+                self._config
             )
             if not self._current_items.has_items() and self.extractor_config.allow_fallback:
                 for mode in self.extractor_config.fallback_modes:
@@ -105,7 +102,6 @@ class SemanticIterator(BaseAgent):
                               from_mode=self._current_mode.value,
                               to_mode=mode.value)
                     self._current_mode = mode
-                    # Fallback to SLOW mode if needed
                     if mode == ExtractionMode.SLOW:
                         break
         
@@ -113,10 +109,9 @@ class SemanticIterator(BaseAgent):
         return self
 
     def __next__(self):
-            """Get next item using current mode"""
+            """Get next item using current mode - synchronous interface"""
             if self._current_mode == ExtractionMode.FAST:
                 if not self._current_items:
-                    # One-time extract all items
                     response = self._fast_extractor.process({
                         'content': self._content,
                         'config': self._config
@@ -129,7 +124,6 @@ class SemanticIterator(BaseAgent):
                             self._current_mode = ExtractionMode.SLOW
                             return self.__next__()
 
-                # Return from cached items
                 if self._position < len(self._current_items):
                     item = self._current_items[self._position]
                     self._position += 1
@@ -154,9 +148,10 @@ class SemanticIterator(BaseAgent):
                 return content
 
     def configure(self, content: Any, config: ExtractConfig):
-        """Configure iterator for use"""
+        """Configure iterator for use - synchronous interface"""
         self._content = content
         self._config = config
         self._position = 0
         self._current_items = None
+        self._current_mode = self.extractor_config.initial_mode
         return self

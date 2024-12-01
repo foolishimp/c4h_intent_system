@@ -2,9 +2,11 @@
 Slow extraction mode with lazy LLM calls.
 Path: src/skills/_semantic_slow.py
 """
+# src/skills/_semantic_slow.py
 
 from typing import Dict, Any, Optional
 import structlog
+import asyncio
 from agents.base import BaseAgent, LLMProvider, AgentResponse
 from skills.shared.types import ExtractConfig
 import json
@@ -22,18 +24,27 @@ class SlowItemIterator:
         self._has_items = False
         self._current_item = None
         self._max_attempts = 10  # Safety limit
+        self._ensure_event_loop()
 
-    def __aiter__(self):
+    def _ensure_event_loop(self):
+        """Ensure we have an event loop for async operations"""
+        try:
+            self._loop = asyncio.get_event_loop()
+        except RuntimeError:
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+
+    def __iter__(self):
         return self
 
-    async def __anext__(self):
-        """Get next item, making LLM call only when needed"""
+    def __next__(self):
+        """Synchronous next implementation wrapping async calls"""
         if self._exhausted or self._position >= self._max_attempts:
-            raise StopAsyncIteration
+            raise StopIteration
 
         try:
-            # Get next item using LLM
-            result = await self._extractor.process({
+            # Run async extraction synchronously
+            result = self._extractor.process({
                 'content': self._content,
                 'config': self._config,
                 'position': self._position
@@ -41,14 +52,14 @@ class SlowItemIterator:
 
             if not result.success:
                 self._exhausted = True
-                raise StopAsyncIteration
+                raise StopIteration
 
             response = result.data.get('response', '')
             
             # Check for completion marker
             if 'NO_MORE_ITEMS' in str(response):
                 self._exhausted = True
-                raise StopAsyncIteration
+                raise StopIteration
 
             # Parse response
             try:
@@ -59,7 +70,7 @@ class SlowItemIterator:
             except json.JSONDecodeError:
                 logger.error("slow_extraction.parse_error", position=self._position)
                 self._exhausted = True
-                raise StopAsyncIteration
+                raise StopIteration
 
             self._position += 1
             self._has_items = True
@@ -68,7 +79,7 @@ class SlowItemIterator:
         except Exception as e:
             logger.error("slow_iteration.failed", error=str(e), position=self._position)
             self._exhausted = True
-            raise StopAsyncIteration
+            raise StopIteration
 
     def has_items(self) -> bool:
         return self._has_items
@@ -101,6 +112,6 @@ class SlowExtractor(BaseAgent):
         suffix = {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10 if n % 100 not in [11, 12, 13] else 0, 'th')
         return f"{n}{suffix}"
 
-    async def create_iterator(self, content: Any, config: ExtractConfig) -> SlowItemIterator:
-        """Create iterator for slow extraction"""
+    def create_iterator(self, content: Any, config: ExtractConfig) -> SlowItemIterator:
+        """Create iterator for slow extraction - synchronous interface"""
         return SlowItemIterator(self, content, config)
