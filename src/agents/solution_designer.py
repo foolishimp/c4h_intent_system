@@ -1,5 +1,5 @@
 """
-Solution designer implementation following BaseAgent design patterns.
+Solution designer implementation following BaseAgent design principles.
 Path: src/agents/solution_designer.py
 """
 
@@ -64,7 +64,7 @@ class SolutionDesigner(BaseAgent):
             return str(context)
 
     def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process solution design request - single shot LLM operation"""
+        """Process solution design request - synchronous interface"""
         try:
             logger.info("solution_designer.process_start", 
                        has_context=bool(context),
@@ -79,7 +79,7 @@ class SolutionDesigner(BaseAgent):
                     error="Missing discovery data - cannot analyze code"
                 )
 
-            # Use BaseAgent's process for LLM interaction
+            # Use BaseAgent's synchronous process
             response = super().process(context)
             
             logger.info("solution_designer.process_complete",
@@ -95,3 +95,28 @@ class SolutionDesigner(BaseAgent):
         except Exception as e:
             logger.error("solution_designer.process_failed", error=str(e))
             return AgentResponse(success=False, data={}, error=str(e))
+
+    def _process_llm_response(self, content: str, raw_response: Any) -> Dict[str, Any]:
+        """Process LLM response into standard format"""
+        try:
+            # Extract JSON changes from response
+            if isinstance(content, str):
+                data = json.loads(content)
+            else:
+                data = content
+
+            return {
+                "changes": data.get("changes", []),
+                "raw_output": raw_response,
+                "raw_content": content,
+                "timestamp": datetime.utcnow().isoformat()
+            }
+
+        except json.JSONDecodeError as e:
+            logger.error("solution_designer.json_parse_error", error=str(e))
+            return {
+                "error": f"Failed to parse LLM response: {str(e)}",
+                "raw_output": raw_response,
+                "raw_content": content,
+                "timestamp": datetime.utcnow().isoformat()
+            }

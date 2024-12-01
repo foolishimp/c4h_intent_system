@@ -242,7 +242,8 @@ class IntentAgent:
             }
 
         try:
-            result = await self.solution_designer.process({
+            # Call synchronous process method without await
+            result = self.solution_designer.process({
                 "intent": self.current_state.intent.description,
                 "discovery_data": self.current_state.discovery_data,
                 "iteration": self.current_state.iteration
@@ -262,6 +263,7 @@ class IntentAgent:
                 "error": str(e)
             }
 
+
     async def _execute_code_changes(self) -> Dict[str, Any]:
         """Execute code changes stage"""
         if not self.current_state or not self.current_state.solution_design_data:
@@ -277,7 +279,8 @@ class IntentAgent:
                 "changes": solution_data.get("changes", [])
             }
 
-            result = await self.coder.process(coder_input)
+            # Call synchronous process method without await
+            result = self.coder.process(coder_input)
             await self.current_state.update_agent_state("coder", result)
 
             return {

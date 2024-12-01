@@ -45,7 +45,7 @@ llm_config:
 
     solution_designer:
       provider: "anthropic"
-      model: "claude-3.5-sonnet-20241022"
+      model: "claude-3-5-sonnet-20241022"
       temperature: 0
       prompts:
         system: |
