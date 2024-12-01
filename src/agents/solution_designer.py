@@ -1,11 +1,12 @@
 """
-Solution designer implementation for orchestrating code modifications.
+Solution designer implementation following BaseAgent design patterns.
 Path: src/agents/solution_designer.py
 """
 
 from typing import Dict, Any, Optional
 import structlog
 from datetime import datetime
+import json
 from .base import BaseAgent, LLMProvider, AgentResponse
 
 logger = structlog.get_logger()
@@ -13,101 +14,84 @@ logger = structlog.get_logger()
 class SolutionDesigner(BaseAgent):
     """Designs specific code modifications based on intent and discovery analysis."""
     
-    def __init__(self, 
-                 provider: LLMProvider = LLMProvider.ANTHROPIC,
-                 model: Optional[str] = None,
-                 temperature: float = 0,
-                 config: Optional[Dict[str, Any]] = None):
-        """Initialize designer with specified provider."""
+    def __init__(self,
+                provider: LLMProvider = LLMProvider.ANTHROPIC,
+                model: Optional[str] = None,
+                temperature: float = 0,
+                config: Optional[Dict[str, Any]] = None):
+        """Initialize designer with system configuration."""
         super().__init__(
             provider=provider,
             model=model,
             temperature=temperature,
             config=config
         )
+        
+        logger.info("solution_designer.initialized", 
+                   provider=str(provider),
+                   model=model,
+                   config_keys=list(config.keys()) if isinstance(config, dict) else None)
 
     def _get_agent_name(self) -> str:
+        """Get agent name for config lookup"""
         return "solution_designer"
-    
-    def _get_system_message(self) -> str:
-        return """You are a code modification expert that generates specific code changes.
-        When given source code and an intent, you will:
 
-        1. First validate if changes are possible:
-           a. If code already has intended changes, return {"no_changes_needed": "explain why"}
-           b. If intent is missing or unclear, return {"needs_clarification": "specific question"}
-           c. If code is missing, return {"needs_information": ["missing items"]}
-
-        2. For each required change, provide modifications in standard git diff format:
-        {
-            "changes": [
-                {
-                    "file_path": "exact/path/to/file",
-                    "type": "modify",
-                    "description": "Brief description of the change",
-                    "diff": "diff --git a/path/to/file b/path/to/file\\n--- a/path/to/file\\n+++ b/path/to/file\\n@@ -1,5 +1,6 @@\\n unchanged line\\n-removed line\\n+added line\\n+added line\\n unchanged line"
-                }
-            ]
-        }"""
-    
     def _format_request(self, context: Optional[Dict[str, Any]]) -> str:
-        """Format the solution design prompt using provided context"""
+        """Format request using configured prompt template"""
         if not context:
-            return "No context provided. Please specify intent and code to modify."
+            return self._get_prompt('validation')
 
-        discovery_data = context.get('discovery_data', {})
-        raw_output = discovery_data.get('raw_output', '')
-
-        return f"""Based on the following source code, design specific code changes to implement this intent.
-        
-        INTENT:
-        {context.get('intent', {}).get('description', 'No description provided')}
-
-        SOURCE FILES:
-        {raw_output}
-
-        ITERATION: {context.get('iteration', 0)}
-        """
-
-    async def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
-        """Process solution design request"""
         try:
-            # Log incoming context
-            logger.info("solution_design.started", 
+            # Use template from config
+            template = self._get_prompt('design')
+            
+            # Extract values from context
+            discovery_data = context.get('discovery_data', {})
+            raw_output = discovery_data.get('raw_output', '')
+            intent_desc = context.get('intent', {}).get('description', '')
+            iteration = context.get('iteration', 0)
+            
+            # Apply template
+            return template.format(
+                intent=intent_desc,
+                source_code=raw_output,
+                iteration=iteration
+            )
+
+        except Exception as e:
+            logger.error("solution_designer.format_error", error=str(e))
+            return str(context)
+
+    def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
+        """Process solution design request synchronously"""
+        try:
+            logger.info("solution_designer.process_start", 
                        has_context=bool(context),
                        intent=context.get('intent', {}).get('description') if context else None)
             
-            # Check for discovery output
+            # Validate required data
             discovery_data = context.get('discovery_data', {})
-            raw_output = discovery_data.get('raw_output')
-            
-            logger.debug("solution_design.discovery_data",
-                        has_raw_output=bool(raw_output),
-                        discovery_data_keys=list(discovery_data.keys()) if discovery_data else None)
-            
-            if not raw_output:
-                logger.error("solution_design.missing_discovery")
+            if not discovery_data or 'raw_output' not in discovery_data:
+                logger.error("solution_designer.missing_discovery")
                 return self._create_standard_response(
                     False,
                     {},
                     "Missing discovery output data - cannot analyze code"
                 )
-
-            # Pass through to LLM
-            response = await super().process(context)
             
-            # Log response for debugging
-            logger.info("solution_design.completed",
+            # Use BaseAgent's synchronous process
+            response = super().process(context)
+            
+            logger.info("solution_designer.process_complete",
                        success=response.success,
-                       has_data=bool(response.data),
-                       error=response.error)
+                       error=response.error if not response.success else None)
             
-            logger.debug("solution_design.response_content",
-                        data_keys=list(response.data.keys()) if response.data else None,
-                        response_preview=str(response.data.get('response', ''))[:200] if response.data else None)
+            if response.success:
+                logger.debug("solution_designer.changes_generated",
+                           changes_count=len(response.data.get('changes', [])) if response.data else 0)
 
             return response
 
         except Exception as e:
-            logger.error("solution_design.failed", error=str(e))
+            logger.error("solution_designer.process_failed", error=str(e))
             return self._create_standard_response(False, {}, str(e))

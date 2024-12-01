@@ -34,7 +34,7 @@ class DiscoveryAgent(BaseAgent):
             self.workspace_root.mkdir(parents=True, exist_ok=True)
         
     def _get_agent_name(self) -> str:
-        return "discovery_agent"
+        return "discovery"
         
     def _get_system_message(self) -> str:
         return """You are a project discovery agent.

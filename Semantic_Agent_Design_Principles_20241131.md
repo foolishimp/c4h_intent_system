@@ -343,6 +343,91 @@ class ErrorHandling:
             return self._handle_unknown_error(error)
 ```
 
+## 3. Higher Order Orchestration
+
+### 3.1 Coder Implementation
+
+```mermaid
+classDiagram
+    class Coder {
+        +process(context) Response
+        -iterator: SemanticIterator
+        -asset_manager: AssetManager
+        -_validate_request(context) bool
+        -_handle_extraction() Result
+        -_process_changes(changes) List
+    }
+    
+    class SemanticIterator {
+        +configure(content) self
+        +__iter__() Iterator
+        +__next__() Any
+        -_metrics: ExtractionMetrics
+    }
+    
+    class AssetManager {
+        +process_action(action) Result
+        -merger: SemanticMerge
+        -extractor: SemanticExtract
+        -_create_backup(path) Path
+        -_restore_backup(path) bool
+    }
+
+    class SemanticMerge {
+        +process(context) Response
+        -_validate_merge(result) bool
+    }
+
+    class SemanticExtract {
+        +process(context) Response
+        -_extract_path(content) str
+    }
+    
+    Coder --> SemanticIterator
+    Coder --> AssetManager
+    AssetManager --> SemanticMerge
+    AssetManager --> SemanticExtract
+```
+
+Coder's responsibilities:
+- Uses SemanticIterator to process input changes
+- Uses AssetManager to handle file operations
+- Maintains process state and error handling
+- Provides synchronous public interface
+
+AssetManager's responsibilities:
+- Uses SemanticExtract for path and content extraction
+- Uses SemanticMerge for code merging
+- Handles file backups and restoration
+- Manages file system operations
+
+Process Flow:
+```mermaid
+sequenceDiagram
+    participant Client
+    participant Coder
+    participant Iterator
+    participant AssetManager
+    participant Extract
+    participant Merge
+
+    Client->>Coder: process(context)
+    Coder->>Iterator: configure(content)
+    
+    loop For Each Change
+        Coder->>Iterator: next()
+        Iterator-->>Coder: change
+        Coder->>AssetManager: process_action(change)
+        AssetManager->>Extract: process(path extraction)
+        Extract-->>AssetManager: path
+        AssetManager->>Merge: process(merge)
+        Merge-->>AssetManager: result
+        AssetManager-->>Coder: result
+    end
+    
+    Coder-->>Client: response
+```
+
 ## 4. Testing Strategy
 
 ### 4.1 Unit Tests

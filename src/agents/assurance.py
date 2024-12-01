@@ -60,7 +60,7 @@ class AssuranceAgent(BaseAgent):
         
     def _get_agent_name(self) -> str:
         """Get agent name - required by BaseAgent"""
-        return "assurance_agent"
+        return "assurance"
     
     def _get_system_message(self) -> str:
         """Get system message - required by BaseAgent"""

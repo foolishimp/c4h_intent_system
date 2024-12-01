@@ -1,6 +1,5 @@
 """
-Intent agent implementation for orchestrating the refactoring workflow.
-Handles coordination between discovery, solution design, implementation and validation stages.
+Intent agent implementation for coordinating the refactoring workflow.
 Path: src/agents/intent_agent.py
 """
 
@@ -15,7 +14,7 @@ import structlog
 from models.intent import Intent, IntentStatus, AgentState
 from agents.discovery import DiscoveryAgent 
 from agents.solution_designer import SolutionDesigner
-from agents.coder import Coder, MergeMethod  
+from agents.coder import Coder
 from agents.assurance import AssuranceAgent
 from config import SystemConfig
 from agents.base import AgentResponse
@@ -58,33 +57,24 @@ class WorkflowState:
         # Priority order
         agents = ["discovery", "solution_design", "coder", "assurance"]
         
-        # Find first incomplete agent
         for agent in agents:
             data_key = f"{agent}_data"
             data = getattr(self, data_key, None)
-                
-            logger.debug("checking_agent_status", 
-                        agent=agent,
-                        data=data,
-                        has_data=bool(data) and data.get("status") == "completed")
-                    
-            # Report success on individual stage completion
+            
             is_complete = bool(data) and data.get("status") == "completed"
             if not is_complete:
-                return agent  # Return next agent to process
-                
-            # Log successful completion
+                return agent
+                    
             logger.info(f"workflow.{agent}_completed")
                     
-        return None  # All stages complete
+        return None
 
     async def update_agent_state(self, agent: str, result: AgentResponse) -> None:
         """Update agent state with status from agent"""
         try:
-            # Create standard state data structure
             state_data = {
-                "raw_output": result.data.get("raw_output", ""),  # Get raw_output from data dict
-                "files": result.data.get("files", {}),  # Include files mapping
+                "raw_output": result.data.get("raw_output", ""),
+                "files": result.data.get("files", {}),
                 "timestamp": datetime.utcnow().isoformat(),
                 "status": "completed" if result.success else "failed",
                 "error": result.error
@@ -124,6 +114,7 @@ class IntentAgent:
         try:
             config_dict = config.dict()
             
+            # Initialize all agents with complete system config
             discovery_config = config.get_agent_config("discovery")
             self.discovery = DiscoveryAgent(
                 provider=discovery_config.provider_enum,
@@ -134,7 +125,7 @@ class IntentAgent:
             )
             
             designer_config = config.get_agent_config("solution_designer")
-            self.designer = SolutionDesigner(
+            self.solution_designer = SolutionDesigner(
                 provider=designer_config.provider_enum,
                 model=designer_config.model,
                 temperature=designer_config.temperature,
@@ -164,14 +155,14 @@ class IntentAgent:
             logger.info("intent_agent.initialized", 
                     max_iterations=max_iterations,
                     discovery_model=self.discovery.model,
-                    designer_model=self.designer.model,
+                    designer_model=self.solution_designer.model,
                     coder_model=self.coder.model,
                     assurance_model=self.assurance.model)
                     
         except Exception as e:
             logger.error("intent_agent.initialization_failed",
                         error=str(e),
-                        config_keys=list(config_dict.keys()))
+                        config_keys=list(config_dict.keys()) if config_dict else None)
             raise ValueError(f"Failed to initialize intent agent: {str(e)}")
     
     def get_current_agent(self) -> Optional[str]:
@@ -213,18 +204,7 @@ class IntentAgent:
             result = await self._execute_agent(current_agent)
             
             if not result.get("success", False):
-                if self.backup_dir:
-                    backup_path = self.backup_dir / project_path.name
-                    if backup_path.exists():
-                        if project_path.is_dir():
-                            shutil.rmtree(project_path)
-                        else:
-                            project_path.unlink(missing_ok=True)
-                        if backup_path.is_dir():
-                            shutil.copytree(backup_path, project_path)
-                        else:
-                            shutil.copy2(backup_path, project_path)
-                        logger.info("intent.restored_backup")
+                await self._handle_error(result.get("error", "Unknown error"))
                 return self._create_error_response(result.get("error", "Unknown error"))
 
             return self._create_result_response()
@@ -246,11 +226,6 @@ class IntentAgent:
             "project_path": self.current_state.intent.project_path
         })
 
-        logger.debug("discovery.result_received", 
-                    success=result.success,
-                    has_data=bool(result.data),
-                    raw_output_size=len(result.data.get("raw_output", "")) if result.data else 0)
-
         await self.current_state.update_agent_state("discovery", result)
 
         return {
@@ -267,7 +242,7 @@ class IntentAgent:
             }
 
         try:
-            result = await self.designer.process({
+            result = await self.solution_designer.process({
                 "intent": self.current_state.intent.description,
                 "discovery_data": self.current_state.discovery_data,
                 "iteration": self.current_state.iteration
@@ -295,16 +270,27 @@ class IntentAgent:
                 "error": "Solution design required for code changes"
             }
 
-        result = await self.coder.process({
-            "changes": self.current_state.solution_design_data.get("changes", [])
-        })
+        try:
+            # Format changes for coder
+            solution_data = self.current_state.solution_design_data
+            coder_input = {
+                "changes": solution_data.get("changes", [])
+            }
 
-        await self.current_state.update_agent_state("coder", result)
+            result = await self.coder.process(coder_input)
+            await self.current_state.update_agent_state("coder", result)
 
-        return {
-            "success": result.success,
-            "error": result.error
-        }
+            return {
+                "success": result.success,
+                "error": result.error
+            }
+
+        except Exception as e:
+            logger.error("code_changes.failed", error=str(e))
+            return {
+                "success": False,
+                "error": str(e)
+            }
 
     async def _execute_assurance(self) -> Dict[str, Any]:
         """Execute assurance stage"""
@@ -357,6 +343,25 @@ class IntentAgent:
             logger.error("agent.execution_failed", error=str(e), agent=agent_type)
             return {"success": False, "error": str(e)}
 
+    async def _handle_error(self, error: str) -> None:
+        """Handle workflow error with backup restoration"""
+        try:
+            if self.backup_dir and self.current_state:
+                project_path = Path(self.current_state.project_path)
+                backup_path = self.backup_dir / project_path.name
+                if backup_path.exists():
+                    if project_path.is_dir():
+                        shutil.rmtree(project_path)
+                    else:
+                        project_path.unlink(missing_ok=True)
+                    if backup_path.is_dir():
+                        shutil.copytree(backup_path, project_path)
+                    else:
+                        shutil.copy2(backup_path, project_path)
+                    logger.info("intent.restored_backup")
+        except Exception as e:
+            logger.error("error.restore_failed", error=str(e))
+
     def _create_error_response(self, error: str) -> Dict[str, Any]:
         """Create error response"""
         return {
@@ -374,15 +379,6 @@ class IntentAgent:
             }
 
         workflow_data = self._get_workflow_data()
-        
-        # The issue is here - we're marking as failed unless everything is complete
-        stages_complete = all(
-            data.get("status") == "completed"
-            for name, data in workflow_data.items()
-            if isinstance(data, dict) and name != "current_stage"
-        )
-
-        # We should instead check if the current stage completed successfully
         current_stage = self.current_state.get_current_agent()
         current_stage_data = workflow_data.get(
             f"{current_stage}_data" if current_stage else None, 
@@ -391,7 +387,7 @@ class IntentAgent:
         stage_success = current_stage_data.get("status") == "completed"
 
         return {
-            "status": "success" if stage_success else "failed",  # Use current stage status
+            "status": "success" if stage_success else "failed",
             "workflow_data": workflow_data,
             "error": self.current_state.error
         }

@@ -10,12 +10,10 @@ from pathlib import Path
 import argparse
 import structlog
 from typing import Optional, Dict, Any
-import uuid
 from dataclasses import dataclass
 
 from cli.console_menu import ConsoleMenu
 from agents.intent_agent import IntentAgent
-from agents.coder import MergeMethod
 from config import SystemConfig
 
 logger = structlog.get_logger()
@@ -24,32 +22,47 @@ logger = structlog.get_logger()
 class RefactoringConfig:
     """Combined configuration from CLI and config file"""
     project_path: Optional[Path]
-    intent: Optional[str]
-    merge_strategy: str
-    max_iterations: int
-    interactive: bool
-    config_path: Optional[Path]
+    intent: Optional[str] 
+    merge_strategy: str = "smart"
+    max_iterations: int = 3
+    interactive: bool = False
+    config_path: Optional[Path] = None
 
 def load_config(config_path: Optional[Path] = None) -> SystemConfig:
-    """Load system configuration from standard locations if not specified"""
-    if config_path is None:
-        # Look in standard locations
-        locations = [
+    """Load system configuration and merge with app config if specified"""
+    try:
+        # Find system config first
+        system_locations = [
             Path("config/system_config.yml"),
             Path("../config/system_config.yml"),
             Path(__file__).parent.parent / "config" / "system_config.yml"
         ]
         
-        for path in locations:
+        for path in system_locations:
             if path.exists():
-                config_path = path
+                system_path = path
                 break
         else:
-            logger.warning("config.not_found", searched_paths=[str(p) for p in locations])
-            raise ValueError("No system_config.yml found in standard locations")
-    
-    logger.info("config.loading", path=str(config_path))
-    return SystemConfig.load(config_path)
+            print("Error: No system_config.yml found in standard locations")
+            sys.exit(1)
+
+        # If app config specified, merge with system config
+        if config_path:
+            logger.info("config.loading", system=str(system_path), app=str(config_path))
+            config = SystemConfig.load_with_app_config(system_path, config_path)
+            
+            # Extract runtime settings after loading
+            runtime = config.get_runtime_config()
+            logger.debug("config.runtime_loaded", runtime=runtime)
+            return config
+        
+        # Otherwise just load system config
+        logger.info("config.loading", path=str(system_path))
+        return SystemConfig.load(system_path)
+
+    except Exception as e:
+        print(f"\nConfiguration error: {str(e)}")
+        sys.exit(1)
 
 def parse_args() -> RefactoringConfig:
     """Parse command line arguments with config file fallback"""
@@ -60,8 +73,8 @@ def parse_args() -> RefactoringConfig:
     parser.add_argument('--intent', type=str,
                        help="Description of the intended refactoring")
     parser.add_argument('--merge-strategy', 
-                       choices=[method.value for method in MergeMethod],
-                       default=MergeMethod.SMART.value,
+                       choices=['smart', 'inline', 'git'],
+                       default='smart',
                        help="Strategy for merging code changes")
     parser.add_argument('--max-iterations', type=int, default=3,
                        help="Maximum number of refinement iterations")
@@ -84,51 +97,50 @@ def parse_args() -> RefactoringConfig:
 async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
     """Process a refactoring request either interactively or directly"""
     try:
-        # Load configuration first
         sys_config = load_config(cli_config.config_path)
+        runtime_config = sys_config.get_runtime_config()
         
-        # CLI args override config file
-        project_path = cli_config.project_path or (
-            Path(sys_config.project.default_path) if sys_config.project.default_path else None
-        )
-        
-        intent = cli_config.intent or sys_config.project.default_intent
+        # Use config values if CLI values not provided
+        project_path = cli_config.project_path or Path(runtime_config.get('project_path', ''))
+        intent_desc = cli_config.intent or runtime_config.get('intent', {}).get('description')
         
         if cli_config.interactive:
-            # Create base workspace directory
             workspace_dir = Path(sys_config.project.workspace_root) / "current"
             workspace_dir.parent.mkdir(parents=True, exist_ok=True)
             
-            # Start interactive menu with pre-filled values
             menu = ConsoleMenu(workspace_dir, config=sys_config)
+            
+            # Set values from config
             if project_path:
                 menu.project_path = project_path
-            if intent:
-                menu.intent_description = intent
+            if intent_desc:
+                menu.intent_description = intent_desc
                 
             await menu.main_menu()
             return {"status": "completed"}
         else:
-            # Direct refactoring mode
-            if not project_path or not intent:
+            if not project_path or not intent_desc:
                 return {
                     "status": "error",
                     "error": "Project path and intent required in non-interactive mode"
                 }
                 
-            # Initialize intent agent and process request
-            agent = IntentAgent(config=sys_config, max_iterations=cli_config.max_iterations)
+            agent = IntentAgent(
+                config=sys_config,
+                max_iterations=cli_config.max_iterations
+            )
+            
             result = await agent.process(
                 project_path=project_path,
                 intent_desc={
-                    "description": intent,
+                    "description": intent_desc,
                     "merge_strategy": cli_config.merge_strategy
                 }
             )
+            
             return result
             
     except Exception as e:
-        logger.exception("refactoring.failed", error=str(e))
         return {
             "status": "error",
             "error": str(e)
@@ -139,21 +151,20 @@ def main():
     cli_config = parse_args()
     
     try:
-        # Run async event loop
         result = asyncio.run(process_refactoring(cli_config))
         
         if result["status"] == "error":
-            logger.error("refactoring.failed", error=result["error"])
+            print(f"\nError: {result['error']}")
             sys.exit(1)
         else:
-            logger.info("refactoring.completed")
+            print("\nRefactoring completed successfully")
             sys.exit(0)
             
     except KeyboardInterrupt:
-        logger.warning("Operation cancelled by user")
+        print("\nOperation cancelled by user")
         sys.exit(1)
     except Exception as e:
-        logger.exception("Unexpected error", error=str(e))
+        print(f"\nError: {str(e)}")
         sys.exit(1)
 
 if __name__ == "__main__":
