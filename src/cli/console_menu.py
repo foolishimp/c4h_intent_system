@@ -68,16 +68,21 @@ class ConsoleMenu(BaseMenu):
             if isinstance(intent_config, dict):
                 self.intent_description = intent_config.get('description')
                 self.intent_context = intent_config
-            else:
+            elif isinstance(intent_config, str):
                 self.intent_description = intent_config
                 self.intent_context = {'description': intent_config}
 
-        # Log initialization after all instance variables are set
+            # Log the loaded values
+            logger.debug("console_menu.config_loaded",
+                        project_path=str(self.project_path) if self.project_path else None,
+                        intent_description=self.intent_description,
+                        intent_context=self.intent_context)
+            
         logger.info("console_menu.initialized",
-                   workspace=str(self.workspace_path),
-                   has_config=bool(config),
-                   project_path=str(self.project_path) if self.project_path else None,
-                   intent_description=self.intent_description)
+                workspace=str(self.workspace_path),
+                has_config=bool(config),
+                project_path=str(self.project_path) if self.project_path else None,
+                intent_description=self.intent_description)
 
     def get_menu_items(self) -> List[MenuItem]:
         """Get menu items with shortcuts"""

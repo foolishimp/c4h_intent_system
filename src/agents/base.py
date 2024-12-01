@@ -50,7 +50,7 @@ class BaseAgent(ABC):
         self._validate_init_params(provider, model, config)
         
         self.provider = provider
-        self.model = model
+        self.model = f"{provider.value}/{model}"  # Add provider prefix to model name
         self.temperature = temperature
         self.max_retries = max_retries
         self.config = config

@@ -98,6 +98,8 @@ class AppConfig(BaseModel):
     instruction: str
     format: str = "json"
     merge_method: str = "smart"
+    # Added: Intent configuration support
+    intent: Optional[Dict[str, Any]] = None  # Supports structured intent data
 
     @validator('provider')
     def valid_provider(cls, v):
@@ -207,7 +209,9 @@ class SystemConfig(BaseModel):
                 'input_data': app_config.input_data, 
                 'instruction': app_config.instruction,
                 'format': app_config.format,
-                'merge_method': app_config.merge_method
+                'merge_method': app_config.merge_method,
+                # Added: Include intent configuration in runtime settings
+                'intent': app_config.intent
             }
             
             return cls(**merged_config)

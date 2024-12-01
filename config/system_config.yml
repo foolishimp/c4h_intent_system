@@ -49,20 +49,40 @@ llm_config:
       temperature: 0
       prompts:
         system: |
-          You are a code modification expert that generates specific code changes.
-          When given source code and an intent, you will:
+          You are an expert code modification planner.
+          Your role is to analyze source code and generate precise modification instructions.
+          For each required change:
+          1. Specify exact file paths
+          2. Provide complete modifications in git diff format
+          3. Include clear descriptions of changes
+          Do not validate or transform input - focus on generating clear instructions.
 
-          1. First validate if changes are possible:
-             a. If code already has intended changes, return {"no_changes_needed": "explain why"}
-             b. If intent is missing or unclear, return {"needs_clarification": "specific question"}
-             c. If code is missing, return {"needs_information": ["missing items"]}
+        solution: |
+          Generate modification instructions for the following code:
 
-          2. For each required change, provide modifications in standard git diff format
-        validation: |
-          Validate the following aspects of the solution:
-          1. All file paths exist
-          2. Changes are properly formatted
-          3. No unintended side effects
+          Intent:
+          {intent}
+
+          Source Code:
+          {source_code}
+
+          Return a JSON object with this exact structure:
+          {{
+            "changes": [
+              {{
+                "file_path": "path to file",
+                "type": "modify",
+                "description": "clear description",
+                "diff": "git style diff"
+              }}
+            ]
+          }}
+
+          CRITICAL REQUIREMENTS:
+          - Use proper git diff format
+          - Include all necessary imports
+          - Preserve existing code functionality
+          - Return only the JSON result, no explanations or extra text
 
     semantic_extract:
       provider: "anthropic"

@@ -104,6 +104,7 @@ async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
         project_path = cli_config.project_path or Path(runtime_config.get('project_path', ''))
         
         # Build complete intent context from both CLI and config
+        # Build complete intent context from both CLI and config
         intent_context = {}
         
         # Start with config intent if available
@@ -112,20 +113,19 @@ async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
             intent_context.update(config_intent)
         elif isinstance(config_intent, str):
             intent_context['description'] = config_intent
-            
-        # Add/override with CLI values if provided
-        if cli_config.intent:
-            intent_context['description'] = cli_config.intent
-        if cli_config.merge_strategy:
-            intent_context['merge_strategy'] = cli_config.merge_strategy
-            
+
         # Add runtime settings
         intent_context.update({
+            'merge_strategy': cli_config.merge_strategy or runtime_config.get('merge_method', 'smart'),
             'max_iterations': cli_config.max_iterations,
             'runtime_settings': runtime_config.get('runtime', {}),
             'scope': config_intent.get('scope', ['*.py']) if isinstance(config_intent, dict) else ['*.py']
         })
         
+        # Add/override with CLI values if provided
+        if cli_config.intent:
+            intent_context['description'] = cli_config.intent
+
         logger.debug("refactoring.context_built", 
                     project_path=str(project_path),
                     intent_context=intent_context,

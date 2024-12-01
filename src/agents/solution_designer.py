@@ -36,20 +36,21 @@ class SolutionDesigner(BaseAgent):
         """Get agent name for config lookup"""
         return "solution_designer"
 
-    def _format_request(self, context: Optional[Dict[str, Any]]) -> str:
+    def _format_request(self, context: Dict[str, Any]) -> str:
         """Format request using configured prompt template"""
-        if not context:
-            return self._get_prompt('validation')
-
         try:
-            # Use template from config
-            template = self._get_prompt('design')
+            template = self._get_prompt('solution')
             
             # Extract values from context
             discovery_data = context.get('discovery_data', {})
             raw_output = discovery_data.get('raw_output', '')
             intent_desc = context.get('intent', {}).get('description', '')
             iteration = context.get('iteration', 0)
+            
+            logger.debug("solution_designer.format_request",
+                        intent=intent_desc,
+                        has_discovery=bool(raw_output),
+                        iteration=iteration)
             
             # Apply template
             return template.format(
@@ -62,36 +63,35 @@ class SolutionDesigner(BaseAgent):
             logger.error("solution_designer.format_error", error=str(e))
             return str(context)
 
-    def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
-        """Process solution design request synchronously"""
+    def process(self, context: Dict[str, Any]) -> AgentResponse:
+        """Process solution design request - single shot LLM operation"""
         try:
             logger.info("solution_designer.process_start", 
                        has_context=bool(context),
                        intent=context.get('intent', {}).get('description') if context else None)
-            
-            # Validate required data
-            discovery_data = context.get('discovery_data', {})
-            if not discovery_data or 'raw_output' not in discovery_data:
+
+            # Minimal validation - just ensure we have input
+            if not context.get('discovery_data', {}).get('raw_output'):
                 logger.error("solution_designer.missing_discovery")
-                return self._create_standard_response(
-                    False,
-                    {},
-                    "Missing discovery output data - cannot analyze code"
+                return AgentResponse(
+                    success=False,
+                    data={},
+                    error="Missing discovery data - cannot analyze code"
                 )
-            
-            # Use BaseAgent's synchronous process
+
+            # Use BaseAgent's process for LLM interaction
             response = super().process(context)
             
             logger.info("solution_designer.process_complete",
-                       success=response.success,
-                       error=response.error if not response.success else None)
-            
+                      success=response.success,
+                      error=response.error if not response.success else None)
+
             if response.success:
                 logger.debug("solution_designer.changes_generated",
-                           changes_count=len(response.data.get('changes', [])) if response.data else 0)
+                          changes=json.dumps(response.data.get('changes', []), indent=2))
 
             return response
 
         except Exception as e:
             logger.error("solution_designer.process_failed", error=str(e))
-            return self._create_standard_response(False, {}, str(e))
+            return AgentResponse(success=False, data={}, error=str(e))
