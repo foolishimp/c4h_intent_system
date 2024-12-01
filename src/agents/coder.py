@@ -25,6 +25,7 @@ class CoderResult:
     changes: List[AssetResult]
     error: Optional[str] = None
     metrics: Optional[Dict[str, Any]] = None
+    data: Optional[Dict[str, Any]] = None  # Add data field for test harness compatibility
 
 class Coder(BaseAgent):
     def __init__(self,
@@ -82,7 +83,7 @@ class Coder(BaseAgent):
                 format=context.get('format', 'json')
             )
 
-            # Configure iterator - it handles its own async/sync boundary
+            # Configure iterator
             self.iterator.configure(input_data, extract_config)
 
             # Process changes using configured iterator
@@ -120,9 +121,16 @@ class Coder(BaseAgent):
                 success=success,
                 changes=changes,
                 error=None if success else "All changes failed",
-                metrics=metrics
+                metrics=metrics,
+                data={"changes": changes, "metrics": metrics}  # Add structured data for test harness
             )
 
         except Exception as e:
             logger.error("coder.process_failed", error=str(e))
-            return CoderResult(success=False, changes=changes, error=str(e), metrics=metrics)
+            return CoderResult(
+                success=False, 
+                changes=changes, 
+                error=str(e), 
+                metrics=metrics,
+                data={"error": str(e), "metrics": metrics}
+            )

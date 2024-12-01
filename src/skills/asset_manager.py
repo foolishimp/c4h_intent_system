@@ -8,7 +8,7 @@ from typing import Optional, Dict, Any
 from dataclasses import dataclass
 import structlog
 import shutil
-import asyncio
+from datetime import datetime
 from skills.semantic_merge import SemanticMerge
 
 logger = structlog.get_logger()
@@ -36,6 +36,13 @@ class AssetManager:
         if backup_dir:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
 
+    def _get_next_backup_path(self, path: Path) -> Path:
+        """Generate unique backup path with timestamp"""
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        if self.backup_dir:
+            return self.backup_dir / f"{path.name}_{timestamp}"
+        return path.with_suffix(f".{timestamp}.bak")
+
     def process_action(self, action: Dict[str, Any]) -> AssetResult:
         """Process a code change action."""
         try:
@@ -52,22 +59,17 @@ class AssetManager:
                 backup_path = self._get_next_backup_path(path)
                 shutil.copy2(path, backup_path)
 
-            # Merge and write - use BaseAgent's synchronous interface
+            # Merge and write
             if self.merger:
-                # Use _loop.run_until_complete if needed for the merge
-                loop = asyncio.new_event_loop()
-                asyncio.set_event_loop(loop)
-                try:
-                    result = self.merger.process({  # Use process instead of merge
-                        'original_code': current_content,
-                        'changes': changes,
-                        'style': 'smart'
-                    })
-                    if not result.success:
-                        return AssetResult(success=False, path=path, error=result.error)
-                    final_content = result.data.get('response')
-                finally:
-                    loop.close()
+                # Use BaseAgent's synchronous interface
+                result = self.merger.process({
+                    'original_code': current_content,
+                    'changes': changes,
+                    'style': 'smart'
+                })
+                if not result.success:
+                    return AssetResult(success=False, path=path, error=result.error)
+                final_content = result.data.get('response')
             else:
                 final_content = changes
 
