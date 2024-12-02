@@ -69,12 +69,18 @@ class SemanticMerge(BaseAgent):
         content = response.get('response', '')
         if not content:
             content = response.get('raw_content', '')
-            
+                
         # Remove any markdown code block markers if present
         content = content.strip()
         if content.startswith('```'):
-            content = '\n'.join(content.split('\n')[1:-1])
-            
+            # Handle case where language is specified after backticks
+            lines = content.split('\n')
+            if len(lines) > 2:  # At least opening, content, and closing
+                # Skip first line (```python etc) and last line (```)
+                content = '\n'.join(lines[1:-1])
+            else:
+                content = content.strip('`')
+                
         return content
 
     async def merge(self, original: str, changes: Union[str, Dict[str, Any]]) -> MergeResult:

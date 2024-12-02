@@ -68,69 +68,81 @@ class Coder(BaseAgent):
         return "coder"
 
     def process(self, context: Dict[str, Any]) -> CoderResult:
-        """Process code changes synchronously"""
-        logger.info("coder.input_context", context=json.dumps(context, indent=2))
+        """Process code changes using semantic iterator"""
+        logger.info("coder.process_start", context=json.dumps(context, indent=2))
         metrics = {"start_time": datetime.utcnow().isoformat()}
         changes = []
 
         try:
-            input_data = context.get('input_data')
-            logger.info("coder.raw_input", data=input_data)
-
-            # Create extraction config from context
+            # Configure iterator with complete input and extraction config
             extract_config = ExtractConfig(
-                instruction=context.get('instruction', ''),
-                format=context.get('format', 'json')
+                instruction="""Extract all code change actions from the input.
+                            Look for file_path, type, content/diff, and description.
+                            Handle any input format including raw LLM responses.""",
+                format="json"
             )
 
-            # Configure iterator
-            self.iterator.configure(input_data, extract_config)
+            # Pass complete context to iterator
+            self.iterator.configure(context.get('input_data'), extract_config)
+            logger.info("coder.iterator_configured")
 
-            # Process changes using configured iterator
-            for raw_change in self.iterator:
-                # Infrastructure concern: ensure we have valid JSON structure
-                try:
-                    if isinstance(raw_change, str):
-                        # Handle potentially double-encoded JSON
-                        change = json.loads(raw_change.strip('"').replace('\\"', '"'))
-                    else:
-                        change = raw_change
-                        
-                    logger.debug("coder.parsed_change", change=change)
-                except json.JSONDecodeError as e:
-                    logger.error("coder.parse_error", error=str(e))
+            # Process changes using iterator
+            for change in self.iterator:
+                logger.debug("coder.extracted_change", change=json.dumps(change, indent=2))
+
+                if not isinstance(change, dict):
+                    logger.warning("coder.invalid_change_format", 
+                                change_type=type(change).__name__)
                     continue
 
-                logger.info("coder.processing_change", change=json.dumps(change, indent=2))
-                
+                # Validate minimum required fields
+                required_fields = ['file_path', 'type']
+                if not all(field in change for field in required_fields):
+                    logger.warning("coder.missing_required_fields",
+                                change=change,
+                                required=required_fields)
+                    continue
+
+                # Process the change
+                logger.info("coder.processing_change",
+                        file_path=change.get('file_path'),
+                        change_type=change.get('type'))
+
                 result = self.asset_manager.process_action(change)
-                logger.info("coder.change_result", 
+                
+                logger.info("coder.change_result",
                         success=result.success,
-                        path=str(result.path) if result.path else None,
-                        error=result.error if result.error else None)
+                        file_path=str(result.path),
+                        error=result.error if not result.success else None)
+
                 changes.append(result)
 
-            # Determine overall success
+            # Calculate success and log results
             success = any(c.success for c in changes)
-            logger.info("coder.results", 
+            metrics["end_time"] = datetime.utcnow().isoformat()
+            metrics["total_changes"] = len(changes)
+            metrics["successful_changes"] = sum(1 for c in changes if c.success)
+
+            logger.info("coder.process_complete",
                     success=success,
                     total_changes=len(changes),
-                    successful_changes=sum(1 for c in changes if c.success))
+                    successful_changes=metrics["successful_changes"],
+                    metrics=metrics)
 
             return CoderResult(
                 success=success,
                 changes=changes,
                 error=None if success else "All changes failed",
-                metrics=metrics,
-                data={"changes": changes, "metrics": metrics}  # Add structured data for test harness
+                metrics=metrics
             )
 
         except Exception as e:
             logger.error("coder.process_failed", error=str(e))
+            metrics["end_time"] = datetime.utcnow().isoformat()
+            metrics["error"] = str(e)
             return CoderResult(
-                success=False, 
-                changes=changes, 
-                error=str(e), 
-                metrics=metrics,
-                data={"error": str(e), "metrics": metrics}
+                success=False,
+                changes=changes,
+                error=str(e),
+                metrics=metrics
             )

@@ -128,31 +128,39 @@ llm_config:
       temperature: 0
       prompts:
         system: |
-          You are a precise bulk extraction agent.
-          Your only task is to extract multiple items at once from provided content.
+          You are a precise bulk extraction agent for code changes.
+          Your role is to extract change actions from any format into a consistent structure.
           Rules:
-          1. Follow the provided instruction and format EXACTLY
-          2. Return ONLY a JSON array - no explanations, headers, or extra text
-          3. Each item MUST match the format exactly - no structure modifications
-          4. Return an empty array [] if no items match
-          5. Never include system messages, status text, or item numbering
+          1. Follow the extraction instruction exactly
+          2. Return ONLY a JSON array of change objects
+          3. Each change must include file_path, type, and either content or diff
+          4. Never include explanatory text or additional formatting
+          5. Extract all changes in a single pass
 
         extract: |
-          Your task is to extract items as a JSON array.
+          Extract all code change actions from the input, regardless of format.
           
           Content to analyze:
           {content}
 
-          Extraction instruction:
+          Each change action must include:
+          1. file_path: Path of the file to modify
+          2. type: One of "modify", "create", or "delete"
+          3. content: The complete new content (if available)
+          4. diff: Git-style diff (if content not available)
+          5. description: Clear description of the change
+
+          Input instruction:
           {instruction}
 
-          Required format for items:
+          Required JSON format:
           {format}
 
           Remember:
-          - Return ONLY a single JSON array containing all items
-          - Match format exactly - do not modify structure
-          - No headers, numbering, or extra text
+          - Return ONLY a JSON array of change objects
+          - Each object must have all required fields
+          - No explanations or extra text
+          - Extract ALL changes in one pass
 
     semantic_slow_extractor:
       provider: "openai"
@@ -160,34 +168,40 @@ llm_config:
       temperature: 0
       prompts:
         system: |
-          You are a precise sequential extraction agent.
-          Your only task is to extract one item at a time from provided content.
+          You are a precise sequential extraction agent for code changes.
+          Your role is to extract one change action at a time, maintaining order.
           Rules:
-          1. Follow the provided instruction and format EXACTLY
-          2. Return ONLY the next single item - no explanations or headers
-          3. Each item MUST match the format exactly - no structure modifications
-          4. Return NO_MORE_ITEMS if no items remain
-          5. Never include system messages or status text
+          1. Extract exactly ONE change per request
+          2. Follow the extraction format exactly
+          3. Return only the next single change object
+          4. Signal NO_MORE_ITEMS when complete
+          5. Never include explanatory text
+
         extract: |
-          Your task is to extract the {ordinal} unique item.
+          Extract the {ordinal} code change action from the input.
           
           Content to analyze:
           {content}
           
-          Extraction instruction:
+          Extract as a single change action with:
+          1. file_path: Path of the file to modify
+          2. type: One of "modify", "create", or "delete"
+          3. content: The complete new content (if available)
+          4. diff: Git-style diff (if content not available)
+          5. description: Clear description of the change
+          
+          Input instruction:
           {instruction}
           
-          Required format for single item:
+          Required format:
           {format}
           
           CRITICAL RULES:
-          1. Extract ONLY one item in {ordinal} position from the content
-          2. Return NO_MORE_ITEMS if no more items exist
-          3. Each item must exactly match the required format
-          4. Return only the extracted item without headers or explanations
-          5. Items must be extracted in order of appearance in the content
-          
-          If no more items exist, respond exactly with: NO_MORE_ITEMS
+          1. Extract ONLY the {ordinal} change
+          2. Return NO_MORE_ITEMS if no more changes exist
+          3. Return single change object, no array
+          4. No explanations or headers
+          5. Keep changes in order of appearance
 
     semantic_merge:
       provider: "openai"

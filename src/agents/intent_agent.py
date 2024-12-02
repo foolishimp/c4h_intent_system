@@ -10,6 +10,7 @@ from datetime import datetime
 import asyncio
 import shutil
 import structlog
+import json
 
 from models.intent import Intent, IntentStatus, AgentState
 from agents.discovery import DiscoveryAgent 
@@ -263,7 +264,6 @@ class IntentAgent:
                 "error": str(e)
             }
 
-
     async def _execute_code_changes(self) -> Dict[str, Any]:
         """Execute code changes stage"""
         if not self.current_state or not self.current_state.solution_design_data:
@@ -273,28 +273,44 @@ class IntentAgent:
             }
 
         try:
-            # Format changes for coder
             solution_data = self.current_state.solution_design_data
-            coder_input = {
-                "changes": solution_data.get("changes", [])
-            }
+            
+            # Extract the actual content from the nested ModelResponse
+            raw_output = solution_data.get('raw_output')
+            if hasattr(raw_output, 'choices'):
+                input_data = raw_output.choices[0].message.content
+            else:
+                input_data = raw_output
 
-            # Call synchronous process method without await
-            result = self.coder.process(coder_input)
+            logger.info("code_changes.starting", input_type=str(type(input_data)))
+
+            # Pass the actual content string to coder
+            result = self.coder.process({
+                'input_data': input_data
+            })
+            
             await self.current_state.update_agent_state("coder", result)
+            
+            if not result.success:
+                logger.error("code_changes.failed", error=result.error)
+                return {
+                    "success": False,
+                    "error": result.error
+                }
 
+            logger.info("code_changes.completed", success=result.success)
             return {
                 "success": result.success,
                 "error": result.error
             }
 
         except Exception as e:
-            logger.error("code_changes.failed", error=str(e))
+            logger.error("code_changes.exception", error=str(e))
             return {
                 "success": False,
                 "error": str(e)
             }
-
+    
     async def _execute_assurance(self) -> Dict[str, Any]:
         """Execute assurance stage"""
         if not self.current_state or not self.current_state.implementation_data:
