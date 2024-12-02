@@ -10,7 +10,7 @@ format: "json"
 merge_method: "smart"
 
 # Project configuration
-project_path: "tests/test_projects/project1"
+project_path: "tests/test_projects"
 
 # Additional settings preserved from previous config
 project:
