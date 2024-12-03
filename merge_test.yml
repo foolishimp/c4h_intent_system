@@ -1,0 +1,37 @@
+# merge_test.yml
+
+provider: "anthropic"
+model: "claude-3-opus-20240229"
+temperature: 0
+
+input_data: |
+  # Original Code
+  def calculate_total(items):
+      return sum(item['price'] for item in items)
+
+  # Changes to Apply
+  def calculate_total(items):
+      """Calculate total price with tax
+      Args:
+          items: List of items with 'price' field
+      Returns:
+          float: Total price with 8.5% tax
+      """
+      subtotal = sum(item['price'] for item in items)
+      return subtotal * 1.085
+
+instruction: |
+  Merge the original code with changes to add:
+  1. Docstring documentation
+  2. Tax calculation
+  3. Preserve function signature
+  
+  Return merged code that combines both versions while maintaining functionality.
+
+format: "python"
+merge_method: "smart"
+
+agent_config:
+  semantic_merge:
+    preserve_formatting: true
+    handle_conflicts: true

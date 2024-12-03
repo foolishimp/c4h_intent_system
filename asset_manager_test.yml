@@ -1,0 +1,29 @@
+# asset_manager_test.yml
+
+provider: "anthropic"
+model: "claude-3-opus-20240229"
+temperature: 0
+
+input_data: |
+  test/source.py:
+  def sum_values(numbers):
+      total = 0
+      for n in numbers:
+          total += n
+      return total
+
+changes: |
+  {
+    "file_path": "test/source.py",
+    "type": "modify",
+    "content": "def sum_values(numbers):\n    \"\"\"Sum a list of numbers\"\"\"\n    return sum(numbers)",
+    "description": "Simplify implementation using built-in sum()"
+  }
+
+instruction: "Merge the simplified implementation while preserving the function signature"
+merge_style: "smart"
+
+agent_config:
+  semantic_merge:
+    preserve_formatting: true
+    allow_partial: false

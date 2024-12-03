@@ -19,8 +19,13 @@ import json
 from agents.base import BaseAgent, LLMProvider, LogDetail
 from agents.coder import Coder
 from skills.semantic_iterator import SemanticIterator
-from config import SystemConfig
 from skills.shared.types import ExtractConfig
+from agents.discovery import DiscoveryAgent
+from agents.solution_designer import SolutionDesigner
+from skills.asset_manager import AssetManager
+
+from skills.semantic_merge import SemanticMerge
+from skills.semantic_extract import SemanticExtract
 
 logger = structlog.get_logger()
 
@@ -64,7 +69,12 @@ class AgentTestHarness:
     # Registry of supported agent types
     AGENT_TYPES = {
         "coder": Coder,
-        "semantic_iterator": SemanticIterator
+        "semantic_iterator": SemanticIterator,
+        "semantic_merge": SemanticMerge,
+        "semantic_extract": SemanticExtract,
+        "discovery": DiscoveryAgent,
+        "solution_designer": SolutionDesigner,
+        "asset_manager": AssetManager
     }
 
     def __init__(self, console: Optional[Console] = None):
@@ -172,25 +182,21 @@ class AgentTestHarness:
                 # Handle iterator case
                 self.console.print("[cyan]Processing with semantic iterator...[/]")
                 
-                # Create extractor config with any overrides
                 extract_config = ExtractConfig(
                     instruction=configs.get('instruction'),
                     format=configs.get('format', 'json')
                 )
                 
-                # Add any additional extractor config parameters
                 for key, value in extra_params.items():
                     if hasattr(extract_config, key):
                         setattr(extract_config, key, value)
                         logger.info(f"config.override", key=key, value=value)
                 
-                # Configure the iterator
                 agent.configure(
                     content=configs.get('input_data'),
                     config=extract_config
                 )
                 
-                # Collect all items
                 results = []
                 for item in agent:
                     results.append(item)
@@ -201,11 +207,30 @@ class AgentTestHarness:
                 # Handle coder case
                 self.console.print("[cyan]Processing with coder...[/]")
                 
-                # Build context with any additional parameters
                 context = {
                     'input_data': configs.get('input_data'),
                     'instruction': configs.get('instruction'),
-                    **extra_params  # Add any extra parameters
+                    **extra_params
+                }
+                
+                result = agent.process(context)
+                
+                if not result.success:
+                    self.console.print(f"[red]Error:[/] {result.error}")
+                    return
+                    
+                self.display_results(result.data)
+
+            else:
+                # Generic agent processing
+                self.console.print(f"[cyan]Processing with {config.agent_type}...[/]")
+                
+                context = {
+                    'original_code': configs.get('input_data'),
+                    'changes': configs.get('changes'),
+                    'instruction': configs.get('instruction'),
+                    'merge_style': configs.get('merge_style', 'smart'),
+                    **extra_params
                 }
                 
                 result = agent.process(context)
