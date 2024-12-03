@@ -16,7 +16,7 @@ from rich.panel import Panel
 from rich.table import Table
 import json
 
-from agents.base import BaseAgent, LLMProvider
+from agents.base import BaseAgent, LLMProvider, LogDetail
 from agents.coder import Coder
 from skills.semantic_iterator import SemanticIterator
 from config import SystemConfig
@@ -26,8 +26,16 @@ logger = structlog.get_logger()
 
 class LogMode(str, Enum):
     """Logging modes supported by harness"""
-    DEBUG = "debug"
-    NORMAL = "normal"
+    DEBUG = "debug"     # Maps to LogDetail.DEBUG
+    NORMAL = "normal"   # Maps to LogDetail.BASIC
+
+    @property
+    def to_log_detail(self) -> LogDetail:
+        """Convert harness LogMode to agent LogDetail"""
+        return {
+            LogMode.DEBUG: LogDetail.DEBUG,
+            LogMode.NORMAL: LogDetail.BASIC
+        }[self]
 
 def parse_param(param_str: str) -> tuple[str, Any]:
     """Parse a parameter string in format key=value"""
@@ -62,7 +70,7 @@ class AgentTestHarness:
     def __init__(self, console: Optional[Console] = None):
         self.console = console or Console()
         
-    def setup_logging(self, mode: LogMode = LogMode.NORMAL) -> None:
+    def setup_logging(self, mode: LogMode) -> None:
         """Configure structured logging based on mode"""
         processors = [
             structlog.stdlib.add_log_level,
@@ -135,7 +143,7 @@ class AgentTestHarness:
         """Create agent instance based on type"""
         if agent_type not in self.AGENT_TYPES:
             raise ValueError(f"Unsupported agent type: {agent_type}")
-            
+                
         agent_class = self.AGENT_TYPES[agent_type]
         
         # Get agent-specific config
@@ -156,7 +164,7 @@ class AgentTestHarness:
             
             # Create agent instance
             agent = self.create_agent(config.agent_type, configs)
-            
+
             # Get any extra parameters passed via command line
             extra_params = config.extra_args or {}
             
@@ -259,7 +267,6 @@ class AgentTestHarness:
             self.console.print(f"[red]Error displaying results:[/] {str(e)}")
 
 def main():
-    """CLI entry point"""
     parser = argparse.ArgumentParser(
         description="Generic agent test harness"
     )
@@ -278,7 +285,7 @@ def main():
         type=LogMode,
         choices=list(LogMode),
         default=LogMode.NORMAL,
-        help="Logging mode"
+        help="Logging mode for test harness (not agents)"
     )
     parser.add_argument(
         "--param",

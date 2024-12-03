@@ -1,30 +1,37 @@
 """
-Base agent implementation supporting multiple LLM providers.
+Base agent implementation with integrated LiteLLM configuration.
 Path: src/agents/base.py
 """
 
 from abc import ABC, abstractmethod
 import structlog
 from dataclasses import dataclass
-from litellm import completion
-import json
-from typing import Dict, Any, Optional, List, Union
 from datetime import datetime
 from enum import Enum
-import os
+import asyncio
+from typing import Dict, Any, Optional, List
+from functools import wraps
+import time
+import litellm
+from litellm import completion
 
 logger = structlog.get_logger()
 
-class LLMProviderError(Exception):
-    """Custom exception for LLM provider configuration and runtime errors"""
-    pass
-
-class LLMConfigError(Exception):
-    """Custom exception for LLM configuration errors"""
-    pass
+class LogDetail(str, Enum):
+    MINIMAL = "minimal"
+    BASIC = "basic"
+    DETAILED = "detailed" 
+    DEBUG = "debug"
+    
+    @classmethod
+    def from_str(cls, level: str) -> 'LogDetail':
+        try:
+            return cls(level.lower())
+        except ValueError:
+            return cls.BASIC  # Safe default
 
 class LLMProvider(str, Enum):
-    """Supported LLM providers"""
+    """Supported model providers"""
     ANTHROPIC = "anthropic"
     OPENAI = "openai"
     GEMINI = "gemini"
@@ -35,198 +42,174 @@ class AgentResponse:
     success: bool
     data: Dict[str, Any]
     error: Optional[str] = None
-    raw_response: Optional[str] = None
+    timestamp: datetime = datetime.utcnow()
+
+def log_operation(operation_name: str):
+    """Operation logging decorator"""
+    def decorator(func):
+        @wraps(func)
+        async def wrapper(self, *args, **kwargs):
+            start_time = time.time()
+            try:
+                result = await func(self, *args, **kwargs)
+                self._update_metrics(time.time() - start_time, True)
+                return result
+            except Exception as e:
+                self._update_metrics(time.time() - start_time, False, str(e))
+                raise
+        return wrapper
+    return decorator
 
 class BaseAgent(ABC):
-    """Base agent with centralized LLM handling"""
+    """Base agent with integrated LiteLLM configuration"""
     
-    def __init__(self, 
-                 provider: LLMProvider,
-                 model: str,
-                 temperature: float = 0,
-                 max_retries: int = 3,
-                 config: Optional[Dict[str, Any]] = None):
-        """Initialize agent with provider configuration"""
-        self._validate_init_params(provider, model, config)
-        
+    def __init__(self,
+                provider: LLMProvider,
+                model: str, 
+                temperature: float = 0,
+                config: Optional[Dict[str, Any]] = None):
+        """Initialize with provider configuration"""
         self.provider = provider
-        self.model = f"{provider.value}/{model}"  # Add provider prefix to model name
+        self.model = model
         self.temperature = temperature
-        self.max_retries = max_retries
-        self.config = config
+        self.config = config or {}
         
-        # Load agent-specific configuration
-        self.agent_config = self._load_agent_config()
+        # Validate and setup provider config
+        self._setup_provider()
+        
+        # Configure litellm for this agent
+        self._setup_litellm()
+        
+        # Initialize metrics
+        self.metrics = {
+            "total_requests": 0,
+            "successful_requests": 0, 
+            "failed_requests": 0,
+            "total_duration": 0.0,
+            "last_error": None
+        }
+    
+        # Set logging level with safe conversion
+        log_level = self.config.get("logging", {}).get("agent_level", "basic")
+        self.log_level = LogDetail.from_str(log_level)
         
         self.logger = structlog.get_logger().bind(
-            agent=self._get_agent_name(),
+            agent_type=self._get_agent_name(),
             provider=provider.value,
             model=model
         )
 
-    def _load_agent_config(self) -> Dict[str, Any]:
-        """Load agent-specific configuration including prompts"""
-        agent_name = self._get_agent_name()
-        agent_config = self.config.get('llm_config', {}).get('agents', {}).get(agent_name)
-        
-        if not agent_config:
-            raise LLMConfigError(f"No configuration found for agent: {agent_name}")
-            
-        if 'prompts' not in agent_config:
-            raise LLMConfigError(f"No prompts configured for agent: {agent_name}")
-            
-        if 'system' not in agent_config['prompts']:
-            raise LLMConfigError(f"No system prompt configured for agent: {agent_name}")
-            
-        return agent_config
+    def _should_log(self, level: LogDetail) -> bool:
+        """Check if should log at this level"""
+        log_levels = {
+            LogDetail.MINIMAL: 0,
+            LogDetail.BASIC: 1, 
+            LogDetail.DETAILED: 2,
+            LogDetail.DEBUG: 3
+        }
+        return log_levels[level] <= log_levels[self.log_level]
 
-    def _validate_init_params(self, provider: LLMProvider, model: str, config: Dict[str, Any]) -> None:
-        """Centralized parameter validation"""
-        logger.debug("validate_init_params.input",
-                    provider=str(provider) if provider else None,
-                    model=model,
-                    config_type=type(config).__name__,
-                    config_is_none=config is None,
-                    config_keys=list(config.keys()) if isinstance(config, dict) else None)
-
-        if not isinstance(provider, LLMProvider):
-            raise LLMProviderError(f"Invalid provider type. Must be LLMProvider enum, got {type(provider)}")
-        
-        if not model:
-            raise LLMProviderError(f"Model must be specified for agent {self._get_agent_name()}")
-            
-        if not config or not isinstance(config, dict):
-            logger.error("invalid_config", 
-                        config_value=str(config)[:100], # Truncate long values
-                        config_type=type(config).__name__)
-            raise LLMProviderError("Valid configuration dictionary is required")
-            
-        if 'providers' not in config:
-            available_keys = list(config.keys()) if isinstance(config, dict) else None
-            logger.error("missing_providers_config",
-                        available_keys=available_keys)
-            raise LLMProviderError("Provider configurations missing from config")
-           
-        provider_config = config.get('providers', {}).get(provider.value)
+    def _setup_provider(self) -> None:
+        """Setup provider configuration"""
+        provider_config = self.config.get("providers", {}).get(self.provider.value)
         if not provider_config:
-            available = list(config.get('providers', {}).keys())
-            raise LLMProviderError(
-                f"Configuration missing for provider: {provider.value}. "
-                f"Available providers: {available}"
-            )
+            raise ValueError(f"No configuration for provider: {self.provider}")
             
-        required_fields = ['api_base', 'env_var']
-        missing = [f for f in required_fields if f not in provider_config]
-        if missing:
-            raise LLMProviderError(f"Missing provider configuration fields: {missing}")
+        # Allow any model if valid_models not specified
+        valid_models = provider_config.get("valid_models")
+        if valid_models and self.model not in valid_models:
+            raise ValueError(f"Invalid model {self.model} for provider {self.provider}")
+            
+        self.provider_config = provider_config
 
-        env_var = provider_config['env_var']
-        if not os.getenv(env_var):
-            raise LLMProviderError(f"Environment variable {env_var} not set")
+    def _setup_litellm(self) -> None:
+        """Configure litellm for this agent"""
+        litellm_config = self.provider_config.get("litellm_params", {})
+        
+        for key, value in litellm_config.items():
+            setattr(litellm, key, value)
+            
+        # Set model format based on provider
+        if self.provider == LLMProvider.OPENAI:
+            self.model_str = self.model  # OpenAI doesn't need prefix
+        else:
+            self.model_str = f"{self.provider.value}/{self.model}"
 
-    def process(self, context: Optional[Dict[str, Any]]) -> AgentResponse:
-        """Main synchronous processing with retries and error handling"""
-        if not isinstance(context, dict):
-            return AgentResponse(
-                success=False,
-                data={},
-                error="Context must be a dictionary"
-            )
+    def _update_metrics(self, duration: float, success: bool, error: Optional[str] = None) -> None:
+        """Update agent metrics"""
+        self.metrics["total_requests"] += 1
+        self.metrics["total_duration"] += duration
+        if success:
+            self.metrics["successful_requests"] += 1
+        else:
+            self.metrics["failed_requests"] += 1
+            self.metrics["last_error"] = error
 
-        for attempt in range(self.max_retries):
-            try:
-                self.logger.info("request.attempt", attempt=attempt + 1)
-                return self._handle_llm_request(context)
-            except Exception as e:
-                if attempt == self.max_retries - 1:
-                    self.logger.error("request.failed", error=str(e))
-                    return AgentResponse(
-                        success=False,
-                        data={},
-                        error=f"Failed after {self.max_retries} attempts: {str(e)}"
-                    )
+    @abstractmethod
+    def _get_agent_name(self) -> str:
+        """Get agent name for config lookup"""
+        pass
 
-    def _handle_llm_request(self, request: Dict[str, Any]) -> AgentResponse:
-        """Centralized synchronous LLM request handling"""
+    def _get_system_message(self) -> str:
+        """Get system message from config"""
+        return self.config.get("llm_config", {}).get("agents", {}).get(
+            self._get_agent_name(), {}).get("prompts", {}).get("system", "")
+
+    def _get_prompt(self, prompt_type: str) -> str:
+        """Get prompt template by type"""
+        prompts = self.config.get("llm_config", {}).get("agents", {}).get(
+            self._get_agent_name(), {}).get("prompts", {})
+        if prompt_type not in prompts:
+            raise ValueError(f"No prompt template found for type: {prompt_type}")
+        return prompts[prompt_type]
+
+    def _ensure_loop(self):
         try:
-            provider_config = self.config['providers'][self.provider.value]
-            api_key = os.getenv(provider_config["env_var"])
+            return asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            return loop
+
+    def process(self, context: Dict[str, Any]) -> AgentResponse:
+        """Synchronous process interface"""
+        loop = self._ensure_loop()
+        return loop.run_until_complete(self._process_async(context))
+
+    async def _process_async(self, context: Dict[str, Any]) -> AgentResponse:
+        """Internal async implementation"""
+        try:
+            messages = [
+                {"role": "system", "content": self._get_system_message()},
+                {"role": "user", "content": self._format_request(context)}
+            ]
             
-            formatted_request = self._format_request(request)
-            messages = self._format_messages(formatted_request)
-            
-            self.logger.debug("agent.request_content",
-                          system_message=self._get_system_message(),
-                          request_preview=str(formatted_request)[:200])
-            
-            response = completion(
-                model=self.model,
+            response = completion(  # Removed await since completion is sync
+                model=self.model_str,
                 messages=messages,
                 temperature=self.temperature,
-                api_base=provider_config["api_base"],
-                api_key=api_key
+                api_base=self.provider_config.get("api_base")
             )
-            
+
             if response and response.choices:
                 content = response.choices[0].message.content
                 return AgentResponse(
                     success=True,
-                    data=self._process_llm_response(content, response),
-                    raw_response=content
+                    data=self._process_response(content, response)
                 )
                 
-            return AgentResponse(
-                success=False,
-                data={},
-                error="Empty response from LLM"
-            )
-            
         except Exception as e:
-            self.logger.error("llm_request.failed", error=str(e))
-            return AgentResponse(
-                success=False,
-                data={},
-                error=str(e)
-            )
-
-    def _process_llm_response(self, content: str, raw_response: Any) -> Dict[str, Any]:
-        """Process LLM response into standard format"""
-        return {
-            "response": content,
-            "raw_output": raw_response,
-            "raw_content": content,
-            "timestamp": datetime.utcnow().isoformat()
-        }
-
-    def _format_messages(self, user_content: str) -> List[Dict[str, str]]:
-        """Format messages based on provider"""
-        system_msg = self._get_system_message()
+            logger.error("process.failed", error=str(e))
+            return AgentResponse(success=False, data={}, error=str(e))
         
-        if self.provider == LLMProvider.GEMINI:
-            combined = f"{system_msg}\n\nUser request: {user_content}"
-            return [{"role": "user", "content": combined}]
-        
-        return [
-            {"role": "system", "content": system_msg},
-            {"role": "user", "content": user_content}
-        ]
-
     def _format_request(self, context: Dict[str, Any]) -> str:
         """Format request message"""
         return str(context)
 
-    def _get_prompt(self, prompt_type: str) -> str:
-        """Get prompt by type from configuration"""
-        prompts = self.agent_config.get('prompts', {})
-        if prompt_type not in prompts:
-            raise LLMConfigError(f"Prompt type '{prompt_type}' not found for agent: {self._get_agent_name()}")
-        return prompts[prompt_type]
-
-    def _get_system_message(self) -> str:
-        """Get system message from configuration"""
-        return self._get_prompt('system')
-
-    @abstractmethod
-    def _get_agent_name(self) -> str:
-        """Get name for this agent type"""
-        raise NotImplementedError()
+    def _process_response(self, content: str, raw_response: Any) -> Dict[str, Any]:
+        """Process LLM response"""
+        return {
+            "response": content,
+            "raw_output": raw_response,
+            "timestamp": datetime.utcnow().isoformat()
+        }

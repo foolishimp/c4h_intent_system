@@ -1,16 +1,18 @@
 """
-Enhanced semantic extraction following agent design principles.
+Semantic extraction using configured prompts.
 Path: src/skills/semantic_extract.py
 """
 
 from typing import Dict, Any, Optional
 import structlog
 from dataclasses import dataclass
+from datetime import datetime
 from agents.base import BaseAgent, LLMProvider, AgentResponse
+from skills.shared.markdown_utils import extract_code_block, is_code_block
 
 logger = structlog.get_logger()
 
-@dataclass 
+@dataclass
 class ExtractResult:
     """Result of semantic extraction"""
     success: bool
@@ -19,53 +21,36 @@ class ExtractResult:
     error: Optional[str] = None
 
 class SemanticExtract(BaseAgent):
-    """Base extractor that follows given instructions without imposing structure"""
+    """Base extractor that handles markdown in extraction results"""
     
-    def __init__(self, 
-                provider: LLMProvider,
-                model: str,
-                temperature: float = 0,
-                config: Optional[Dict[str, Any]] = None):
-        """Initialize with standard agent configuration"""
-        super().__init__(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            config=config
-        )
-
     def _get_agent_name(self) -> str:
         return "semantic_extract"
 
     def _format_request(self, context: Dict[str, Any]) -> str:
-        """Format extraction request with proper prompting"""
-        content = context.get('content', '')
-        prompt = context.get('prompt', '')
-        format_hint = context.get('format_hint', 'default')
+        """Format extraction request using config template"""
+        extract_template = self._get_prompt('extract')
         
-        return f"""Content to analyze:
-{content}
+        return extract_template.format(
+            content=context.get('content', ''),
+            instruction=context.get('instruction', ''),
+            format=context.get('format_hint', 'default')
+        )
 
-Extraction instructions:
-{prompt}
-
-Return format: {format_hint}"""
-
-    async def extract(self,
-                     content: Any,
-                     prompt: str,
-                     format_hint: str = "default",
-                     **context: Any) -> ExtractResult:
-        """Extract information using LLM"""
+    def extract(self,
+                content: Any,
+                instruction: str,
+                format_hint: str = "default",
+                **context: Any) -> ExtractResult:
+        """Extract information using configured prompts"""
         try:
             request = {
-                "content": content,
-                "prompt": prompt,
-                "format_hint": format_hint,
-                "context": context
+                'content': content,
+                'instruction': instruction,
+                'format_hint': format_hint,
+                **context
             }
             
-            response = await self.process(request)
+            response = self.process(request)
             
             if not response.success:
                 return ExtractResult(
@@ -75,9 +60,17 @@ Return format: {format_hint}"""
                     error=response.error
                 )
 
+            extracted_content = response.data.get("response")
+            if extracted_content and is_code_block(extracted_content):
+                logger.debug("extract.processing_code_block")
+                code_block = extract_code_block(extracted_content)
+                processed_content = code_block.content
+            else:
+                processed_content = extracted_content
+
             return ExtractResult(
                 success=True,
-                value=response.data.get("response"),
+                value=processed_content,
                 raw_response=response.data.get("raw_content", "")
             )
             
@@ -89,3 +82,8 @@ Return format: {format_hint}"""
                 raw_response="",
                 error=str(e)
             )
+
+    def _process_llm_response(self, content: str, raw_response: Any) -> Dict[str, Any]:
+        """Process raw LLM response - parent class will call this"""
+        # We handle code block processing in extract() instead
+        return super()._process_llm_response(content, raw_response)

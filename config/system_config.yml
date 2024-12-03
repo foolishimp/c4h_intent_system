@@ -5,34 +5,40 @@ providers:
     api_base: "https://api.anthropic.com"
     context_length: 200000
     env_var: "ANTHROPIC_API_KEY"
-    litellm_config:
+    default_model: "claude-3-opus-20240229"
+    valid_models: ["claude-3-opus-20240229", "claude-3-sonnet-20240229"]
+    litellm_params:
       retry: true
       max_retries: 5
       timeout: 30
       rate_limit_policy:
-        tokens: 4000  # tokens per minute allowed
-        requests: 50   # requests per minute allowed
-        period: 60    # time period in seconds
+        tokens: 4000
+        requests: 50
+        period: 60
       backoff:
-        initial_delay: 1    # start with 1 second delay
-        max_delay: 30       # max 30 seconds between retries
-        exponential: true   # use exponential backoff
+        initial_delay: 1
+        max_delay: 30
+        exponential: true
+
   openai:
     api_base: "https://api.openai.com/v1"
     context_length: 128000
     env_var: "OPENAI_API_KEY"
-    litellm_config:
+    default_model: "gpt-4-0125-preview"
+    valid_models: ["gpt-4-0125-preview", "gpt-4", "gpt-3.5-turbo"]
+    litellm_params:
       retry: true
       max_retries: 3
       timeout: 30
       rate_limit_policy:
-        tokens: 4000  # tokens per minute allowed
-        requests: 200  # requests per minute allowed
-        period: 60    # time period in seconds
+        tokens: 4000
+        requests: 200
+        period: 60
       backoff:
         initial_delay: 1
         max_delay: 20
         exponential: true
+
   gemini:
     api_base: "https://generativelanguage.googleapis.com/v1beta"
     context_length: 32000
@@ -109,6 +115,18 @@ llm_config:
           3. Return in exactly the format specified
           4. Do not add explanations or extra content
           5. Do not modify or enhance the instructions
+        
+        extract: |
+          Extract information from the following content:
+          
+          Content to analyze:
+          {content}
+          
+          Input instruction:
+          {instruction}
+          
+          Required format:
+          {format}
 
     semantic_iterator:
       provider: "openai"
@@ -310,5 +328,13 @@ backup:
   max_backups: 5
 
 logging:
-  level: "INFO"
+  level: "debug"  # Global logging level
   format: "structured"
+  agent_level: "debug"  # Default agent logging level
+  providers:
+    anthropic:
+      level: "debug"
+    openai:
+      level: "basic"
+    gemini: 
+      level: "basic"
