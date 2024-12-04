@@ -5,8 +5,13 @@ providers:
     api_base: "https://api.anthropic.com"
     context_length: 200000
     env_var: "ANTHROPIC_API_KEY"
-    default_model: "claude-3-opus-20240229"
-    valid_models: ["claude-3-opus-20240229", "claude-3-sonnet-20240229"]
+    default_model: "claude-3.5-sonnet-20241022"
+    valid_models:
+      - "claude-3.5-sonnet-20241022"
+      - "claude-3.5-haiku-20241022"
+      - "claude-3-opus-20240229"
+      - "claude-3-sonnet-20240229"
+      - "claude-3-haiku-20240307"
     litellm_params:
       retry: true
       max_retries: 5
@@ -24,8 +29,14 @@ providers:
     api_base: "https://api.openai.com/v1"
     context_length: 128000
     env_var: "OPENAI_API_KEY"
-    default_model: "gpt-4-0125-preview"
-    valid_models: ["gpt-4-0125-preview", "gpt-4", "gpt-3.5-turbo"]
+    default_model: "gpt-4o-mini"
+    valid_models:
+      - "gpt-4o"
+      - "gpt-4o-mini"
+      - "gpt-4"
+      - "gpt-3.5-turbo"
+      - "o1-preview"
+      - "o1-mini"
     litellm_params:
       retry: true
       max_retries: 3
@@ -39,18 +50,19 @@ providers:
         max_delay: 20
         exponential: true
 
+
   gemini:
     api_base: "https://generativelanguage.googleapis.com/v1beta"
     context_length: 32000
     env_var: "GEMINI_API_KEY"
 
 llm_config:
-  default_provider: "openai"
-  default_model: "gpt-4-0125-preview"
+  default_provider: "anthropic"
+  default_model: "claude-3-sonnet-20240229"
   agents:
     discovery:
-      provider: "openai"
-      model: "gpt-4-0125-preview"
+      provider: "anthropic"
+      model: "claude-3-sonnet-20240229"
       temperature: 0
       prompts:
         system: |
@@ -63,21 +75,33 @@ llm_config:
 
     solution_designer:
       provider: "anthropic"
-      model: "claude-3-sonnet-20240229"
       temperature: 0
       prompts:
         system: |
           You are an expert code modification planner.
           Your role is to analyze source code and generate precise modification instructions.
+
+          You MUST return a JSON object with this exact structure:
+          {
+            "changes": [
+              {
+                "file_path": "exact path to file",
+                "type": "modify",
+                "description": "clear description of changes",
+                "content": "complete new file content"
+              }
+            ]
+          }
+
           Rules:
-          1. Always maintain existing functionality unless explicitly told to change it
-          2. Generate complete, self-contained changes
-          3. Return solutions in clean, structured JSON format
-          4. Include all necessary imports and dependencies
-          5. Provide clear descriptions for each change
+          1. Always return complete file content, not just modified functions
+          2. Include all imports and dependencies in the content
+          3. Use "modify" for the type field when updating existing files
+          4. Keep existing functionality unless explicitly told to change it
+          5. Return valid JSON matching the exact schema above
 
         solution: |
-          Analyze the following code and design comprehensive modifications.
+          Analyze the code and create modifications based on the requirements.
 
           Source Code:
           {source_code}
@@ -85,42 +109,32 @@ llm_config:
           Intent:
           {intent}
 
-          Generation Rules:
-          1. Create self-contained change objects
-          2. Include complete file content or precise diffs
-          3. Validate changes preserve functionality
-          4. Consider dependencies and imports
-          5. Use exact file paths from discovery data
-
-          Return a JSON object with this structure:
+          IMPORTANT: Return a JSON object with this exact structure:
           {
             "changes": [
               {
-                "file_path": "exact path to file",
-                "type": "modify/create/delete",
+                "file_path": "exact path from discovery data",
+                "type": "modify",
                 "description": "clear description of changes",
-                "content": "complete new file content",
-                // or
-                "diff": "git style diff for modifications"
+                "content": "complete file content including all imports"
               }
             ]
           }
 
         validation: |
-          Validate the following solution design:
+          Validate the following solution:
           - Original: {original}
           - Changes: {changes}
           
           Verify:
-          1. All functionality preserved unless explicitly changed
-          2. All dependencies included
+          1. Changes preserve existing functionality
+          2. All dependencies are included
           3. Changes are complete and self-contained
           4. File paths are correct
-          5. Changes match intent requirements
+          5. Content includes complete files
 
     semantic_extract:
       provider: "openai"
-      model: "gpt-4-0125-preview"
       temperature: 0
       prompts:
         system: |
@@ -145,8 +159,8 @@ llm_config:
           {format}
 
     semantic_iterator:
-      provider: "openai"
-      model: "gpt-4-0125-preview"
+      provider: "anthropic"
+      model: "claude-3-sonnet-20240229" 
       temperature: 0
       prompts:
         system: |
@@ -158,7 +172,6 @@ llm_config:
 
     semantic_fast_extractor:
       provider: "openai"
-      model: "gpt-4-0125-preview"
       temperature: 0
       prompts:
         system: |
@@ -198,7 +211,7 @@ llm_config:
 
     semantic_slow_extractor:
       provider: "openai"
-      model: "gpt-4-0125-preview"
+      model: "gpt-4o"
       temperature: 0
       prompts:
         system: |
@@ -239,7 +252,6 @@ llm_config:
 
     semantic_merge:
       provider: "openai"
-      model: "gpt-4-0125-preview"
       temperature: 0
       prompts:
         system: |
@@ -284,7 +296,6 @@ llm_config:
 
     coder:
       provider: "openai"
-      model: "gpt-4-0125-preview"
       temperature: 0
       prompts:
         system: |
@@ -334,7 +345,6 @@ llm_config:
 
 project:
   default_path: "tests/test_projects/project1"
-  default_intent: "Add logging to every function, replace all prints with logs"
   workspace_root: "workspaces"
   max_file_size: 1048576
 
@@ -344,13 +354,11 @@ backup:
   max_backups: 5
 
 logging:
-  level: "debug"  # Global logging level
+  level: "debug"  
   format: "structured"
-  agent_level: "debug"  # Default agent logging level
+  agent_level: "debug"  
   providers:
     anthropic:
       level: "debug"
     openai:
-      level: "basic"
-    gemini: 
-      level: "basic"
+      level: "debug"

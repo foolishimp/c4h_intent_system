@@ -65,20 +65,29 @@ class BaseAgent(ABC):
     
     def __init__(self,
                 provider: LLMProvider,
-                model: str, 
+                model: Optional[str] = None,
                 temperature: float = 0,
                 config: Optional[Dict[str, Any]] = None):
         """Initialize with provider configuration"""
-        self.provider = provider
-        self.model = model
-        self.temperature = temperature
         self.config = config or {}
         
-        # Validate and setup provider config
-        self._setup_provider()
+        # Resolve provider first
+        self.provider = provider
+        provider_config = self._get_provider_config(provider)
+        if not provider_config:
+            raise ValueError(f"No configuration found for provider: {provider}")
         
-        # Configure litellm for this agent
-        self._setup_litellm()
+        # Resolve model using fallback chain
+        self.model = self._resolve_model(model, provider_config)
+        self.temperature = temperature
+        
+        # Validate model against provider's valid models if specified
+        valid_models = provider_config.get("valid_models", [])
+        if valid_models and self.model not in valid_models:
+            raise ValueError(f"Invalid model {self.model} for provider {provider}")
+        
+        # Configure litellm with provider settings
+        self._setup_litellm(provider_config)
         
         # Initialize metrics
         self.metrics = {
@@ -95,9 +104,35 @@ class BaseAgent(ABC):
         
         self.logger = structlog.get_logger().bind(
             agent_type=self._get_agent_name(),
-            provider=provider.value,
-            model=model
+            provider=self.provider.value,
+            model=self.model
         )
+
+    def _get_provider_config(self, provider: LLMProvider) -> Dict[str, Any]:
+        """Get provider configuration from system config"""
+        return self.config.get("providers", {}).get(provider.value, {})
+
+    def _resolve_model(self, explicit_model: Optional[str], provider_config: Dict[str, Any]) -> str:
+        """Resolve model using fallback chain"""
+        # 1. Use explicitly passed model if provided
+        if explicit_model:
+            return explicit_model
+            
+        # 2. Check agent-specific config
+        agent_config = self.config.get("llm_config", {}).get("agents", {}).get(self._get_agent_name(), {})
+        if "model" in agent_config:
+            return agent_config["model"]
+            
+        # 3. Use provider's default model
+        if "default_model" in provider_config:
+            return provider_config["default_model"]
+            
+        # 4. Use system-wide default model
+        system_default = self.config.get("llm_config", {}).get("default_model")
+        if system_default:
+            return system_default
+            
+        raise ValueError(f"No model specified for provider {self.provider} and no defaults found")
 
     def _should_log(self, level: LogDetail) -> bool:
         """Check if should log at this level"""
@@ -109,22 +144,9 @@ class BaseAgent(ABC):
         }
         return log_levels[level] <= log_levels[self.log_level]
 
-    def _setup_provider(self) -> None:
-        """Setup provider configuration"""
-        provider_config = self.config.get("providers", {}).get(self.provider.value)
-        if not provider_config:
-            raise ValueError(f"No configuration for provider: {self.provider}")
-            
-        # Allow any model if valid_models not specified
-        valid_models = provider_config.get("valid_models")
-        if valid_models and self.model not in valid_models:
-            raise ValueError(f"Invalid model {self.model} for provider {self.provider}")
-            
-        self.provider_config = provider_config
-
-    def _setup_litellm(self) -> None:
-        """Configure litellm for this agent"""
-        litellm_config = self.provider_config.get("litellm_params", {})
+    def _setup_litellm(self, provider_config: Dict[str, Any]) -> None:
+        """Configure litellm with provider settings"""
+        litellm_config = provider_config.get("litellm_params", {})
         
         for key, value in litellm_config.items():
             setattr(litellm, key, value)
@@ -188,7 +210,7 @@ class BaseAgent(ABC):
                 model=self.model_str,
                 messages=messages,
                 temperature=self.temperature,
-                api_base=self.provider_config.get("api_base")
+                api_base=self._get_provider_config(self.provider).get("api_base")
             )
 
             if response and response.choices:
