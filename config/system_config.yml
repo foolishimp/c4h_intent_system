@@ -63,44 +63,60 @@ llm_config:
 
     solution_designer:
       provider: "anthropic"
-      model: "claude-3-5-sonnet-20241022"
+      model: "claude-3-sonnet-20240229"
       temperature: 0
       prompts:
         system: |
           You are an expert code modification planner.
           Your role is to analyze source code and generate precise modification instructions.
-          For each required change:
-          1. Specify exact file paths
-          2. Provide complete modifications in git diff format
-          3. Include clear descriptions of changes
-          Do not validate or transform input - focus on generating clear instructions.
+          Rules:
+          1. Always maintain existing functionality unless explicitly told to change it
+          2. Generate complete, self-contained changes
+          3. Return solutions in clean, structured JSON format
+          4. Include all necessary imports and dependencies
+          5. Provide clear descriptions for each change
 
         solution: |
-          Generate modification instructions for the following code:
-
-          Intent:
-          {intent}
+          Analyze the following code and design comprehensive modifications.
 
           Source Code:
           {source_code}
 
-          Return a JSON object with this exact structure:
-          {{
-            "changes": [
-              {{
-                "file_path": "path to file",
-                "type": "modify",
-                "description": "clear description",
-                "diff": "git style diff"
-              }}
-            ]
-          }}
+          Intent:
+          {intent}
 
-          CRITICAL REQUIREMENTS:
-          - Use proper git diff format
-          - Include all necessary imports
-          - Preserve existing code functionality
-          - Return only the JSON result, no explanations or extra text
+          Generation Rules:
+          1. Create self-contained change objects
+          2. Include complete file content or precise diffs
+          3. Validate changes preserve functionality
+          4. Consider dependencies and imports
+          5. Use exact file paths from discovery data
+
+          Return a JSON object with this structure:
+          {
+            "changes": [
+              {
+                "file_path": "exact path to file",
+                "type": "modify/create/delete",
+                "description": "clear description of changes",
+                "content": "complete new file content",
+                // or
+                "diff": "git style diff for modifications"
+              }
+            ]
+          }
+
+        validation: |
+          Validate the following solution design:
+          - Original: {original}
+          - Changes: {changes}
+          
+          Verify:
+          1. All functionality preserved unless explicitly changed
+          2. All dependencies included
+          3. Changes are complete and self-contained
+          4. File paths are correct
+          5. Changes match intent requirements
 
     semantic_extract:
       provider: "openai"

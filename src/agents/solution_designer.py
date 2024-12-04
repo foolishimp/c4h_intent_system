@@ -19,7 +19,7 @@ class SolutionDesigner(BaseAgent):
                 model: Optional[str] = None,
                 temperature: float = 0,
                 config: Optional[Dict[str, Any]] = None):
-        """Initialize designer with system configuration."""
+        """Initialize designer with proper configuration."""
         super().__init__(
             provider=provider,
             model=model,
@@ -33,7 +33,7 @@ class SolutionDesigner(BaseAgent):
                    config_keys=list(config.keys()) if isinstance(config, dict) else None)
 
     def _get_agent_name(self) -> str:
-        """Get agent name for config lookup"""
+        """Get agent name for config lookup - required by BaseAgent"""
         return "solution_designer"
 
     def _format_request(self, context: Dict[str, Any]) -> str:
@@ -41,7 +41,7 @@ class SolutionDesigner(BaseAgent):
         try:
             template = self._get_prompt('solution')
             
-            # Extract values from context
+            # Extract values safely
             discovery_data = context.get('discovery_data', {})
             raw_output = discovery_data.get('raw_output', '')
             intent_desc = context.get('intent', {}).get('description', '')
@@ -52,7 +52,6 @@ class SolutionDesigner(BaseAgent):
                         has_discovery=bool(raw_output),
                         iteration=iteration)
             
-            # Apply template
             return template.format(
                 intent=intent_desc,
                 source_code=raw_output,
@@ -62,39 +61,6 @@ class SolutionDesigner(BaseAgent):
         except Exception as e:
             logger.error("solution_designer.format_error", error=str(e))
             return str(context)
-
-    def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process solution design request - synchronous interface"""
-        try:
-            logger.info("solution_designer.process_start", 
-                       has_context=bool(context),
-                       intent=context.get('intent', {}).get('description') if context else None)
-
-            # Minimal validation - just ensure we have input
-            if not context.get('discovery_data', {}).get('raw_output'):
-                logger.error("solution_designer.missing_discovery")
-                return AgentResponse(
-                    success=False,
-                    data={},
-                    error="Missing discovery data - cannot analyze code"
-                )
-
-            # Use BaseAgent's synchronous process
-            response = super().process(context)
-            
-            logger.info("solution_designer.process_complete",
-                      success=response.success,
-                      error=response.error if not response.success else None)
-
-            if response.success:
-                logger.debug("solution_designer.changes_generated",
-                          changes=json.dumps(response.data.get('changes', []), indent=2))
-
-            return response
-
-        except Exception as e:
-            logger.error("solution_designer.process_failed", error=str(e))
-            return AgentResponse(success=False, data={}, error=str(e))
 
     def _process_llm_response(self, content: str, raw_response: Any) -> Dict[str, Any]:
         """Process LLM response into standard format"""
@@ -120,3 +86,36 @@ class SolutionDesigner(BaseAgent):
                 "raw_content": content,
                 "timestamp": datetime.utcnow().isoformat()
             }
+
+    def process(self, context: Dict[str, Any]) -> AgentResponse:
+        """Process solution design request"""
+        try:
+            logger.info("solution_designer.process_start", 
+                       has_context=bool(context),
+                       intent=context.get('intent', {}).get('description') if context else None)
+
+            # Minimal validation - just ensure we have input
+            if not context.get('discovery_data', {}).get('raw_output'):
+                logger.error("solution_designer.missing_discovery")
+                return AgentResponse(
+                    success=False,
+                    data={},
+                    error="Missing discovery data - cannot analyze code"
+                )
+
+            # Use BaseAgent's process method
+            response = super().process(context)
+            
+            logger.info("solution_designer.process_complete",
+                      success=response.success,
+                      error=response.error if not response.success else None)
+
+            if response.success:
+                logger.debug("solution_designer.changes_generated",
+                          changes=json.dumps(response.data.get('changes', []), indent=2))
+
+            return response
+
+        except Exception as e:
+            logger.error("solution_designer.process_failed", error=str(e))
+            return AgentResponse(success=False, data={}, error=str(e))
