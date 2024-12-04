@@ -178,13 +178,19 @@ class AgentTestHarness:
         try:
             # Load configuration
             configs = self.load_configs(str(config.config_path))
-            
+            logger.debug("testharness.loaded_config", 
+                        config_path=str(config.config_path),
+                        config_contents=configs)
+                
             # Create agent instance
             agent = self.create_agent(config.agent_type, configs)
+            logger.debug("testharness.created_agent",
+                        agent_type=config.agent_type,
+                        agent_class=agent.__class__.__name__)
 
             # Get any extra parameters passed via command line
             extra_params = config.extra_args or {}
-            
+                
             if isinstance(agent, SemanticIterator):
                 # Handle iterator case
                 self.console.print("[cyan]Processing with semantic iterator...[/]")
@@ -207,9 +213,9 @@ class AgentTestHarness:
                 results = []
                 for item in agent:
                     results.append(item)
-                    
+                        
                 self.display_results(results)
-                
+                    
             elif isinstance(agent, Coder):
                 # Handle coder case
                 self.console.print("[cyan]Processing with coder...[/]")
@@ -225,7 +231,34 @@ class AgentTestHarness:
                 if not result.success:
                     self.console.print(f"[red]Error:[/] {result.error}")
                     return
-                    
+                        
+                self.display_results(result.data)
+
+            elif isinstance(agent, AssetManager):
+                # Handle asset manager case with debug logging
+                self.console.print("[cyan]Processing with asset_manager...[/]")
+                
+                input_data = configs.get('input_data')
+                logger.debug("testharness.asset_manager_input",
+                            input_data=input_data,
+                            input_type=type(input_data).__name__)
+                
+                context = {
+                    'input_data': input_data,
+                    **extra_params
+                }
+                logger.debug("testharness.asset_manager_context", context=context)
+                
+                result = agent.process(context)
+                logger.debug("testharness.asset_manager_result", 
+                            success=result.success,
+                            data=result.data,
+                            error=result.error)
+
+                if not result.success:
+                    self.console.print(f"[red]Error:[/] {result.error}")
+                    return
+                        
                 self.display_results(result.data)
 
             else:
@@ -245,7 +278,7 @@ class AgentTestHarness:
                 if not result.success:
                     self.console.print(f"[red]Error:[/] {result.error}")
                     return
-                    
+                        
                 self.display_results(result.data)
 
         except Exception as e:
