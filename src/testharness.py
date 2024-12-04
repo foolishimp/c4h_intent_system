@@ -15,6 +15,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 import json
+import datetime
 
 from agents.base import BaseAgent, LLMProvider, LogDetail
 from agents.coder import Coder
@@ -285,47 +286,72 @@ class AgentTestHarness:
             logger.error("agent.process_failed", error=str(e))
             raise
 
+
     def display_results(self, results: Any) -> None:
         """Display agent processing results"""
         try:
-            # If results is a string containing JSON, parse it
-            if isinstance(results, str):
-                try:
-                    parsed = json.loads(results)
-                    results = parsed
-                except json.JSONDecodeError:
-                    pass  # Keep original if not JSON
+            # If results is empty or None, show appropriate message
+            if not results:
+                self.console.print("[yellow]No results to display[/]")
+                return
 
-            if isinstance(results, dict):
-                table = Table(show_header=True, header_style="bold magenta")
-                table.add_column("Key")
-                table.add_column("Value")
+            # Create results table
+            table = Table(show_header=True, header_style="bold magenta")
+            
+            if isinstance(results, dict) and "changes" in results:
+                # Handle Coder results
+                table.add_column("File")
+                table.add_column("Type")
+                table.add_column("Status")
+                table.add_column("Description")
                 
-                for key, value in results.items():
-                    table.add_row(str(key), str(value))
+                for change in results["changes"]:
+                    status = "[green]✓[/]" if change["success"] else f"[red]✗ {change.get('error', 'Failed')}[/]"
+                    table.add_row(
+                        change["file"],
+                        change["type"],
+                        status,
+                        change.get("description", "")
+                    )
+                
+                # Add summary footer
+                metrics = results.get("metrics", {})
+                if metrics:
+                    # Use standard datetime parsing
+                    from datetime import datetime
+                    start_time = datetime.strptime(metrics["start_time"], "%Y-%m-%dT%H:%M:%S.%f")
+                    end_time = datetime.strptime(metrics["end_time"], "%Y-%m-%dT%H:%M:%S.%f")
+                    duration = end_time - start_time
                     
-                self.console.print(Panel(table, title="Results"))
+                    self.console.print(Panel(
+                        f"Total Changes: {results['total']}\n"
+                        f"Successful: {results['successful']}\n"
+                        f"Duration: {duration.total_seconds():.2f}s",
+                        title="Summary",
+                        border_style="blue"
+                    ))
+                    
             elif isinstance(results, list):
-                # For each item in list, create a separate panel
-                for i, item in enumerate(results, 1):
-                    if isinstance(item, dict):
-                        table = Table(show_header=True, header_style="bold cyan")
-                        table.add_column("Property")
-                        table.add_column("Value")
-                        
-                        for key, value in item.items():
-                            formatted_value = (
-                                json.dumps(value, indent=2)
-                                if isinstance(value, (dict, list))
-                                else str(value)
-                            )
-                            table.add_row(str(key), formatted_value)
-                            
-                        self.console.print(Panel(table, title=f"Result {i}"))
-                    else:
-                        self.console.print(Panel(str(item), title=f"Result {i}"))
+                # Handle list results
+                if results and isinstance(results[0], dict):
+                    # Add columns based on first result's keys
+                    for key in results[0].keys():
+                        table.add_column(key.title())
+                    
+                    # Add rows
+                    for item in results:
+                        table.add_row(*[str(v) for v in item.values()])
+                else:
+                    # Simple list display
+                    table.add_column("Result")
+                    for item in results:
+                        table.add_row(str(item))
             else:
-                self.console.print(Panel(str(results), title="Results"))
+                # Default to simple display
+                self.console.print(Panel(str(results)))
+                return
+
+            self.console.print(table)
 
         except Exception as e:
             logger.error("display.failed", error=str(e))

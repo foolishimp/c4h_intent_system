@@ -87,6 +87,7 @@ class Coder(BaseAgent):
             logger.info("coder.iterator_configured")
 
             # Process changes using iterator
+            results = []
             for change in self.iterator:
                 logger.debug("coder.extracted_change", change=json.dumps(change, indent=2))
 
@@ -116,8 +117,17 @@ class Coder(BaseAgent):
                         error=result.error if not result.success else None)
 
                 changes.append(result)
+                # Store complete result information
+                results.append({
+                    "file": str(result.path),
+                    "type": change.get('type'),
+                    "description": change.get('description'),
+                    "success": result.success,
+                    "error": result.error,
+                    "backup": str(result.backup_path) if result.backup_path else None
+                })
 
-            # Calculate success and log results
+            # Calculate success and metrics
             success = any(c.success for c in changes)
             metrics["end_time"] = datetime.utcnow().isoformat()
             metrics["total_changes"] = len(changes)
@@ -133,7 +143,15 @@ class Coder(BaseAgent):
                 success=success,
                 changes=changes,
                 error=None if success else "All changes failed",
-                metrics=metrics
+                metrics=metrics,
+                # Add complete result data
+                data={
+                    "changes": results,
+                    "metrics": metrics,
+                    "success": success,
+                    "total": len(changes),
+                    "successful": metrics["successful_changes"]
+                }
             )
 
         except Exception as e:
@@ -144,5 +162,6 @@ class Coder(BaseAgent):
                 success=False,
                 changes=changes,
                 error=str(e),
-                metrics=metrics
+                metrics=metrics,
+                data={"error": str(e), "metrics": metrics}
             )
