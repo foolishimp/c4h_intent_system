@@ -148,13 +148,29 @@ class AgentTestHarness:
                 'extractor_config': test_config.get('extractor_config', {})
             })
             
-            # Update agent-specific config if provided
+            # Deep merge agent-specific config if provided
             if 'agent_config' in test_config:
                 if 'llm_config' not in config:
                     config['llm_config'] = {}
                 if 'agents' not in config['llm_config']:
                     config['llm_config']['agents'] = {}
-                config['llm_config']['agents'].update(test_config['agent_config'])
+                    
+                for agent_name, agent_config in test_config['agent_config'].items():
+                    if agent_name in config['llm_config']['agents']:
+                        # Deep merge preserving existing prompts and other nested config
+                        base_config = config['llm_config']['agents'][agent_name]
+                        merged = {**base_config, **agent_config}
+                        
+                        # Ensure prompts are preserved
+                        if 'prompts' in base_config:
+                            merged['prompts'] = {
+                                **base_config.get('prompts', {}),
+                                **agent_config.get('prompts', {})
+                            }
+                        
+                        config['llm_config']['agents'][agent_name] = merged
+                    else:
+                        config['llm_config']['agents'][agent_name] = agent_config
             
             logger.debug("final_config.ready",
                     config_keys=list(config.keys()),
