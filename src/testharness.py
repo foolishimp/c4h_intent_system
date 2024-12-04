@@ -24,7 +24,6 @@ from skills.shared.types import ExtractConfig
 from agents.discovery import DiscoveryAgent
 from agents.solution_designer import SolutionDesigner
 from skills.asset_manager import AssetManager
-
 from skills.semantic_merge import SemanticMerge
 from skills.semantic_extract import SemanticExtract
 
@@ -131,6 +130,9 @@ class AgentTestHarness:
                 
             with open(system_config_path) as f:
                 config = yaml.safe_load(f)
+                logger.debug("system_config.loaded", 
+                        config_keys=list(config.keys()),
+                        agent_configs=list(config.get('llm_config', {}).get('agents', {}).keys()) if config.get('llm_config') else None)
                 
             # Load test specific config
             with open(test_config_path) as f:
@@ -141,9 +143,23 @@ class AgentTestHarness:
                 'input_data': test_config.get('input_data'),
                 'instruction': test_config.get('instruction'),
                 'format': test_config.get('format', 'json'),
-                'agent_config': test_config.get('agent_config', {})
+                'discovery_data': test_config.get('discovery_data', {}),
+                'intent': test_config.get('intent', {}),
+                'extractor_config': test_config.get('extractor_config', {})
             })
             
+            # Update agent-specific config if provided
+            if 'agent_config' in test_config:
+                if 'llm_config' not in config:
+                    config['llm_config'] = {}
+                if 'agents' not in config['llm_config']:
+                    config['llm_config']['agents'] = {}
+                config['llm_config']['agents'].update(test_config['agent_config'])
+            
+            logger.debug("final_config.ready",
+                    config_keys=list(config.keys()),
+                    agent_configs=list(config.get('llm_config', {}).get('agents', {}).keys()) if config.get('llm_config') else None)
+
             return config
 
         except Exception as e:
@@ -178,7 +194,7 @@ class AgentTestHarness:
         """Process agent with configuration"""
         try:
             # Load configuration
-            configs = self.load_configs(str(config.config_path))
+            configs = self.load_configs(str(config.config_path))  # Now using instance method
             logger.debug("testharness.loaded_config", 
                         config_path=str(config.config_path),
                         config_contents=configs)
@@ -262,6 +278,30 @@ class AgentTestHarness:
                         
                 self.display_results(result.data)
 
+            elif isinstance(agent, SolutionDesigner):
+                # Handle solution designer case
+                self.console.print("[cyan]Processing with solution designer...[/]")
+                
+                context = {
+                    'discovery_data': configs.get('discovery_data', {}),
+                    'intent': configs.get('intent', {}),
+                    **extra_params
+                }
+                
+                logger.debug("testharness.solution_designer_context", context=context)
+                
+                result = agent.process(context)
+                logger.debug("testharness.solution_designer_result",
+                            success=result.success,
+                            data=result.data if result.success else None,
+                            error=result.error if not result.success else None)
+                
+                if not result.success:
+                    self.console.print(f"[red]Error:[/] {result.error}")
+                    return
+                        
+                self.display_results(result.data)
+
             else:
                 # Generic agent processing
                 self.console.print(f"[cyan]Processing with {config.agent_type}...[/]")
@@ -285,7 +325,6 @@ class AgentTestHarness:
         except Exception as e:
             logger.error("agent.process_failed", error=str(e))
             raise
-
 
     def display_results(self, results: Any) -> None:
         """Display agent processing results"""
@@ -398,17 +437,31 @@ def main():
                 logger.error("param.parse_failed", param=param_str, error=str(e))
                 raise SystemExit(1)
         
+        logger.info("testharness.starting", 
+                   agent_type=args.agent_type,
+                   config_file=args.config,
+                   log_mode=args.log_mode)
+
         harness = AgentTestHarness()
         harness.setup_logging(args.log_mode)
         
-        harness.process_agent(AgentConfig(
-            agent_type=args.agent_type,
-            config_path=args.config,
-            extra_args=extra_params
-        ))
+        logger.info("testharness.initialized")
+        
+        try:
+            harness.process_agent(AgentConfig(
+                agent_type=args.agent_type,
+                config_path=Path(args.config),
+                extra_args=extra_params
+            ))
+        except Exception as e:
+            logger.error("process_agent.failed", error=str(e), exc_info=True)
+            raise
+            
+        logger.info("testharness.completed")
         
     except Exception as e:
-        logger.error("harness.failed", error=str(e))
+        logger.error("harness.failed", error=str(e), exc_info=True)
+        print(f"\nError: {str(e)}")
         raise SystemExit(1)
 
 if __name__ == "__main__":
