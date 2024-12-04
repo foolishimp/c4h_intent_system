@@ -1,5 +1,5 @@
 """
-LLM-first asset management with backup creation.
+Asset management with LLM-powered merging.
 Path: src/skills/asset_manager.py
 """
 
@@ -9,7 +9,8 @@ from dataclasses import dataclass
 import structlog
 import shutil
 from datetime import datetime
-from skills.semantic_merge import SemanticMerge
+from skills.semantic_merge import SemanticMerge, MergeConfig
+from agents.base import LLMProvider, AgentResponse
 
 logger = structlog.get_logger()
 
@@ -22,19 +23,32 @@ class AssetResult:
     error: Optional[str] = None
 
 class AssetManager:
-    """Manages asset operations using semantic merging"""
+    """Manages asset operations with internal semantic merging"""
     
     def __init__(self, 
                  backup_enabled: bool = True,
                  backup_dir: Optional[Path] = None,
-                 merger: Optional[SemanticMerge] = None):
-        """Initialize with semantic merger and backup settings."""
+                 merger: Optional[SemanticMerge] = None,
+                 config: Optional[Dict[str, Any]] = None):
+        """Initialize asset manager with configuration"""
         self.backup_enabled = backup_enabled
         self.backup_dir = backup_dir
-        self.merger = merger
+        self.config = config or {}
         
         if backup_dir:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
+            
+        # Use provided merger or create new one
+        self.merger = merger or SemanticMerge(
+            provider=LLMProvider(self.config.get('provider', 'anthropic')),
+            model=self.config.get('model', 'claude-3-opus-20240229'),
+            temperature=0,
+            config=self.config,
+            merge_config=MergeConfig(
+                style='smart',
+                preserve_formatting=True
+            )
+        )
 
     def _get_next_backup_path(self, path: Path) -> Path:
         """Generate unique backup path with timestamp"""
@@ -43,38 +57,74 @@ class AssetManager:
             return self.backup_dir / f"{path.name}_{timestamp}"
         return path.with_suffix(f".{timestamp}.bak")
 
-    def process_action(self, action: Dict[str, Any]) -> AssetResult:
-        """Process a code change action."""
+    def _ensure_path_exists(self, path: Path) -> None:
+        """Ensure the file's parent directory exists and create empty file if needed"""
         try:
-            path = Path(action['file_path'])
-            current_content = path.read_text() if path.exists() else ""
-            changes = action.get('content') or action.get('diff')
+            # Create all parent directories if they don't exist
+            path.parent.mkdir(parents=True, exist_ok=True)
             
-            if not changes:
-                return AssetResult(success=False, path=path, error="No change content")
+            # Create empty file if it doesn't exist
+            if not path.exists():
+                path.touch()
+                logger.info("asset.created_empty_file", path=str(path))
+                
+        except Exception as e:
+            logger.error("asset.path_creation_failed", path=str(path), error=str(e))
+            raise
 
-            # Create backup if file exists
+    def process(self, context: Dict[str, Any]) -> AgentResponse:
+        """Process an asset action - trust input without validation"""
+        try:
+            result = self.process_action(context.get('input_data', {}))
+            return AgentResponse(
+                success=result.success,
+                data={
+                    "path": str(result.path),
+                    "backup_path": str(result.backup_path) if result.backup_path else None,
+                    "raw_output": context.get('raw_output', '')
+                },
+                error=result.error
+            )
+        except Exception as e:
+            return AgentResponse(
+                success=False,
+                data={},
+                error=str(e)
+            )
+
+    def process_action(self, action: Dict[str, Any]) -> AssetResult:
+        """Process a single asset action"""
+        try:
+            path = Path(action.get('file_path', ''))
+            content = action.get('content', '')
+            
+            # Create backup if enabled and file exists
             backup_path = None
             if self.backup_enabled and path.exists():
                 backup_path = self._get_next_backup_path(path)
                 shutil.copy2(path, backup_path)
+                logger.info("asset.backup_created", path=str(backup_path))
 
-            # Merge and write
-            if self.merger:
-                # Use BaseAgent's synchronous interface
-                result = self.merger.process({
-                    'original_code': current_content,
-                    'changes': changes,
-                    'style': 'smart'
-                })
-                if not result.success:
-                    return AssetResult(success=False, path=path, error=result.error)
-                final_content = result.data.get('response')
-            else:
-                final_content = changes
+            # Ensure path exists before processing
+            self._ensure_path_exists(path)
 
-            path.parent.mkdir(parents=True, exist_ok=True)
-            path.write_text(final_content)
+            # For new or empty files, write content directly
+            if path.stat().st_size == 0:
+                logger.info("asset.writing_new_content", path=str(path))
+                path.write_text(content)
+                return AssetResult(success=True, path=path, backup_path=backup_path)
+
+            # Use merger for existing files with content
+            result = self.merger.process({
+                'original_code': path.read_text(),
+                'changes': content
+            })
+
+            if not result.success:
+                return AssetResult(success=False, path=path, error=result.error)
+
+            # Write merged content
+            path.write_text(result.data.get('response', ''))
             return AssetResult(success=True, path=path, backup_path=backup_path)
 
         except Exception as e:

@@ -156,9 +156,16 @@ class AgentTestHarness:
                 
         agent_class = self.AGENT_TYPES[agent_type]
         
-        # Get agent-specific config
-        agent_config = config.get('llm_config', {}).get('agents', {}).get(agent_type, {})
+        # Special handling for AssetManager which isn't a BaseAgent
+        if agent_type == "asset_manager":
+            return agent_class(
+                backup_enabled=True,
+                backup_dir=Path("workspaces/backups"),
+                config=config
+            )
         
+        # Regular BaseAgent initialization
+        agent_config = config.get('llm_config', {}).get('agents', {}).get(agent_type, {})
         return agent_class(
             provider=LLMProvider(agent_config.get('provider', 'anthropic')),
             model=agent_config.get('model', 'claude-3-opus-20240229'),

@@ -61,51 +61,39 @@ class SemanticMerge(BaseAgent):
             preserve_formatting=str(self.merge_config.preserve_formatting).lower()
         )
 
-def _extract_code_content(self, response: Dict[str, Any]) -> str:
-    """Extract clean code content from LLM response"""
-    if not response:
-        return ""
+    def _extract_code_content(self, response: Dict[str, Any]) -> str:
+        """Extract clean code content from LLM response"""
+        if not response:
+            return ""
 
-    content = response.get('response', '')
-    if not content:
-        content = response.get('raw_content', '')
+        content = response.get('response', '')
+        if not content:
+            content = response.get('raw_content', '')
+                
+        # Remove any markdown code block markers if present
+        content = content.strip()
+        if content.startswith('```'):
+            # Handle case where language is specified after backticks
+            lines = content.split('\n')
+            if len(lines) > 2:  # At least opening, content, and closing
+                # Skip first line (```python etc) and last line (```)
+                content = '\n'.join(lines[1:-1])
+            else:
+                content = content.strip('`')
+                
+        return content
 
-    # Clean markdown and code blocks    
-    content = content.strip()
-    
-    # If entire content is a code block
-    if content.startswith('```') and content.endswith('```'):
-        lines = content.split('\n')
-        # Remove first line containing backticks and optional language
-        if lines[0].startswith('```'):
-            lines = lines[1:]
-        # Remove last line containing closing backticks
-        if lines[-1].strip() == '```':
-            lines = lines[:-1]
-        content = '\n'.join(lines)
-    
-    # Strip any remaining backticks
-    content = content.strip('`')
-    
-    logger.debug("merge.extracted_content", 
-                original_length=len(response.get('response', '')),
-                cleaned_length=len(content),
-                starts_with=content[:20])
-    
-    return content
-
-    async def merge(self, original: str, changes: Union[str, Dict[str, Any]]) -> MergeResult:
-        """Process a merge operation"""
+    def merge(self, original: str, changes: Union[str, Dict[str, Any]]) -> MergeResult:
+        """Process a merge operation - synchronous interface"""
         try:
-            # Trust LLM to handle empty/missing original code
             context = {
                 'original_code': original,
                 'changes': changes,
                 'style': self.merge_config.style
             }
             
-            # Pass through to LLM without validation
-            response = await self.process(context)
+            # Use parent's synchronous process method
+            response = self.process(context)
             
             if not response.success:
                 return MergeResult(
