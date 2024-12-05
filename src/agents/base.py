@@ -110,22 +110,29 @@ class BaseAgent:
             # Safe fallback
             return f"{self.provider.value}/{self.model}"
 
+
     def _get_agent_config(self) -> Dict[str, Any]:
         """Extract relevant config for this agent."""
+        # Get agent specific config first (most specific)
         agent_config = self.config.get('llm_config', {}).get('agents', {}).get(self._get_agent_name(), {})
-        provider_name = agent_config.get('provider', self.config.get('llm_config', {}).get('default_provider'))
+        
+        # Get provider name - prefer agent specific over default
+        provider_name = agent_config.get('provider', 
+                                    self.config.get('llm_config', {}).get('default_provider'))
+        
+        # Get provider level config (medium specific)
         provider_config = self.config.get('providers', {}).get(provider_name, {})
         
-        # Start with provider defaults
+        # Build complete config with correct override order
         config = {
             'provider': provider_name,
-            'model': provider_config.get('default_model'),
+            'model': provider_config.get('default_model'),  # Provider default
             'temperature': 0,
             'api_base': provider_config.get('api_base'),
             'context_length': provider_config.get('context_length')
         }
         
-        # Override with agent-specific settings
+        # Override with agent specific settings (most specific wins)
         config.update({
             k: v for k, v in agent_config.items() 
             if k in ['provider', 'model', 'temperature', 'api_base']

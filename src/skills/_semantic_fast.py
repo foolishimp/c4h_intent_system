@@ -47,11 +47,18 @@ class FastExtractor(BaseAgent):
         """Initialize with parent agent configuration"""
         super().__init__(config=config)
         
-        # Get provider settings from config
-        provider_cfg = config.get('llm_config', {}).get('agents', {}).get('semantic_fast_extractor', {})
-        self.provider = LLMProvider(provider_cfg.get('provider', 'anthropic'))
-        self.model = provider_cfg.get('model', 'claude-3-opus-20240229')
-        self.temperature = provider_cfg.get('temperature', 0)
+        # Get provider settings from config - most specific to least
+        agent_cfg = config.get('llm_config', {}).get('agents', {}).get('semantic_fast_extractor', {})
+        provider_name = agent_cfg.get('provider', 
+                                    config.get('llm_config', {}).get('default_provider', 'anthropic'))
+        
+        # Build provider config chain
+        provider_cfg = config.get('providers', {}).get(provider_name, {})
+        
+        self.provider = LLMProvider(provider_name)
+        # Prefer agent specific settings over provider defaults
+        self.model = agent_cfg.get('model', provider_cfg.get('default_model', 'claude-3-opus-20240229'))
+        self.temperature = agent_cfg.get('temperature', 0)
         
         # Build model string based on provider
         self.model_str = f"{self.provider.value}/{self.model}"

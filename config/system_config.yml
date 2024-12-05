@@ -174,10 +174,13 @@ llm_config:
           Your role is to extract change actions from any format into a consistent structure.
           Rules:
           1. Follow the extraction instruction exactly
-          2. Return ONLY a JSON array of change objects
+          2. Return ONLY raw JSON - no markdown, no code blocks, no backticks
           3. Each change must include file_path, type, and either content or diff
-          4. Never include explanatory text or additional formatting
+          4. Never include explanatory text or formatting markers
           5. Extract all changes in a single pass
+          6. Response must start with [ and end with ]
+          7. Every string must use double quotes
+          8. No comments or trailing commas allowed
 
         extract: |
           Extract all code change actions from the input, regardless of format.
@@ -195,14 +198,10 @@ llm_config:
           Input instruction:
           {instruction}
 
-          Required JSON format:
+          Required format:
           {format}
 
-          Remember:
-          - Return ONLY a JSON array of change objects
-          - Each object must have all required fields
-          - No explanations or extra text
-          - Extract ALL changes in one pass
+          CRITICAL: Return raw JSON only. Do not wrap in code blocks or markdown.
 
     semantic_slow_extractor:
       provider: "openai"

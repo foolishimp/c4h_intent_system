@@ -13,18 +13,28 @@ logger = structlog.get_logger()
 
 class SlowItemIterator:
     """Iterator for slow extraction results with lazy LLM calls"""
-    def __init__(self, extractor: 'SlowExtractor', content: Any, config: ExtractConfig):
-        self._extractor = extractor
-        self._content = content
-        self._config = config
-        self._position = 0
-        self._exhausted = False
-        self._has_items = False
-        self._current_item = None
-        self._max_attempts = 10  # Safety limit
-        logger.debug("slow_iterator.initialized", 
-                    content_type=type(content).__name__,
-                    max_attempts=self._max_attempts)
+    
+    def __init__(self, config: Dict[str, Any] = None):
+        """Initialize with parent agent configuration"""
+        super().__init__(config=config)
+        
+        # Get provider settings from config - most specific to least
+        agent_cfg = config.get('llm_config', {}).get('agents', {}).get('semantic_slow_extractor', {})
+        provider_name = agent_cfg.get('provider', 
+                                    config.get('llm_config', {}).get('default_provider', 'anthropic'))
+        
+        # Build provider config chain
+        provider_cfg = config.get('providers', {}).get(provider_name, {})
+        
+        self.provider = LLMProvider(provider_name)
+        # Prefer agent specific settings over provider defaults
+        self.model = agent_cfg.get('model', provider_cfg.get('default_model', 'claude-3-opus-20240229'))
+        self.temperature = agent_cfg.get('temperature', 0)
+        
+        # Build model string based on provider
+        self.model_str = f"{self.provider.value}/{self.model}"
+        if self.provider == LLMProvider.OPENAI:
+            self.model_str = self.model  # OpenAI doesn't need prefix
 
     def __iter__(self):
         return self
