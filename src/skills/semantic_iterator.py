@@ -8,7 +8,6 @@ from enum import Enum
 import structlog
 from dataclasses import dataclass
 import json
-import asyncio
 from agents.base import BaseAgent, LLMProvider, AgentResponse
 from skills.shared.types import ExtractConfig
 from skills._semantic_fast import FastExtractor, FastItemIterator
@@ -37,24 +36,42 @@ class SemanticIterator(BaseAgent):
 
     def __init__(self,
                 provider: LLMProvider,
-                model: str,
+                model: Optional[str] = None,
                 temperature: float = 0,
                 config: Optional[Dict[str, Any]] = None,
                 extractor_config: Optional[ExtractorConfig] = None):
+        """Initialize iterator with proper configuration"""
         super().__init__(provider=provider, model=model, temperature=temperature, config=config)
+        
         self.extractor_config = extractor_config or ExtractorConfig()
-        self._fast_extractor = FastExtractor(provider=provider, model=model, temperature=temperature, config=config)
-        self._slow_extractor = SlowExtractor(provider=provider, model=model, temperature=temperature, config=config)
+        
+        # Let extractors resolve their own configurations
+        self._fast_extractor = FastExtractor(
+            config=self.config  # Only pass config, let them resolve their own provider/model
+        )
+        self._slow_extractor = SlowExtractor(
+            config=self.config
+        )
+        
         self._current_items = None
         self._position = 0
         self._content = None
         self._config = None
         self._current_mode = None
+        
+        logger.debug("semantic_iterator.initialized",
+                    iterator_provider=str(self.provider),
+                    iterator_model=self.model,
+                    fast_provider=str(self._fast_extractor.provider),
+                    fast_model=self._fast_extractor.model,
+                    slow_provider=str(self._slow_extractor.provider),
+                    slow_model=self._slow_extractor.model,
+                    initial_mode=self.extractor_config.initial_mode)
 
     def _get_agent_name(self) -> str:
         return "semantic_iterator"
 
-    def configure(self, content: Any, config: ExtractConfig):
+    def configure(self, content: Any, config: ExtractConfig) -> 'SemanticIterator':
         """Configure iterator for use"""
         self._content = content
         self._config = config
@@ -66,14 +83,6 @@ class SemanticIterator(BaseAgent):
     def _get_extractor(self, mode: ExtractionMode):
         """Get mode-specific extractor"""
         return self._fast_extractor if mode == ExtractionMode.FAST else self._slow_extractor
-
-    def _ensure_event_loop(self):
-        """Ensure we have an event loop for async calls"""
-        try:
-            self._loop = asyncio.get_event_loop()
-        except RuntimeError:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
 
     def __iter__(self):
         if self._current_mode == ExtractionMode.FAST:

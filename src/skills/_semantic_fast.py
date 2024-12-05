@@ -40,6 +40,16 @@ class FastItemIterator:
 
 class FastExtractor(BaseAgent):
     """Implements fast extraction mode using direct LLM parsing"""
+    
+    def __init__(self, config: Dict[str, Any]):
+        # Get agent-specific config
+        agent_config = config.get('llm_config', {}).get('agents', {}).get('semantic_fast_extractor', {})
+        provider = LLMProvider(agent_config.get('provider', 'openai'))  # Default to OpenAI
+        
+        super().__init__(
+            provider=provider,
+            config=config
+        )
 
     def _get_agent_name(self) -> str:
         return "semantic_fast_extractor"

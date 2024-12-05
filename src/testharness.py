@@ -6,7 +6,7 @@ Path: src/testharness.py
 import argparse
 import yaml
 from pathlib import Path
-from typing import Dict, Any, Optional, Type
+from typing import Dict, Any, Optional, Type, List
 import structlog
 from enum import Enum
 import logging.config
@@ -123,19 +123,55 @@ class AgentTestHarness:
     def load_configs(self, test_config_path: str) -> Dict[str, Any]:
         """Load and merge system and test configurations"""
         try:
-            # Load system config first
-            system_config_path = Path("config/system_config.yml")
-            if not system_config_path.exists():
-                raise ValueError(f"System configuration not found at {system_config_path}")
+            # Try multiple locations for test config
+            test_paths = [
+                Path(test_config_path),  # As provided
+                Path.cwd() / test_config_path,  # From working dir
+                Path(__file__).parent / test_config_path,  # Relative to testharness
+                Path(__file__).parent.parent / test_config_path  # Project root
+            ]
+            
+            # Find first existing test config
+            test_path = next(
+                (p for p in test_paths if p.exists()),
+                None
+            )
+            
+            if not test_path:
+                paths_tried = "\n  - ".join(str(p) for p in test_paths)
+                raise FileNotFoundError(f"Test configuration file not found. Tried:\n  - {paths_tried}")
+            
+            # Find and load system config
+            system_config_paths = [
+                Path("system_config.yml"),
+                Path.cwd() / "system_config.yml",
+                Path(__file__).parent.parent / "system_config.yml",
+                Path("config/system_config.yml"),
+                Path(__file__).parent.parent / "config" / "system_config.yml"
+            ]
+            
+            system_config_path = next(
+                (path for path in system_config_paths if path.exists()),
+                None
+            )
+            
+            if not system_config_path:
+                paths_tried = "\n  - ".join(str(p) for p in system_config_paths)
+                raise FileNotFoundError(f"System configuration not found. Tried:\n  - {paths_tried}")
                 
+            logger.info("config.loading", 
+                       system_config=str(system_config_path),
+                       test_config=str(test_path))
+                
+            # Load system config first
             with open(system_config_path) as f:
                 config = yaml.safe_load(f)
                 logger.debug("system_config.loaded", 
-                        config_keys=list(config.keys()),
-                        agent_configs=list(config.get('llm_config', {}).get('agents', {}).keys()) if config.get('llm_config') else None)
-                
+                          config_keys=list(config.keys()),
+                          agent_configs=list(config.get('llm_config', {}).get('agents', {}).keys()) if config.get('llm_config') else None)
+            
             # Load test specific config
-            with open(test_config_path) as f:
+            with open(test_path) as f:
                 test_config = yaml.safe_load(f)
 
             # Add test-specific items while preserving system config structure
@@ -178,6 +214,9 @@ class AgentTestHarness:
 
             return config
 
+        except yaml.YAMLError as e:
+            logger.error("config.yaml_error", error=str(e))
+            raise ValueError(f"Invalid YAML in configuration: {str(e)}")
         except Exception as e:
             logger.error("config.load_failed", error=str(e))
             raise
@@ -197,20 +236,20 @@ class AgentTestHarness:
                 config=config
             )
         
-        # Regular BaseAgent initialization
+        # Get agent-specific config or empty dict if not found
         agent_config = config.get('llm_config', {}).get('agents', {}).get(agent_type, {})
+        
+        # Let BaseAgent handle model resolution - only pass provider
         return agent_class(
             provider=LLMProvider(agent_config.get('provider', 'anthropic')),
-            model=agent_config.get('model', 'claude-3-opus-20240229'),
-            temperature=agent_config.get('temperature', 0),
             config=config
         )
 
     def process_agent(self, config: AgentConfig) -> None:
-        """Process agent with configuration"""
+        """Process agent with configuration - synchronous interface"""
         try:
             # Load configuration
-            configs = self.load_configs(str(config.config_path))  # Now using instance method
+            configs = self.load_configs(str(config.config_path))
             logger.debug("testharness.loaded_config", 
                         config_path=str(config.config_path),
                         config_contents=configs)
@@ -259,7 +298,7 @@ class AgentTestHarness:
                     **extra_params
                 }
                 
-                result = agent.process(context)
+                result = agent.process(context)  # Synchronous call
                 
                 if not result.success:
                     self.console.print(f"[red]Error:[/] {result.error}")
@@ -268,7 +307,7 @@ class AgentTestHarness:
                 self.display_results(result.data)
 
             elif isinstance(agent, AssetManager):
-                # Handle asset manager case with debug logging
+                # Handle asset manager case
                 self.console.print("[cyan]Processing with asset_manager...[/]")
                 
                 input_data = configs.get('input_data')
@@ -282,12 +321,8 @@ class AgentTestHarness:
                 }
                 logger.debug("testharness.asset_manager_context", context=context)
                 
-                result = agent.process(context)
-                logger.debug("testharness.asset_manager_result", 
-                            success=result.success,
-                            data=result.data,
-                            error=result.error)
-
+                result = agent.process(context)  # Synchronous call
+                
                 if not result.success:
                     self.console.print(f"[red]Error:[/] {result.error}")
                     return
@@ -306,7 +341,7 @@ class AgentTestHarness:
                 
                 logger.debug("testharness.solution_designer_context", context=context)
                 
-                result = agent.process(context)
+                result = agent.process(context)  # Synchronous call
                 logger.debug("testharness.solution_designer_result",
                             success=result.success,
                             data=result.data if result.success else None,
@@ -323,14 +358,13 @@ class AgentTestHarness:
                 self.console.print(f"[cyan]Processing with {config.agent_type}...[/]")
                 
                 context = {
-                    'original_code': configs.get('input_data'),
-                    'changes': configs.get('changes'),
+                    'content': configs.get('input_data'),
                     'instruction': configs.get('instruction'),
                     'merge_style': configs.get('merge_style', 'smart'),
                     **extra_params
                 }
                 
-                result = agent.process(context)
+                result = agent.process(context)  # Synchronous call
                 
                 if not result.success:
                     self.console.print(f"[red]Error:[/] {result.error}")
@@ -339,7 +373,7 @@ class AgentTestHarness:
                 self.display_results(result.data)
 
         except Exception as e:
-            logger.error("agent.process_failed", error=str(e))
+            logger.error("process_agent.failed", error=str(e))
             raise
 
     def display_results(self, results: Any) -> None:
@@ -461,14 +495,17 @@ def main():
         harness = AgentTestHarness()
         harness.setup_logging(args.log_mode)
         
-        logger.info("testharness.initialized")
-        
         try:
+            # Synchronous call
             harness.process_agent(AgentConfig(
                 agent_type=args.agent_type,
                 config_path=Path(args.config),
                 extra_args=extra_params
             ))
+        except FileNotFoundError as e:
+            logger.error("config.not_found", path=args.config)
+            print(f"\nError: Configuration file not found: {args.config}")
+            raise SystemExit(1)
         except Exception as e:
             logger.error("process_agent.failed", error=str(e), exc_info=True)
             raise

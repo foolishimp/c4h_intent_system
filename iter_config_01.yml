@@ -1,11 +1,5 @@
 # iter_config.yml
 
-provider: "anthropic"
-model: "claude-3-opus-20240229"
-temperature: 0
-env_var: "ANTHROPIC_API_KEY"
-api_base: "https://api.anthropic.com"
-
 input_data: |
   Common birds in North America include the American Robin, 
   which has a red breast and yellow beak. The Blue Jay is 

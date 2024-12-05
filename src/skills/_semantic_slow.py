@@ -2,12 +2,10 @@
 Slow extraction mode with lazy LLM calls.
 Path: src/skills/_semantic_slow.py
 """
-# src/skills/_semantic_slow.py
 
 from typing import Dict, Any, Optional
 import structlog
-import asyncio
-from agents.base import BaseAgent, LLMProvider, AgentResponse
+from agents.base import BaseAgent, LLMProvider, AgentResponse  
 from skills.shared.types import ExtractConfig
 import json
 
@@ -24,15 +22,6 @@ class SlowItemIterator:
         self._has_items = False
         self._current_item = None
         self._max_attempts = 10  # Safety limit
-        self._ensure_event_loop()
-
-    def _ensure_event_loop(self):
-        """Ensure we have an event loop for async operations"""
-        try:
-            self._loop = asyncio.get_event_loop()
-        except RuntimeError:
-            self._loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(self._loop)
 
     def __iter__(self):
         return self
@@ -43,7 +32,6 @@ class SlowItemIterator:
             raise StopIteration
 
         try:
-            # Run async extraction synchronously
             result = self._extractor.process({
                 'content': self._content,
                 'config': self._config,
@@ -86,6 +74,16 @@ class SlowItemIterator:
 
 class SlowExtractor(BaseAgent):
     """Implements slow extraction mode using iterative LLM queries"""
+
+    def __init__(self, config: Dict[str, Any]):
+        # Get agent-specific config
+        agent_config = config.get('llm_config', {}).get('agents', {}).get('semantic_slow_extractor', {})
+        provider = LLMProvider(agent_config.get('provider', 'openai'))  # Default to OpenAI
+        
+        super().__init__(
+            provider=provider,
+            config=config
+        )
 
     def _get_agent_name(self) -> str:
         return "semantic_slow_extractor"

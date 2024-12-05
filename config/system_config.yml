@@ -50,15 +50,14 @@ providers:
         max_delay: 20
         exponential: true
 
-
   gemini:
     api_base: "https://generativelanguage.googleapis.com/v1beta"
     context_length: 32000
     env_var: "GEMINI_API_KEY"
 
 llm_config:
-  default_provider: "anthropic"
-  default_model: "claude-3-sonnet-20240229"
+  default_provider: "openai"
+  default_model: "gpt-4o-mini"
   agents:
     discovery:
       provider: "anthropic"
@@ -159,9 +158,6 @@ llm_config:
           {format}
 
     semantic_iterator:
-      provider: "anthropic"
-      model: "claude-3-sonnet-20240229" 
-      temperature: 0
       prompts:
         system: |
           You are a semantic extraction coordinator. 
