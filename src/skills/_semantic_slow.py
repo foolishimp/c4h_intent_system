@@ -5,7 +5,7 @@ Path: src/skills/_semantic_slow.py
 
 from typing import Dict, Any, Optional
 import structlog
-from agents.base import BaseAgent, LLMProvider, AgentResponse  
+from agents.base import BaseAgent, LLMProvider, AgentResponse
 from skills.shared.types import ExtractConfig
 import json
 
@@ -27,11 +27,12 @@ class SlowItemIterator:
         return self
 
     def __next__(self):
-        """Synchronous next implementation wrapping async calls"""
+        """Synchronous next implementation"""
         if self._exhausted or self._position >= self._max_attempts:
             raise StopIteration
 
         try:
+            # Run extraction synchronously
             result = self._extractor.process({
                 'content': self._content,
                 'config': self._config,
@@ -75,16 +76,6 @@ class SlowItemIterator:
 class SlowExtractor(BaseAgent):
     """Implements slow extraction mode using iterative LLM queries"""
 
-    def __init__(self, config: Dict[str, Any]):
-        # Get agent-specific config
-        agent_config = config.get('llm_config', {}).get('agents', {}).get('semantic_slow_extractor', {})
-        provider = LLMProvider(agent_config.get('provider', 'openai'))  # Default to OpenAI
-        
-        super().__init__(
-            provider=provider,
-            config=config
-        )
-
     def _get_agent_name(self) -> str:
         return "semantic_slow_extractor"
 
@@ -111,5 +102,5 @@ class SlowExtractor(BaseAgent):
         return f"{n}{suffix}"
 
     def create_iterator(self, content: Any, config: ExtractConfig) -> SlowItemIterator:
-        """Create iterator for slow extraction - synchronous interface"""
+        """Create iterator for slow extraction"""
         return SlowItemIterator(self, content, config)

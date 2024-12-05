@@ -1,4 +1,11 @@
 # iter_config.yml
+llm_config:
+  agents:
+    semantic_iterator:
+      provider: "openai"
+      extractor_config:
+        mode: "slow"
+        allow_fallback: false
 
 input_data: |
   Common birds in North America include the American Robin, 
