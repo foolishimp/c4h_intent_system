@@ -1,225 +1,144 @@
 """
-System configuration handling with app config merging.
+Configuration handling with robust dictionary merging and comprehensive logging.
 Path: src/config.py
 """
 
-from pathlib import Path
-from typing import Dict, Any, Optional, List
 import yaml
-from pydantic import BaseModel, Field, validator
-from enum import Enum
+from pathlib import Path
+from typing import Dict, Any, Optional
 import structlog
-from agents.base import LLMProvider
-import os
+from copy import deepcopy
+import collections.abc
 
 logger = structlog.get_logger()
 
-class ConfigValidationError(Exception):
-    """Custom exception for configuration validation failures"""
-    pass
-
-class AgentLLMConfig(BaseModel):
-    """LLM configuration for an agent"""
-    provider: str = Field(..., description="LLM provider name (required)")
-    model: str = Field(..., description="Model name for this agent (required)")
-    temperature: float = Field(default=0)
+def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Deep merge dictionaries with clear precedence rules and logging.
     
-    @validator('provider')
-    def valid_provider(cls, v):
-        try:
-            LLMProvider(v)
-            return v
-        except ValueError:
-            raise ConfigValidationError(f"Invalid provider '{v}'. Must be one of: {[p.value for p in LLMProvider]}")
-
-    @validator('model')
-    def model_not_empty(cls, v):
-        if not v.strip():
-            raise ConfigValidationError("Model name cannot be empty")
-        return v
+    Rules:
+    1. Override values take precedence over base values
+    2. Dictionaries are merged recursively
+    3. Lists from override replace lists from base
+    4. None values in override delete keys from base
+    5. Path objects are converted to strings for consistency
     
-    @property
-    def provider_enum(self) -> LLMProvider:
-        return LLMProvider(self.provider)
+    Args:
+        base: Base configuration dictionary
+        override: Override configuration dictionary
     
-    def dict(self, *args, **kwargs) -> Dict[str, Any]:
-        """Override dict to ensure all fields are included"""
-        base_dict = super().dict(*args, **kwargs)
-        if 'temperature' not in base_dict:
-            base_dict['temperature'] = 0
-        return base_dict
-
-class ProjectConfig(BaseModel):
-    """Project configuration settings"""
-    default_path: Optional[str] = None
-    default_intent: Optional[str] = None
-    workspace_root: str = Field(default="workspaces")
-    max_file_size: int = Field(default=1024 * 1024)  # 1MB default
-
-    @validator('workspace_root')
-    def validate_workspace_root(cls, v):
-        if not v:
-            raise ConfigValidationError("workspace_root cannot be empty")
-        return v
-
-class ProviderConfig(BaseModel):
-    """Provider-specific configuration"""
-    api_base: str = Field(..., description="API base URL (required)")
-    context_length: int = Field(..., description="Maximum context length (required)")
-    env_var: str = Field(..., description="Environment variable name for API key (required)")
-
-    @validator('api_base')
-    def validate_api_base(cls, v):
-        if not v:
-            raise ConfigValidationError("API base URL cannot be empty")
-        return v
-
-    @validator('context_length')
-    def validate_context_length(cls, v):
-        if v <= 0:
-            raise ConfigValidationError("Context length must be positive")
-        return v
-
-    @validator('env_var')
-    def env_var_exists(cls, v):
-        if not v:
-            raise ConfigValidationError("Environment variable name cannot be empty")
-        if not os.getenv(v):
-            raise ConfigValidationError(f"Environment variable '{v}' not set")
-        return v
-
-class AppConfig(BaseModel):
-    """Application runtime configuration"""
-    provider: str
-    model: str
-    temperature: float = 0
-    project_path: Optional[str] = None
-    input_data: str 
-    instruction: str
-    format: str = "json"
-    merge_method: str = "smart"
-    # Added: Intent configuration support
-    intent: Optional[Dict[str, Any]] = None  # Supports structured intent data
-
-    @validator('provider')
-    def valid_provider(cls, v):
-        try:
-            LLMProvider(v)
-            return v
-        except ValueError:
-            raise ConfigValidationError(f"Invalid provider '{v}'. Must be one of: {[p.value for p in LLMProvider]}")
-
-class SystemConfig(BaseModel):
-    """System-wide configuration"""
-    providers: Dict[str, ProviderConfig] = Field(..., description="Provider configurations (required)")
-    llm_config: Dict[str, Any] = Field(..., description="LLM configurations (required)")
-    backup: Dict[str, Any] = Field(default_factory=dict)
-    logging: Dict[str, Any] = Field(default_factory=dict)
-    project: ProjectConfig = Field(default_factory=ProjectConfig)
-    runtime: Optional[Dict[str, Any]] = None
+    Returns:
+        Merged configuration dictionary
+    """
+    result = deepcopy(base)
     
-    @validator('providers')
-    def validate_providers(cls, v):
-        if not v:
-            raise ConfigValidationError("At least one provider must be configured")
-        
-        required_providers = {p.value for p in LLMProvider}
-        missing_providers = required_providers - set(v.keys())
-        if missing_providers:
-            raise ConfigValidationError(f"Missing configurations for providers: {missing_providers}")
-        return v
-
-    @validator('llm_config')
-    def validate_llm_config(cls, v):
-        required = ['default_provider', 'default_model', 'agents']
-        missing = [f for f in required if f not in v]
-        if missing:
-            raise ConfigValidationError(f"Missing required LLM config fields: {missing}")
-        
-        default_provider = v.get('default_provider')
-        if default_provider not in [p.value for p in LLMProvider]:
-            raise ConfigValidationError(f"Invalid default_provider: {default_provider}")
-        
-        agents = v.get('agents', {})
-        if not isinstance(agents, dict):
-            raise ConfigValidationError("agents config must be a dictionary")
-            
-        required_agents = {'discovery', 'solution_designer', 'coder', 'assurance'}
-        missing_agents = required_agents - set(agents.keys())
-        if missing_agents:
-            raise ConfigValidationError(f"Missing configurations for agents: {missing_agents}")
-        
-        return v
-
-    def get_agent_config(self, agent_name: str) -> AgentLLMConfig:
-        """Get LLM configuration for specific agent with validation"""
-        if not agent_name:
-            raise ConfigValidationError("Agent name is required")
-
-        agent_configs = self.llm_config.get("agents", {})
-        if agent_name not in agent_configs:
-            raise ConfigValidationError(
-                f"No configuration found for agent '{agent_name}'. "
-                f"Available agents: {list(agent_configs.keys())}"
+    try:
+        for key, value in override.items():
+            # Log each override attempt at debug level
+            logger.debug(
+                "config.merge.processing_key",
+                key=key,
+                override_type=type(value).__name__,
+                base_type=type(result.get(key)).__name__ if key in result else None
             )
+            
+            # None deletes keys
+            if value is None:
+                if key in result:
+                    logger.debug("config.merge.deleting_key", key=key)
+                    result.pop(key, None)
+                continue
+                
+            # Key not in base, just set it
+            if key not in result:
+                logger.debug("config.merge.adding_new_key", key=key)
+                result[key] = deepcopy(value)
+                continue
+                
+            # Handle different types
+            if isinstance(value, collections.abc.Mapping):
+                # Recursive merge for dictionaries
+                logger.debug("config.merge.recursive_merge", key=key)
+                result[key] = deep_merge(result[key], value)
+            elif isinstance(value, Path):
+                # Convert paths to strings
+                logger.debug("config.merge.converting_path", key=key)
+                result[key] = str(value)
+            elif isinstance(value, list):
+                # Lists replace rather than merge
+                logger.debug("config.merge.replacing_list", key=key)
+                result[key] = deepcopy(value)
+            else:
+                # Simple values replace
+                logger.debug("config.merge.replacing_value", 
+                           key=key,
+                           old_value=result[key],
+                           new_value=value)
+                result[key] = deepcopy(value)
+            
+        return result
+
+    except Exception as e:
+        logger.error("config.merge.failed", 
+                    error=str(e),
+                    error_type=type(e).__name__,
+                    keys_processed=list(override.keys()))
+        raise
+
+def load_config(path: Path) -> Dict[str, Any]:
+    """Load configuration from YAML file with comprehensive logging"""
+    try:
+        logger.info("config.load.starting", path=str(path))
         
-        config = agent_configs[agent_name]
-        try:
-            return AgentLLMConfig(**config)
-        except Exception as e:
-            raise ConfigValidationError(f"Invalid configuration for agent '{agent_name}': {str(e)}")
+        if not path.exists():
+            logger.error("config.load.file_not_found", path=str(path))
+            return {}
+            
+        with open(path) as f:
+            config = yaml.safe_load(f) or {}
+            
+        logger.info("config.load.success",
+                   path=str(path),
+                   keys=list(config.keys()),
+                   size=len(str(config)))
+                   
+        return config
+        
+    except yaml.YAMLError as e:
+        logger.error("config.load.yaml_error",
+                    path=str(path),
+                    error=str(e),
+                    line=getattr(e, 'line', None),
+                    column=getattr(e, 'column', None))
+        return {}
+    except Exception as e:
+        logger.error("config.load.failed",
+                    path=str(path),
+                    error=str(e),
+                    error_type=type(e).__name__)
+        return {}
 
-    @classmethod
-    def load(cls, config_path: Path) -> 'SystemConfig':
-        """Load configuration from YAML file"""
-        try:
-            if not config_path.exists():
-                raise ConfigValidationError(f"Configuration file not found: {config_path}")
-                
-            with open(config_path) as f:
-                data = yaml.safe_load(f)
-                
-            if not data:
-                raise ConfigValidationError("Empty configuration file")
-                
-            return cls(**data)
-        except Exception as e:
-            logger.error("config.load_failed", error=str(e))
-            raise ConfigValidationError(f"Failed to load configuration: {str(e)}")
-
-    @classmethod
-    def load_with_app_config(cls, system_path: Path, app_path: Path) -> 'SystemConfig':
-        """Load system config and merge with app config"""
-        try:
-            # Load base system config
-            system_config = cls.load(system_path)
-            
-            # Load and validate app config
-            with open(app_path) as f:
-                app_data = yaml.safe_load(f)
-                app_config = AppConfig(**app_data)
-            
-            # Update with app-specific settings
-            merged_config = system_config.dict()
-            merged_config['runtime'] = {
-                'provider': app_config.provider,
-                'model': app_config.model,
-                'temperature': app_config.temperature,
-                'project_path': app_config.project_path,
-                'input_data': app_config.input_data, 
-                'instruction': app_config.instruction,
-                'format': app_config.format,
-                'merge_method': app_config.merge_method,
-                # Added: Include intent configuration in runtime settings
-                'intent': app_config.intent
-            }
-            
-            return cls(**merged_config)
-            
-        except Exception as e:
-            logger.error("config.merge_failed", error=str(e))
-            raise ConfigValidationError(f"Failed to merge configurations: {str(e)}")
-
-    def get_runtime_config(self) -> Dict[str, Any]:
-        """Get runtime configuration settings"""
-        return self.runtime or {}
+def load_with_app_config(system_path: Path, app_path: Path) -> Dict[str, Any]:
+    """Load and merge system config with app config with full logging"""
+    try:
+        logger.info("config.merge.starting",
+                   system_path=str(system_path),
+                   app_path=str(app_path))
+        
+        system_config = load_config(system_path)
+        app_config = load_config(app_path)
+        
+        result = deep_merge(system_config, app_config)
+        
+        logger.info("config.merge.complete",
+                   total_keys=len(result),
+                   system_keys=len(system_config),
+                   app_keys=len(app_config))
+        
+        return result
+        
+    except Exception as e:
+        logger.error("config.merge.failed",
+                    error=str(e),
+                    error_type=type(e).__name__)
+        return {}

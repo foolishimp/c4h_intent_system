@@ -21,8 +21,10 @@ class ExtractResult:
     error: Optional[str] = None
 
 class SemanticExtract(BaseAgent):
-    """Base extractor that handles markdown in extraction results"""
-    
+    def __init__(self, config: Dict[str, Any] = None):
+        """Initialize extractor with config."""
+        super().__init__(config=config)
+
     def _get_agent_name(self) -> str:
         return "semantic_extract"
 

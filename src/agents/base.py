@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
 import asyncio
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Literal
 from functools import wraps
 import time
 import litellm
@@ -60,54 +60,88 @@ def log_operation(operation_name: str):
         return wrapper
     return decorator
 
-class BaseAgent(ABC):
-    """Base agent with integrated LiteLLM configuration"""
-    
-    def __init__(self,
-                provider: LLMProvider,
-                model: Optional[str] = None,
-                temperature: float = 0,
-                config: Optional[Dict[str, Any]] = None):
-        """Initialize with provider configuration"""
+@dataclass
+class AgentConfig:
+    """Configuration requirements for base agent"""
+    provider: Literal['anthropic', 'openai', 'gemini']
+    model: str
+    temperature: float = 0
+    api_base: Optional[str] = None
+    context_length: Optional[int] = None
+
+class BaseAgent:
+    def __init__(self, config: Dict[str, Any] = None):
+        """Initialize agent with raw config dictionary."""
         self.config = config or {}
         
-        # Resolve provider first
-        self.provider = provider
-        provider_config = self._get_provider_config(provider)
-        if not provider_config:
-            raise ValueError(f"No configuration found for provider: {provider}")
+        # Extract and validate config for this agent
+        agent_config = self._get_agent_config()
         
-        # Resolve model using fallback chain
-        self.model = self._resolve_model(model, provider_config)
-        self.temperature = temperature
+        # Set provider and model
+        self.provider = LLMProvider(agent_config.get('provider', 'anthropic'))
+        self.model = agent_config.get('model', 'claude-3-opus-20240229')
+        self.temperature = agent_config.get('temperature', 0)
         
-        # Validate model against provider's valid models if specified
-        valid_models = provider_config.get("valid_models", [])
-        if valid_models and self.model not in valid_models:
-            raise ValueError(f"Invalid model {self.model} for provider {provider}")
-        
-        # Configure litellm with provider settings
-        self._setup_litellm(provider_config)
-        
-        # Initialize metrics
-        self.metrics = {
-            "total_requests": 0,
-            "successful_requests": 0, 
-            "failed_requests": 0,
-            "total_duration": 0.0,
-            "last_error": None
-        }
-    
-        # Set logging level with safe conversion
-        log_level = self.config.get("logging", {}).get("agent_level", "basic")
-        self.log_level = LogDetail.from_str(log_level)
+        # Build model string based on provider
+        self.model_str = self._get_model_str()
         
         self.logger = structlog.get_logger().bind(
-            agent_type=self._get_agent_name(),
-            provider=self.provider.value,
+            agent=self._get_agent_name(),
+            provider=str(self.provider),
             model=self.model
         )
+        
+        logger.info(f"{self._get_agent_name()}.initialized",
+                   provider=str(self.provider),
+                   model=self.model)
 
+    def _get_model_str(self) -> str:
+        """Get the appropriate model string for the provider"""
+        if self.provider == LLMProvider.OPENAI:
+            # OpenAI models don't need provider prefix
+            return self.model
+        elif self.provider == LLMProvider.ANTHROPIC:
+            # Anthropic models need anthropic/ prefix
+            return f"anthropic/{self.model}"
+        elif self.provider == LLMProvider.GEMINI:
+            # Gemini models need google/ prefix
+            return f"google/{self.model}"
+        else:
+            # Safe fallback
+            return f"{self.provider.value}/{self.model}"
+
+    def _get_agent_config(self) -> Dict[str, Any]:
+        """Extract relevant config for this agent."""
+        agent_config = self.config.get('llm_config', {}).get('agents', {}).get(self._get_agent_name(), {})
+        provider_name = agent_config.get('provider', self.config.get('llm_config', {}).get('default_provider'))
+        provider_config = self.config.get('providers', {}).get(provider_name, {})
+        
+        # Start with provider defaults
+        config = {
+            'provider': provider_name,
+            'model': provider_config.get('default_model'),
+            'temperature': 0,
+            'api_base': provider_config.get('api_base'),
+            'context_length': provider_config.get('context_length')
+        }
+        
+        # Override with agent-specific settings
+        config.update({
+            k: v for k, v in agent_config.items() 
+            if k in ['provider', 'model', 'temperature', 'api_base']
+        })
+        
+        return config
+
+    def _validate_config(self, config: Dict[str, Any]) -> AgentConfig:
+        """Validate against this agent's config requirements."""
+        try:
+            return AgentConfig(**config)
+        except Exception as e:
+            self.logger.error("agent.invalid_config", 
+                            error=str(e),
+                            agent=self._get_agent_name())
+            raise ValueError(f"Invalid configuration for {self._get_agent_name()}: {str(e)}")
     def _get_provider_config(self, provider: LLMProvider) -> Dict[str, Any]:
         """Get provider configuration from system config"""
         return self.config.get("providers", {}).get(provider.value, {})

@@ -3,10 +3,7 @@ Generic test harness for running agent classes with configuration.
 Path: src/testharness.py
 """
 
-import argparse
-import yaml
-from pathlib import Path
-from typing import Dict, Any, Optional, Type, List
+from typing import List, Dict, Any, Optional, Type
 import structlog
 from enum import Enum
 import logging.config
@@ -15,7 +12,9 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 import json
-import datetime
+from pathlib import Path
+import argparse
+import yaml  # Add this import
 
 from agents.base import BaseAgent, LLMProvider, LogDetail
 from agents.coder import Coder
@@ -26,6 +25,7 @@ from agents.solution_designer import SolutionDesigner
 from skills.asset_manager import AssetManager
 from skills.semantic_merge import SemanticMerge
 from skills.semantic_extract import SemanticExtract
+from config import deep_merge
 
 logger = structlog.get_logger()
 
@@ -79,7 +79,7 @@ class AgentTestHarness:
 
     def __init__(self, console: Optional[Console] = None):
         self.console = console or Console()
-        
+
     def setup_logging(self, mode: LogMode) -> None:
         """Configure structured logging based on mode"""
         processors = [
@@ -121,27 +121,9 @@ class AgentTestHarness:
         })
 
     def load_configs(self, test_config_path: str) -> Dict[str, Any]:
-        """Load and merge system and test configurations"""
+        """Load and merge configurations"""
         try:
-            # Try multiple locations for test config
-            test_paths = [
-                Path(test_config_path),  # As provided
-                Path.cwd() / test_config_path,  # From working dir
-                Path(__file__).parent / test_config_path,  # Relative to testharness
-                Path(__file__).parent.parent / test_config_path  # Project root
-            ]
-            
-            # Find first existing test config
-            test_path = next(
-                (p for p in test_paths if p.exists()),
-                None
-            )
-            
-            if not test_path:
-                paths_tried = "\n  - ".join(str(p) for p in test_paths)
-                raise FileNotFoundError(f"Test configuration file not found. Tried:\n  - {paths_tried}")
-            
-            # Find and load system config
+            # Find system config path
             system_config_paths = [
                 Path("system_config.yml"),
                 Path.cwd() / "system_config.yml",
@@ -158,67 +140,27 @@ class AgentTestHarness:
             if not system_config_path:
                 paths_tried = "\n  - ".join(str(p) for p in system_config_paths)
                 raise FileNotFoundError(f"System configuration not found. Tried:\n  - {paths_tried}")
-                
-            logger.info("config.loading", 
-                       system_config=str(system_config_path),
-                       test_config=str(test_path))
-                
-            # Load system config first
+            
+            # Load system config using yaml
             with open(system_config_path) as f:
-                config = yaml.safe_load(f)
-                logger.debug("system_config.loaded", 
-                          config_keys=list(config.keys()),
-                          agent_configs=list(config.get('llm_config', {}).get('agents', {}).keys()) if config.get('llm_config') else None)
-            
-            # Load test specific config
-            with open(test_path) as f:
+                system_config = yaml.safe_load(f)
+
+            # Load test config using yaml
+            with open(test_config_path) as f:
                 test_config = yaml.safe_load(f)
-
-            # Add test-specific items while preserving system config structure
-            config.update({
-                'input_data': test_config.get('input_data'),
-                'instruction': test_config.get('instruction'),
-                'format': test_config.get('format', 'json'),
-                'discovery_data': test_config.get('discovery_data', {}),
-                'intent': test_config.get('intent', {}),
-                'extractor_config': test_config.get('extractor_config', {})
-            })
             
-            # Deep merge agent-specific config if provided
-            if 'agent_config' in test_config:
-                if 'llm_config' not in config:
-                    config['llm_config'] = {}
-                if 'agents' not in config['llm_config']:
-                    config['llm_config']['agents'] = {}
-                    
-                for agent_name, agent_config in test_config['agent_config'].items():
-                    if agent_name in config['llm_config']['agents']:
-                        # Deep merge preserving existing prompts and other nested config
-                        base_config = config['llm_config']['agents'][agent_name]
-                        merged = {**base_config, **agent_config}
-                        
-                        # Ensure prompts are preserved
-                        if 'prompts' in base_config:
-                            merged['prompts'] = {
-                                **base_config.get('prompts', {}),
-                                **agent_config.get('prompts', {})
-                            }
-                        
-                        config['llm_config']['agents'][agent_name] = merged
-                    else:
-                        config['llm_config']['agents'][agent_name] = agent_config
+            # Merge configs using deep_merge
+            config = deep_merge(system_config, test_config)
             
-            logger.debug("final_config.ready",
-                    config_keys=list(config.keys()),
-                    agent_configs=list(config.get('llm_config', {}).get('agents', {}).keys()) if config.get('llm_config') else None)
-
+            logger.debug("testharness.config_loaded",
+                        system_path=str(system_config_path),
+                        test_path=test_config_path,
+                        merged_keys=list(config.keys()))
+            
             return config
 
-        except yaml.YAMLError as e:
-            logger.error("config.yaml_error", error=str(e))
-            raise ValueError(f"Invalid YAML in configuration: {str(e)}")
         except Exception as e:
-            logger.error("config.load_failed", error=str(e))
+            logger.error("testharness.config_load_failed", error=str(e))
             raise
 
     def create_agent(self, agent_type: str, config: Dict[str, Any]) -> BaseAgent:
@@ -239,14 +181,10 @@ class AgentTestHarness:
         # Get agent-specific config or empty dict if not found
         agent_config = config.get('llm_config', {}).get('agents', {}).get(agent_type, {})
         
-        # Let BaseAgent handle model resolution - only pass provider
-        return agent_class(
-            provider=LLMProvider(agent_config.get('provider', 'anthropic')),
-            config=config
-        )
+        return agent_class(config=config)
 
     def process_agent(self, config: AgentConfig) -> None:
-        """Process agent with configuration - synchronous interface"""
+        """Process agent with configuration"""
         try:
             # Load configuration
             configs = self.load_configs(str(config.config_path))
@@ -288,71 +226,6 @@ class AgentTestHarness:
                         
                 self.display_results(results)
                     
-            elif isinstance(agent, Coder):
-                # Handle coder case
-                self.console.print("[cyan]Processing with coder...[/]")
-                
-                context = {
-                    'input_data': configs.get('input_data'),
-                    'instruction': configs.get('instruction'),
-                    **extra_params
-                }
-                
-                result = agent.process(context)  # Synchronous call
-                
-                if not result.success:
-                    self.console.print(f"[red]Error:[/] {result.error}")
-                    return
-                        
-                self.display_results(result.data)
-
-            elif isinstance(agent, AssetManager):
-                # Handle asset manager case
-                self.console.print("[cyan]Processing with asset_manager...[/]")
-                
-                input_data = configs.get('input_data')
-                logger.debug("testharness.asset_manager_input",
-                            input_data=input_data,
-                            input_type=type(input_data).__name__)
-                
-                context = {
-                    'input_data': input_data,
-                    **extra_params
-                }
-                logger.debug("testharness.asset_manager_context", context=context)
-                
-                result = agent.process(context)  # Synchronous call
-                
-                if not result.success:
-                    self.console.print(f"[red]Error:[/] {result.error}")
-                    return
-                        
-                self.display_results(result.data)
-
-            elif isinstance(agent, SolutionDesigner):
-                # Handle solution designer case
-                self.console.print("[cyan]Processing with solution designer...[/]")
-                
-                context = {
-                    'discovery_data': configs.get('discovery_data', {}),
-                    'intent': configs.get('intent', {}),
-                    **extra_params
-                }
-                
-                logger.debug("testharness.solution_designer_context", context=context)
-                
-                result = agent.process(context)  # Synchronous call
-                logger.debug("testharness.solution_designer_result",
-                            success=result.success,
-                            data=result.data if result.success else None,
-                            error=result.error if not result.success else None)
-                
-                if not result.success:
-                    self.console.print(f"[red]Error:[/] {result.error}")
-                    return
-                        
-                self.display_results(result.data)
-
             else:
                 # Generic agent processing
                 self.console.print(f"[cyan]Processing with {config.agent_type}...[/]")
@@ -377,74 +250,29 @@ class AgentTestHarness:
             raise
 
     def display_results(self, results: Any) -> None:
-        """Display agent processing results"""
-        try:
-            # If results is empty or None, show appropriate message
-            if not results:
-                self.console.print("[yellow]No results to display[/]")
-                return
+        """Display processing results"""
+        if not results:
+            self.console.print("[yellow]No results to display[/]")
+            return
 
-            # Create results table
-            table = Table(show_header=True, header_style="bold magenta")
+        if isinstance(results, list):
+            table = Table(title="Extracted Items")
             
-            if isinstance(results, dict) and "changes" in results:
-                # Handle Coder results
-                table.add_column("File")
-                table.add_column("Type")
-                table.add_column("Status")
-                table.add_column("Description")
+            # Add columns based on first item if it's a dict
+            if results and isinstance(results[0], dict):
+                for key in results[0].keys():
+                    table.add_column(key.title())
                 
-                for change in results["changes"]:
-                    status = "[green]✓[/]" if change["success"] else f"[red]✗ {change.get('error', 'Failed')}[/]"
-                    table.add_row(
-                        change["file"],
-                        change["type"],
-                        status,
-                        change.get("description", "")
-                    )
-                
-                # Add summary footer
-                metrics = results.get("metrics", {})
-                if metrics:
-                    # Use standard datetime parsing
-                    from datetime import datetime
-                    start_time = datetime.strptime(metrics["start_time"], "%Y-%m-%dT%H:%M:%S.%f")
-                    end_time = datetime.strptime(metrics["end_time"], "%Y-%m-%dT%H:%M:%S.%f")
-                    duration = end_time - start_time
-                    
-                    self.console.print(Panel(
-                        f"Total Changes: {results['total']}\n"
-                        f"Successful: {results['successful']}\n"
-                        f"Duration: {duration.total_seconds():.2f}s",
-                        title="Summary",
-                        border_style="blue"
-                    ))
-                    
-            elif isinstance(results, list):
-                # Handle list results
-                if results and isinstance(results[0], dict):
-                    # Add columns based on first result's keys
-                    for key in results[0].keys():
-                        table.add_column(key.title())
-                    
-                    # Add rows
-                    for item in results:
-                        table.add_row(*[str(v) for v in item.values()])
-                else:
-                    # Simple list display
-                    table.add_column("Result")
-                    for item in results:
-                        table.add_row(str(item))
+                for item in results:
+                    table.add_row(*[str(v) for v in item.values()])
             else:
-                # Default to simple display
-                self.console.print(Panel(str(results)))
-                return
-
+                table.add_column("Result")
+                for item in results:
+                    table.add_row(str(item))
+                    
             self.console.print(table)
-
-        except Exception as e:
-            logger.error("display.failed", error=str(e))
-            self.console.print(f"[red]Error displaying results:[/] {str(e)}")
+        else:
+            self.console.print(Panel(str(results)))
 
 def main():
     parser = argparse.ArgumentParser(
@@ -465,12 +293,12 @@ def main():
         type=LogMode,
         choices=list(LogMode),
         default=LogMode.NORMAL,
-        help="Logging mode for test harness (not agents)"
+        help="Logging mode for test harness"
     )
     parser.add_argument(
         "--param",
         action='append',
-        help="Additional parameters in key=value format. Can be specified multiple times.",
+        help="Additional parameters in key=value format",
         default=[]
     )
     
@@ -496,7 +324,6 @@ def main():
         harness.setup_logging(args.log_mode)
         
         try:
-            # Synchronous call
             harness.process_agent(AgentConfig(
                 agent_type=args.agent_type,
                 config_path=Path(args.config),
@@ -507,13 +334,13 @@ def main():
             print(f"\nError: Configuration file not found: {args.config}")
             raise SystemExit(1)
         except Exception as e:
-            logger.error("process_agent.failed", error=str(e), exc_info=True)
+            logger.error("process_agent.failed", error=str(e))
             raise
             
         logger.info("testharness.completed")
         
     except Exception as e:
-        logger.error("harness.failed", error=str(e), exc_info=True)
+        logger.error("harness.failed", error=str(e))
         print(f"\nError: {str(e)}")
         raise SystemExit(1)
 

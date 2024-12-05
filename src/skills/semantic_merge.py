@@ -7,6 +7,7 @@ from typing import Dict, Any, Optional, Union
 from dataclasses import dataclass
 import structlog
 from agents.base import BaseAgent, LLMProvider, AgentResponse
+from config import deep_merge
 
 logger = structlog.get_logger()
 
@@ -26,27 +27,20 @@ class MergeResult:
     error: Optional[str] = None
 
 class SemanticMerge(BaseAgent):
-    """Merges code changes using semantic understanding"""
-    
-    def __init__(self,
-                 provider: LLMProvider,
-                 model: str,
-                 temperature: float = 0,
-                 config: Optional[Dict[str, Any]] = None,
-                 merge_config: Optional[MergeConfig] = None):
-        """Initialize merger with configuration"""
-        super().__init__(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            config=config
-        )
-        self.merge_config = merge_config or MergeConfig()
+    def __init__(self, config: Dict[str, Any] = None, merge_config: Dict[str, Any] = None):
+        """Initialize merger with config and optional merge settings."""
+        if merge_config:
+            config = deep_merge(config or {}, {
+                'llm_config': {
+                    'agents': {
+                        'semantic_merge': {
+                            'merge_config': merge_config
+                        }
+                    }
+                }
+            })
         
-        logger.debug("semantic_merge.initialized",
-                    provider=str(provider),
-                    model=model,
-                    merge_style=self.merge_config.style)
+        super().__init__(config=config)
 
     def _get_agent_name(self) -> str:
         return "semantic_merge"

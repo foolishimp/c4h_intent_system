@@ -1,8 +1,9 @@
-# iter_config.yml
+# iter_config_01.yml
+
 llm_config:
   agents:
     semantic_iterator:
-      provider: "openai"
+      temperature: 0
       extractor_config:
         mode: "slow"
         allow_fallback: false
@@ -19,17 +20,7 @@ instruction: |
   For each bird provide a JSON object with these fields:
   - name: The bird's name
   - colors: Array of colors mentioned
-  - features: Any distinguishing features or behaviors mentioned
+  - features: Array of distinguishing features or behaviors mentioned
   - location: Where it's found (if mentioned)
-
-  Return as a JSON array. Example format:
-  [
-    {
-      "name": "American Robin",
-      "colors": ["red", "yellow"],
-      "features": ["yellow beak", "red breast"],
-      "location": "North America"
-    }
-  ]
 
 format: "json"

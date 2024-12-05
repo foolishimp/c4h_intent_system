@@ -28,37 +28,21 @@ logger = structlog.get_logger()
 class ConsoleMenu(BaseMenu):
     """Interactive console menu interface with status tracking and shortcuts"""
     
-    def __init__(self, workspace_path: Path, config: Optional[SystemConfig] = None):
-        """Initialize console menu."""
-        super().__init__(workspace_path)
+    def __init__(self, workspace_path: Path, config: SystemConfig):
+        """Initialize console menu with configuration."""
         self.console = Console()
         self.display = WorkflowDisplay(self.console)
         self.handlers = MenuHandlers(self)
-        
-        # Use provided config or load default
-        if config is None:
-            from main import load_config
-            try:
-                config = load_config()
-            except ValueError as e:
-                logger.warning("config.load_failed", error=str(e))
-                raise
-        
+        self.workspace_path = workspace_path
         self.config = config
-        self.intent_agent = IntentAgent(config=self.config, max_iterations=3)
-        self.workflow_data: Dict[str, Any] = {
-            'current_stage': None,
-            'discovery_data': {},
-            'solution_data': {},
-            'implementation_data': {},
-            'validation_data': {}
-        }
         
-        # Initialize from runtime config
+        # Initialize from system config
+        self.intent_agent = IntentAgent(config=self.config, max_iterations=3)
+        
         runtime_config = config.get_runtime_config()
-        self.project_path: Optional[Path] = None
-        self.intent_description: Optional[str] = None
-        self.intent_context: Dict[str, Any] = {}
+        self.project_path = None
+        self.intent_description = None
+        self.intent_context = {}
         
         if runtime_config:
             if 'project_path' in runtime_config:
@@ -71,18 +55,12 @@ class ConsoleMenu(BaseMenu):
             elif isinstance(intent_config, str):
                 self.intent_description = intent_config
                 self.intent_context = {'description': intent_config}
-
-            # Log the loaded values
-            logger.debug("console_menu.config_loaded",
-                        project_path=str(self.project_path) if self.project_path else None,
-                        intent_description=self.intent_description,
-                        intent_context=self.intent_context)
-            
+                
         logger.info("console_menu.initialized",
-                workspace=str(self.workspace_path),
-                has_config=bool(config),
-                project_path=str(self.project_path) if self.project_path else None,
-                intent_description=self.intent_description)
+                    workspace=str(workspace_path),
+                    has_config=bool(config),
+                    project_path=str(self.project_path) if self.project_path else None,
+                    intent_description=self.intent_description)
 
     def get_menu_items(self) -> List[MenuItem]:
         """Get menu items with shortcuts"""

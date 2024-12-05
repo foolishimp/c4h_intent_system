@@ -22,6 +22,9 @@ class SlowItemIterator:
         self._has_items = False
         self._current_item = None
         self._max_attempts = 10  # Safety limit
+        logger.debug("slow_iterator.initialized", 
+                    content_type=type(content).__name__,
+                    max_attempts=self._max_attempts)
 
     def __iter__(self):
         return self
@@ -40,6 +43,9 @@ class SlowItemIterator:
             })
 
             if not result.success:
+                logger.warning("slow_extraction.failed", 
+                             error=result.error,
+                             position=self._position)
                 self._exhausted = True
                 raise StopIteration
 
@@ -47,6 +53,8 @@ class SlowItemIterator:
             
             # Check for completion marker
             if 'NO_MORE_ITEMS' in str(response):
+                logger.debug("slow_extraction.complete",
+                           position=self._position)
                 self._exhausted = True
                 raise StopIteration
 
@@ -56,8 +64,10 @@ class SlowItemIterator:
                     item = json.loads(response)
                 else:
                     item = response
-            except json.JSONDecodeError:
-                logger.error("slow_extraction.parse_error", position=self._position)
+            except json.JSONDecodeError as e:
+                logger.error("slow_extraction.parse_error", 
+                           error=str(e),
+                           position=self._position)
                 self._exhausted = True
                 raise StopIteration
 
@@ -66,7 +76,9 @@ class SlowItemIterator:
             return item
 
         except Exception as e:
-            logger.error("slow_iteration.failed", error=str(e), position=self._position)
+            logger.error("slow_iteration.failed", 
+                        error=str(e), 
+                        position=self._position)
             self._exhausted = True
             raise StopIteration
 
@@ -76,12 +88,33 @@ class SlowItemIterator:
 class SlowExtractor(BaseAgent):
     """Implements slow extraction mode using iterative LLM queries"""
 
+    def __init__(self, config: Dict[str, Any] = None):
+        """Initialize with parent agent configuration"""
+        super().__init__(config=config)
+        
+        # Get provider settings from config
+        provider_cfg = config.get('llm_config', {}).get('agents', {}).get('semantic_slow_extractor', {})
+        self.provider = LLMProvider(provider_cfg.get('provider', 'anthropic'))
+        self.model = provider_cfg.get('model', 'claude-3-opus-20240229')
+        self.temperature = provider_cfg.get('temperature', 0)
+        
+        # Build model string based on provider
+        self.model_str = f"{self.provider.value}/{self.model}"
+        if self.provider == LLMProvider.OPENAI:
+            self.model_str = self.model  # OpenAI doesn't need prefix
+            
+        logger.info("slow_extractor.initialized",
+                   provider=str(self.provider),
+                   model=self.model,
+                   temperature=self.temperature)
+
     def _get_agent_name(self) -> str:
         return "semantic_slow_extractor"
 
     def _format_request(self, context: Dict[str, Any]) -> str:
         """Format extraction request for slow mode using config template"""
         if not context.get('config'):
+            logger.error("slow_extractor.missing_config")
             raise ValueError("Extract config required")
 
         extract_template = self._get_prompt('extract')
@@ -103,4 +136,6 @@ class SlowExtractor(BaseAgent):
 
     def create_iterator(self, content: Any, config: ExtractConfig) -> SlowItemIterator:
         """Create iterator for slow extraction"""
+        logger.debug("slow_extractor.creating_iterator",
+                    content_type=type(content).__name__)
         return SlowItemIterator(self, content, config)
