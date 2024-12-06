@@ -247,6 +247,10 @@ llm_config:
     semantic_merge:
       provider: "openai"
       temperature: 0
+      merge_config:
+        style: "smart"
+        preserve_formatting: true
+        allow_partial: false
       prompts:
         system: |
           You are a precise code merger. When given code changes:
@@ -276,17 +280,6 @@ llm_config:
           Preserve Formatting: {preserve_formatting}
           
           Return ONLY the final merged code, no explanations or markup.
-
-        validation: |
-          Validate the following merge:
-          - Original: {original}
-          - Merged: {merged}
-          
-          Verify:
-          1. All functionality preserved unless explicitly changed
-          2. Code style maintained
-          3. No syntax errors
-          4. No unintended side effects
 
     coder:
       provider: "openai"

@@ -27,22 +27,27 @@ class MergeResult:
     error: Optional[str] = None
 
 class SemanticMerge(BaseAgent):
-    def __init__(self, config: Dict[str, Any] = None, merge_config: Dict[str, Any] = None):
+    def __init__(self, config: Dict[str, Any] = None):
         """Initialize merger with config and optional merge settings."""
-        if merge_config:
-            config = deep_merge(config or {}, {
-                'llm_config': {
-                    'agents': {
-                        'semantic_merge': {
-                            'merge_config': merge_config
-                        }
-                    }
-                }
-            })
-        
         super().__init__(config=config)
+        
+        # Get agent-specific config
+        agent_cfg = config.get('llm_config', {}).get('agents', {}).get('semantic_merge', {})
+        
+        # Initialize merge configuration from agent config
+        merge_config = agent_cfg.get('merge_config', {})
+        self._merge_config = {
+            'style': merge_config.get('style', 'smart'),
+            'preserve_formatting': merge_config.get('preserve_formatting', True),
+            'allow_partial': merge_config.get('allow_partial', False)
+        }
+        
+        logger.info("semantic_merge.initialized",
+                   merge_style=self._merge_config['style'],
+                   preserve_formatting=self._merge_config['preserve_formatting'])
 
     def _get_agent_name(self) -> str:
+        """Get agent name for config lookup"""
         return "semantic_merge"
 
     def _format_request(self, context: Dict[str, Any]) -> str:
@@ -51,8 +56,8 @@ class SemanticMerge(BaseAgent):
         return merge_template.format(
             original=context.get('original_code', ''),  # Empty string for new files
             changes=context.get('changes', ''),
-            style=self.merge_config.style,
-            preserve_formatting=str(self.merge_config.preserve_formatting).lower()
+            style=self._merge_config['style'],
+            preserve_formatting=str(self._merge_config['preserve_formatting']).lower()
         )
 
     def _extract_code_content(self, response: Dict[str, Any]) -> str:
@@ -83,7 +88,7 @@ class SemanticMerge(BaseAgent):
             context = {
                 'original_code': original,
                 'changes': changes,
-                'style': self.merge_config.style
+                'style': self._merge_config['style']
             }
             
             # Use parent's synchronous process method
