@@ -9,21 +9,23 @@ llm_config:
       model: "claude-3-opus-20240229"
       temperature: 0
 
-input_data: 
-  original_code: |
-    def calculate_total(items):
-        return sum(item['price'] for item in items)
-  changes: |
-    def calculate_total(items):
-        """Calculate total price with tax
-        Args:
-            items: List of items with 'price' field
-        Returns:
-            float: Total price with 8.5% tax
-        """
-        subtotal = sum(item['price'] for item in items)
-        return subtotal * 1.085
+# Align input format with SemanticMerge interface
+original_code: |
+  def calculate_total(items):
+      return sum(item['price'] for item in items)
+
+changes: |
+  def calculate_total(items):
+      """Calculate total price with tax
+      Args:
+          items: List of items with 'price' field
+      Returns:
+          float: Total price with 8.5% tax
+      """
+      subtotal = sum(item['price'] for item in items)
+      return subtotal * 1.085
 
 instruction: "Merge the changes into original code while preserving functionality"
 format: "python"
 merge_method: "smart"
+preserve_formatting: true

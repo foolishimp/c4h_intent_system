@@ -14,6 +14,7 @@ from functools import wraps
 import time
 import litellm
 from litellm import completion
+from config import locate_config
 
 logger = structlog.get_logger()
 
@@ -82,76 +83,36 @@ class BaseAgent:
         self.model = agent_config.get('model', 'claude-3-opus-20240229')
         self.temperature = agent_config.get('temperature', 0)
         
-        # Build model string based on provider
-        self.model_str = self._get_model_str()
+        # Initialize metrics
+        self.metrics = {
+            "total_requests": 0,
+            "successful_requests": 0,
+            "failed_requests": 0,
+            "total_duration": 0.0,
+            "last_error": None,
+            "start_time": datetime.utcnow().isoformat()
+        }
+
+        # Set logging detail level from config
+        log_level = self.config.get('logging', {}).get('agent_level', 'basic')
+        self.log_level = LogDetail.from_str(log_level)
         
+        # Build model string and setup LiteLLM
+        self.model_str = self._get_model_str()
+        self._setup_litellm(self._get_provider_config(self.provider))
+        
+        # Initialize logger with context
         self.logger = structlog.get_logger().bind(
             agent=self._get_agent_name(),
             provider=str(self.provider),
-            model=self.model
+            model=self.model,
+            log_level=str(self.log_level)
         )
         
         logger.info(f"{self._get_agent_name()}.initialized",
                    provider=str(self.provider),
-                   model=self.model)
-
-    def _get_model_str(self) -> str:
-        """Get the appropriate model string for the provider"""
-        if self.provider == LLMProvider.OPENAI:
-            # OpenAI models don't need provider prefix
-            return self.model
-        elif self.provider == LLMProvider.ANTHROPIC:
-            # Anthropic models need anthropic/ prefix
-            return f"anthropic/{self.model}"
-        elif self.provider == LLMProvider.GEMINI:
-            # Gemini models need google/ prefix
-            return f"google/{self.model}"
-        else:
-            # Safe fallback
-            return f"{self.provider.value}/{self.model}"
-
-
-    def _get_agent_config(self) -> Dict[str, Any]:
-        """Extract relevant config for this agent."""
-        # Get agent specific config first (most specific)
-        agent_config = self.config.get('llm_config', {}).get('agents', {}).get(self._get_agent_name(), {})
-        
-        # Get provider name - prefer agent specific over default
-        provider_name = agent_config.get('provider', 
-                                    self.config.get('llm_config', {}).get('default_provider'))
-        
-        # Get provider level config (medium specific)
-        provider_config = self.config.get('providers', {}).get(provider_name, {})
-        
-        # Build complete config with correct override order
-        config = {
-            'provider': provider_name,
-            'model': provider_config.get('default_model'),  # Provider default
-            'temperature': 0,
-            'api_base': provider_config.get('api_base'),
-            'context_length': provider_config.get('context_length')
-        }
-        
-        # Override with agent specific settings (most specific wins)
-        config.update({
-            k: v for k, v in agent_config.items() 
-            if k in ['provider', 'model', 'temperature', 'api_base']
-        })
-        
-        return config
-
-    def _validate_config(self, config: Dict[str, Any]) -> AgentConfig:
-        """Validate against this agent's config requirements."""
-        try:
-            return AgentConfig(**config)
-        except Exception as e:
-            self.logger.error("agent.invalid_config", 
-                            error=str(e),
-                            agent=self._get_agent_name())
-            raise ValueError(f"Invalid configuration for {self._get_agent_name()}: {str(e)}")
-    def _get_provider_config(self, provider: LLMProvider) -> Dict[str, Any]:
-        """Get provider configuration from system config"""
-        return self.config.get("providers", {}).get(provider.value, {})
+                   model=self.model,
+                   log_level=str(self.log_level))
 
     def _resolve_model(self, explicit_model: Optional[str], provider_config: Dict[str, Any]) -> str:
         """Resolve model using fallback chain"""
@@ -172,8 +133,70 @@ class BaseAgent:
         system_default = self.config.get("llm_config", {}).get("default_model")
         if system_default:
             return system_default
-            
+        
         raise ValueError(f"No model specified for provider {self.provider} and no defaults found")
+
+    def _get_model_str(self) -> str:
+        """Get the appropriate model string for the provider"""
+        if self.provider == LLMProvider.OPENAI:
+            # OpenAI models don't need provider prefix
+            return self.model
+        elif self.provider == LLMProvider.ANTHROPIC:
+            # Anthropic models need anthropic/ prefix
+            return f"anthropic/{self.model}"
+        elif self.provider == LLMProvider.GEMINI:
+            # Gemini models need google/ prefix
+            return f"google/{self.model}"
+        else:
+            # Safe fallback
+            return f"{self.provider.value}/{self.model}"
+
+    def _get_agent_config(self) -> Dict[str, Any]:
+        """Extract relevant config for this agent."""
+        try:
+            # Use locate_config to find agent's settings
+            agent_config = locate_config(self.config or {}, self._get_agent_name())
+            
+            # Get provider name - prefer agent specific over default
+            provider_name = agent_config.get('provider', 
+                                        self.config.get('llm_config', {}).get('default_provider'))
+            
+            # Get provider level config
+            provider_config = self.config.get('providers', {}).get(provider_name, {})
+            
+            # Resolve model using proper chain
+            model = self._resolve_model(agent_config.get('model'), provider_config)
+            
+            # Build complete config with correct override order
+            config = {
+                'provider': provider_name,
+                'model': model,  # Using resolved model
+                'temperature': 0,
+                'api_base': provider_config.get('api_base'),
+                'context_length': provider_config.get('context_length')
+            }
+            
+            # Override with agent specific settings (most specific wins)
+            config.update({
+                k: v for k, v in agent_config.items() 
+                if k in ['provider', 'temperature', 'api_base']  # Note: model handled separately
+            })
+            
+            logger.debug("agent.config_loaded",
+                        agent=self._get_agent_name(),
+                        config=config)
+                        
+            return config
+
+        except Exception as e:
+            logger.error("agent.config_failed",
+                        agent=self._get_agent_name(),
+                        error=str(e))
+            return {}
+
+    def _get_provider_config(self, provider: LLMProvider) -> Dict[str, Any]:
+        """Get provider configuration from system config"""
+        return self.config.get("providers", {}).get(provider.value, {})
 
     def _should_log(self, level: LogDetail) -> bool:
         """Check if should log at this level"""
@@ -192,11 +215,10 @@ class BaseAgent:
         for key, value in litellm_config.items():
             setattr(litellm, key, value)
             
-        # Set model format based on provider
-        if self.provider == LLMProvider.OPENAI:
-            self.model_str = self.model  # OpenAI doesn't need prefix
-        else:
-            self.model_str = f"{self.provider.value}/{self.model}"
+        if self._should_log(LogDetail.DEBUG):
+            logger.debug("litellm.configured", 
+                        provider=str(self.provider),
+                        config=litellm_config)
 
     def _update_metrics(self, duration: float, success: bool, error: Optional[str] = None) -> None:
         """Update agent metrics"""
@@ -207,6 +229,12 @@ class BaseAgent:
         else:
             self.metrics["failed_requests"] += 1
             self.metrics["last_error"] = error
+
+        if self._should_log(LogDetail.DETAILED):
+            logger.info("agent.metrics_updated",
+                       metrics=self.metrics,
+                       duration=duration,
+                       success=success)
 
     @abstractmethod
     def _get_agent_name(self) -> str:
@@ -239,15 +267,20 @@ class BaseAgent:
         loop = self._ensure_loop()
         return loop.run_until_complete(self._process_async(context))
 
+    @log_operation("process")
     async def _process_async(self, context: Dict[str, Any]) -> AgentResponse:
         """Internal async implementation"""
         try:
+            if self._should_log(LogDetail.DETAILED):
+                logger.info("agent.processing",
+                          context_keys=list(context.keys()) if context else None)
+
             messages = [
                 {"role": "system", "content": self._get_system_message()},
                 {"role": "user", "content": self._format_request(context)}
             ]
             
-            response = completion(  # Removed await since completion is sync
+            response = completion(
                 model=self.model_str,
                 messages=messages,
                 temperature=self.temperature,
@@ -271,6 +304,11 @@ class BaseAgent:
 
     def _process_response(self, content: str, raw_response: Any) -> Dict[str, Any]:
         """Process LLM response"""
+        if self._should_log(LogDetail.DEBUG):
+            logger.debug("agent.processing_response",
+                        content_length=len(content) if content else 0,
+                        response_type=type(raw_response).__name__)
+
         return {
             "response": content,
             "raw_output": raw_response,

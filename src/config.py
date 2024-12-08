@@ -2,15 +2,66 @@
 Configuration handling with robust dictionary merging and comprehensive logging.
 Path: src/config.py
 """
-
 import yaml
+from typing import Dict, Any, Optional, List
 from pathlib import Path
-from typing import Dict, Any, Optional
 import structlog
 from copy import deepcopy
 import collections.abc
 
 logger = structlog.get_logger()
+
+def locate_config(config: Dict[str, Any], target_name: str) -> Dict[str, Any]:
+    """
+    Locate configuration for a specific target in a nested dictionary.
+    Searches common paths and returns first match.
+    
+    Search order:
+    1. Direct key match at root
+    2. Under llm_config.agents.[name]
+    3. Under agents.[name]
+    4. Under [name]_config
+    
+    Args:
+        config: Configuration dictionary to search
+        target_name: Name of target to find (e.g. "semantic_merge")
+    
+    Returns:
+        Located config dictionary or empty dict if not found
+    """
+    try:
+        # Common config paths to search
+        search_paths = [
+            [target_name],  # Direct key
+            ['llm_config', 'agents', target_name],  # Standard agent path
+            ['agents', target_name],  # Alternative agent path
+            [f'{target_name}_config']  # Config suffix path
+        ]
+        
+        for path in search_paths:
+            current = config
+            try:
+                for key in path:
+                    current = current[key]
+                logger.debug("config.located", 
+                           target=target_name,
+                           path=path,
+                           found_keys=list(current.keys()) if isinstance(current, dict) else None)
+                return current
+            except (KeyError, TypeError):
+                continue
+                
+        # If we get here, no config found
+        logger.warning("config.not_found", 
+                      target=target_name,
+                      searched_paths=search_paths)
+        return {}
+        
+    except Exception as e:
+        logger.error("config.locate_failed",
+                    target=target_name,
+                    error=str(e))
+        return {}
 
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """

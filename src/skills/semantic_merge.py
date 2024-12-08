@@ -7,7 +7,8 @@ from typing import Dict, Any, Optional, Union
 from dataclasses import dataclass
 import structlog
 from agents.base import BaseAgent, LLMProvider, AgentResponse
-
+from config import locate_config
+ 
 logger = structlog.get_logger()
 
 @dataclass
@@ -19,9 +20,26 @@ class MergeResult:
     error: Optional[str] = None
 
 class SemanticMerge(BaseAgent):
+    """
+    Semantic merge implementation following agent design principles.
+    Path: src/skills/semantic_merge.py
+    """
+
     def __init__(self, config: Dict[str, Any] = None):
-        """Initialize merger with config."""
+        """Initialize merger with configuration."""
         super().__init__(config=config)
+        
+        # Basic config handled by BaseAgent
+        agent_config = self._get_agent_config()
+        
+        # Get merge-specific settings using locate_config
+        merge_config = locate_config(self.config or {}, 'merge_config')
+        self.style = merge_config.get('style', 'smart')
+        self.preserve_formatting = merge_config.get('preserve_formatting', True)
+        
+        logger.info("semantic_merge.initialized",
+                style=self.style,
+                preserve_formatting=self.preserve_formatting)
 
     def _get_agent_name(self) -> str:
         """Get agent name for config lookup"""
@@ -33,58 +51,37 @@ class SemanticMerge(BaseAgent):
         return merge_template.format(
             original=context.get('original_code', ''),
             changes=context.get('changes', ''),
-            style=context.get('style', 'smart'),
-            preserve_formatting=str(context.get('preserve_formatting', True)).lower()
+            style=context.get('style', self.style),
+            preserve_formatting=str(context.get('preserve_formatting', self.preserve_formatting)).lower()
         )
-
-    def _extract_code_content(self, response: Dict[str, Any]) -> str:
-        """Extract clean code content from LLM response"""
-        if not response:
-            return ""
-
-        content = response.get('response', '')
-        if not content:
-            content = response.get('raw_content', '')
-                
-        # Remove any markdown code block markers if present
-        content = content.strip()
-        if content.startswith('```'):
-            # Handle case where language is specified after backticks
-            lines = content.split('\n')
-            if len(lines) > 2:  # At least opening, content, and closing
-                # Skip first line (```python etc) and last line (```)
-                content = '\n'.join(lines[1:-1])
-            else:
-                content = content.strip('`')
-                
-        return content
 
     def merge(self, original: str, changes: Union[str, Dict[str, Any]]) -> MergeResult:
         """Process a merge operation - synchronous interface"""
         try:
-            context = {
+            # Use parent's process method directly
+            result = self.process({
                 'original_code': original,
                 'changes': changes,
-                'style': 'smart'  # Use default style
-            }
-            
-            # Use parent's synchronous process method
-            response = self.process(context)
-            
-            if not response.success:
+                'style': self.style,
+                'preserve_formatting': self.preserve_formatting
+            })
+
+            if not result.success:
+                logger.warning("merge.failed", error=result.error)
                 return MergeResult(
                     success=False,
                     content="",
-                    error=response.error,
-                    raw_response=response.raw_response
+                    error=result.error,
+                    raw_response=result.data.get("raw_output")
                 )
 
-            # Extract and return merged content
-            merged_content = self._extract_code_content(response.data)
+            content = result.data.get("response", "")
+            logger.info("merge.success", content_length=len(content))
+            
             return MergeResult(
                 success=True,
-                content=merged_content,
-                raw_response=response.raw_response
+                content=content,
+                raw_response=result.data.get("raw_output")
             )
 
         except Exception as e:
