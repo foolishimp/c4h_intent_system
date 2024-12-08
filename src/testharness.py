@@ -289,7 +289,7 @@ def main():
         help="Path to YAML config file"
     )
     parser.add_argument(
-        "--log-mode",
+        "--log",
         type=LogMode,
         choices=list(LogMode),
         default=LogMode.NORMAL,
@@ -318,10 +318,10 @@ def main():
         logger.info("testharness.starting", 
                    agent_type=args.agent_type,
                    config_file=args.config,
-                   log_mode=args.log_mode)
+                   log_mode=args.log)
 
         harness = AgentTestHarness()
-        harness.setup_logging(args.log_mode)
+        harness.setup_logging(args.log)
         
         try:
             harness.process_agent(AgentConfig(

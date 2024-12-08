@@ -10,9 +10,9 @@ from datetime import datetime
 import json
 from pathlib import Path
 
-from agents.base import BaseAgent, LLMProvider
-from skills.semantic_merge import SemanticMerge, MergeConfig
-from skills.semantic_iterator import SemanticIterator, ExtractorConfig
+from agents.base import BaseAgent, LLMProvider, AgentResponse
+from skills.semantic_merge import SemanticMerge
+from skills.semantic_iterator import SemanticIterator
 from skills.asset_manager import AssetManager, AssetResult
 from skills.shared.types import ExtractConfig
 
@@ -28,32 +28,16 @@ class CoderResult:
     data: Optional[Dict[str, Any]] = None  # Add data field for test harness compatibility
 
 class Coder(BaseAgent):
-    def __init__(self,
-                provider: LLMProvider = LLMProvider.ANTHROPIC,
-                model: Optional[str] = None,
-                temperature: float = 0,
-                config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Dict[str, Any] = None):
         """Initialize coder with configuration"""
-        super().__init__(provider=provider, model=model, temperature=temperature, config=config)
+        super().__init__(config=config)
         
         # Initialize backup location
         backup_path = Path(config.get('backup', {}).get('path', 'workspaces/backups')) if config else None
         
         # Create semantic tools - pass through same config 
-        self.iterator = SemanticIterator(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            config=config,
-            extractor_config=ExtractorConfig()
-        )
-        
-        merger = SemanticMerge(
-            provider=provider,
-            model=model,
-            temperature=temperature, 
-            config=config
-        )
+        self.iterator = SemanticIterator(config=config)
+        merger = SemanticMerge(config=config)
         
         # Setup asset management
         self.asset_manager = AssetManager(
@@ -144,7 +128,6 @@ class Coder(BaseAgent):
                 changes=changes,
                 error=None if success else "All changes failed",
                 metrics=metrics,
-                # Add complete result data
                 data={
                     "changes": results,
                     "metrics": metrics,
