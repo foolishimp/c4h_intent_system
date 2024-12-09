@@ -8,7 +8,7 @@ from enum import Enum
 import structlog
 from dataclasses import dataclass, field
 import json
-from config import deep_merge
+from config import locate_config
 from agents.base import BaseAgent, LLMProvider, AgentResponse
 from skills.shared.types import ExtractConfig
 from skills._semantic_fast import FastExtractor, FastItemIterator
@@ -35,64 +35,23 @@ class SemanticIterator(BaseAgent):
         """Initialize iterator with configuration."""
         super().__init__(config=config)
         
-        # Get iterator-specific config
-        iterator_cfg = config.get('llm_config', {}).get('agents', {}).get('semantic_iterator', {})
+        # Get iterator config using locate_config
+        iterator_cfg = locate_config(self.config or {}, self._get_agent_name())
         
-        # Build extractor configs preserving override order
-        base_config = config or {}
-        
-        # Create fast extractor config
-        fast_base = deep_merge(base_config, {
-            'llm_config': {
-                'agents': {
-                    'semantic_fast_extractor': iterator_cfg  # Iterator config sets defaults
-                }
-            }
-        })
-        # Allow fast extractor specific overrides to win
-        fast_config = deep_merge(fast_base, {
-            'llm_config': {
-                'agents': {
-                    'semantic_fast_extractor': config.get('llm_config', {})
-                                                .get('agents', {})
-                                                .get('semantic_fast_extractor', {})
-                }
-            }
-        })
-        
-        # Create slow extractor config
-        slow_base = deep_merge(base_config, {
-            'llm_config': {
-                'agents': {
-                    'semantic_slow_extractor': iterator_cfg  # Iterator config sets defaults
-                }
-            }
-        })
-        # Allow slow extractor specific overrides to win
-        slow_config = deep_merge(slow_base, {
-            'llm_config': {
-                'agents': {
-                    'semantic_slow_extractor': config.get('llm_config', {})
-                                                .get('agents', {})
-                                                .get('semantic_slow_extractor', {})
-                }
-            }
-        })
-        
-        # Initialize extractors with their specific configs
-        self._fast_extractor = FastExtractor(config=fast_config)
-        self._slow_extractor = SlowExtractor(config=slow_config)
-        
-        # Get extractor mode config
+        # Get extractor config settings
         extractor_cfg = iterator_cfg.get('extractor_config', {})
         self.extractor_config = ExtractorConfig(**extractor_cfg)
         
-        # Initialize processing state - ADDED THESE LINES
+        # Initialize processing state
         self._content = None
         self._extract_config = None
         self._position = 0
         self._current_items = None
-        self._current_mode = self.extractor_config.mode  # Set initial mode from config
+        self._current_mode = self.extractor_config.mode  
+
+        # Initialize extractors with same base config
+        self._fast_extractor = FastExtractor(config=config)
+        self._slow_extractor = SlowExtractor(config=config)
 
         logger.info("semantic_iterator.initialized", 
                 mode=self._current_mode,

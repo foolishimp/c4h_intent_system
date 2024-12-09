@@ -8,6 +8,7 @@ import structlog
 from agents.base import BaseAgent, LLMProvider, AgentResponse
 from skills.shared.types import ExtractConfig
 import json
+from config import locate_config
 
 logger = structlog.get_logger()
 
@@ -102,21 +103,11 @@ class SlowExtractor(BaseAgent):
         """Initialize with parent agent configuration"""
         super().__init__(config=config)
         
-        # Get provider settings from config
-        provider_cfg = config.get('llm_config', {}).get('agents', {}).get('semantic_slow_extractor', {})
-        self.provider = LLMProvider(provider_cfg.get('provider', 'anthropic'))
-        self.model = provider_cfg.get('model', 'claude-3-opus-20240229')
-        self.temperature = provider_cfg.get('temperature', 0)
+        # Get our config section
+        slow_cfg = locate_config(self.config or {}, self._get_agent_name())
         
-        # Build model string based on provider
-        self.model_str = f"{self.provider.value}/{self.model}"
-        if self.provider == LLMProvider.OPENAI:
-            self.model_str = self.model  # OpenAI doesn't need prefix
-            
         logger.info("slow_extractor.initialized",
-                   provider=str(self.provider),
-                   model=self.model,
-                   temperature=self.temperature)
+                settings=slow_cfg)
 
     def _get_agent_name(self) -> str:
         return "semantic_slow_extractor"
