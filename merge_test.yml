@@ -1,3 +1,4 @@
+# Configuration for semantic merge testing
 llm_config:
   default_provider: "anthropic"
   default_model: "claude-3-opus-20240229"
@@ -6,7 +7,11 @@ llm_config:
       provider: "anthropic"
       model: "claude-3-opus-20240229"
       temperature: 0
-      # Move runtime values here
+      # Merge-specific configuration
+      merge_config:
+        style: "smart"
+        preserve_formatting: true
+      # Runtime configuration
       original_code: |
         def calculate_total(items):
             return sum(item['price'] for item in items)
@@ -20,8 +25,7 @@ llm_config:
             """
             subtotal = sum(item['price'] for item in items)
             return subtotal * 1.085
-      merge_method: "smart"
-      preserve_formatting: true
 
+# Top-level instruction for the operation
 instruction: "Merge the changes into original code while preserving functionality"
 format: "python"
