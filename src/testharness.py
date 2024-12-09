@@ -184,70 +184,80 @@ class AgentTestHarness:
         return agent_class(config=config)
 
     def process_agent(self, config: AgentConfig) -> None:
-        """Process agent with configuration"""
-        try:
-            # Load configuration
-            configs = self.load_configs(str(config.config_path))
-            logger.debug("testharness.loaded_config", 
-                        config_path=str(config.config_path),
-                        config_contents=configs)
-                
-            # Create agent instance
-            agent = self.create_agent(config.agent_type, configs)
-            logger.debug("testharness.created_agent",
-                        agent_type=config.agent_type,
-                        agent_class=agent.__class__.__name__)
-
-            # Get any extra parameters passed via command line
-            extra_params = config.extra_args or {}
-                
-            if isinstance(agent, SemanticIterator):
-                # Handle iterator case
-                self.console.print("[cyan]Processing with semantic iterator...[/]")
-                
-                extract_config = ExtractConfig(
-                    instruction=configs.get('instruction'),
-                    format=configs.get('format', 'json')
-                )
-                
-                for key, value in extra_params.items():
-                    if hasattr(extract_config, key):
-                        setattr(extract_config, key, value)
-                        logger.info(f"config.override", key=key, value=value)
-                
-                agent.configure(
-                    content=configs.get('input_data'),
-                    config=extract_config
-                )
-                
-                results = []
-                for item in agent:
-                    results.append(item)
-                        
-                self.display_results(results)
+            """Process agent with configuration"""
+            try:
+                # Load configuration
+                configs = self.load_configs(str(config.config_path))
+                logger.debug("testharness.loaded_config", 
+                            config_path=str(config.config_path),
+                            config_contents=configs)
                     
-            else:
-                # Generic agent processing
-                self.console.print(f"[cyan]Processing with {config.agent_type}...[/]")
-                
-                context = {
-                    'content': configs.get('input_data'),
-                    'instruction': configs.get('instruction'),
-                    'merge_style': configs.get('merge_style', 'smart'),
-                    **extra_params
-                }
-                
-                result = agent.process(context)  # Synchronous call
-                
-                if not result.success:
-                    self.console.print(f"[red]Error:[/] {result.error}")
-                    return
-                        
-                self.display_results(result.data)
+                # Create agent instance
+                agent = self.create_agent(config.agent_type, configs)
+                logger.debug("testharness.created_agent",
+                            agent_type=config.agent_type,
+                            agent_class=agent.__class__.__name__)
 
-        except Exception as e:
-            logger.error("process_agent.failed", error=str(e))
-            raise
+                # Get any extra parameters passed via command line
+                extra_params = config.extra_args or {}
+                    
+                if isinstance(agent, SemanticIterator):
+                    # Handle iterator case
+                    self.console.print("[cyan]Processing with semantic iterator...[/]")
+                    
+                    extract_config = ExtractConfig(
+                        instruction=configs.get('instruction'),
+                        format=configs.get('format', 'json')
+                    )
+                    
+                    for key, value in extra_params.items():
+                        if hasattr(extract_config, key):
+                            setattr(extract_config, key, value)
+                            logger.info(f"config.override", key=key, value=value)
+                    
+                    agent.configure(
+                        content=configs.get('input_data'),
+                        config=extract_config
+                    )
+                    
+                    results = []
+                    for item in agent:
+                        results.append(item)
+                            
+                    self.display_results(results)
+                        
+                else:
+                    # Generic agent processing
+                    self.console.print(f"[cyan]Processing with {config.agent_type}...[/]")
+                    
+                    # Pass input_data directly from configs if available
+                    if 'input_data' in configs:
+                        context = configs['input_data']
+                        # Add any extra parameters
+                        context.update(extra_params)
+                    else:
+                        # Fallback to basic context structure
+                        context = {
+                            'content': configs.get('content'),
+                            'instruction': configs.get('instruction'),
+                            'merge_style': configs.get('merge_style', 'smart'),
+                            **extra_params
+                        }
+
+                    logger.debug("testharness.processing_context", 
+                            context_keys=list(context.keys()))
+                    
+                    result = agent.process(context)
+                    
+                    if not result.success:
+                        self.console.print(f"[red]Error:[/] {result.error}")
+                        return
+                            
+                    self.display_results(result.data)
+
+            except Exception as e:
+                logger.error("process_agent.failed", error=str(e))
+                raise
 
     def display_results(self, results: Any) -> None:
         """Display processing results"""

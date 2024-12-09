@@ -11,6 +11,7 @@ import shutil
 from datetime import datetime
 from skills.semantic_merge import SemanticMerge
 from agents.base import AgentResponse
+from config import locate_config
 
 logger = structlog.get_logger()
 
@@ -31,19 +32,24 @@ class AssetManager:
                  merger: Optional[SemanticMerge] = None,
                  config: Optional[Dict[str, Any]] = None):
         """Initialize asset manager with configuration"""
-        self.backup_enabled = backup_enabled
-        self.backup_dir = backup_dir
         self.config = config or {}
         
-        if backup_dir:
+        # Get asset manager specific config
+        asset_config = locate_config(self.config, "asset_manager")
+        
+        # Override instance settings with config if provided
+        self.backup_enabled = asset_config.get('backup_enabled', backup_enabled)
+        self.backup_dir = backup_dir or Path(asset_config.get('backup_dir', 'workspaces/backups'))
+        
+        if self.backup_dir:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
             
-        # Create semantic merger with config
+        # Create semantic merger with config if not provided
         self.merger = merger or SemanticMerge(config=self.config)
 
         logger.info("asset_manager.initialized",
-                   backup_enabled=backup_enabled,
-                   backup_dir=str(backup_dir) if backup_dir else None)
+                   backup_enabled=self.backup_enabled,
+                   backup_dir=str(self.backup_dir))
 
     def _get_next_backup_path(self, path: Path) -> Path:
         """Generate unique backup path with timestamp"""

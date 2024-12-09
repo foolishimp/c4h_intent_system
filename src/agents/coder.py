@@ -15,6 +15,7 @@ from skills.semantic_merge import SemanticMerge
 from skills.semantic_iterator import SemanticIterator
 from skills.asset_manager import AssetManager, AssetResult
 from skills.shared.types import ExtractConfig
+from config import locate_config
 
 logger = structlog.get_logger()
 
@@ -25,17 +26,22 @@ class CoderResult:
     changes: List[AssetResult]
     error: Optional[str] = None
     metrics: Optional[Dict[str, Any]] = None
-    data: Optional[Dict[str, Any]] = None  # Add data field for test harness compatibility
+    data: Optional[Dict[str, Any]] = None
 
 class Coder(BaseAgent):
+    """Handles code modifications using semantic processing"""
+    
     def __init__(self, config: Dict[str, Any] = None):
         """Initialize coder with configuration"""
         super().__init__(config=config)
         
-        # Initialize backup location
-        backup_path = Path(config.get('backup', {}).get('path', 'workspaces/backups')) if config else None
+        # Get coder-specific config
+        coder_config = locate_config(self.config or {}, self._get_agent_name())
         
-        # Create semantic tools - pass through same config 
+        # Initialize backup location from config
+        backup_path = Path(coder_config.get('backup', {}).get('path', 'workspaces/backups'))
+        
+        # Create semantic tools with same config
         self.iterator = SemanticIterator(config=config)
         merger = SemanticMerge(config=config)
         
@@ -43,12 +49,15 @@ class Coder(BaseAgent):
         self.asset_manager = AssetManager(
             backup_enabled=True,
             backup_dir=backup_path,
-            merger=merger
+            merger=merger,
+            config=config
         )
-
-        logger.info("coder.config", config=json.dumps(config, indent=2) if config else None)
+        
+        logger.info("coder.initialized",
+                   config=json.dumps(coder_config, indent=2) if coder_config else None)
 
     def _get_agent_name(self) -> str:
+        """Get agent name for config lookup"""
         return "coder"
 
     def process(self, context: Dict[str, Any]) -> CoderResult:
@@ -58,50 +67,49 @@ class Coder(BaseAgent):
         changes = []
 
         try:
-            # Configure iterator with complete input and extraction config
+            # Configure iterator
             extract_config = ExtractConfig(
                 instruction="""Extract all code change actions from the input.
                             Look for file_path, type, content/diff, and description.
                             Handle any input format including raw LLM responses.""",
                 format="json"
             )
-
-            # Pass complete context to iterator
+            
             self.iterator.configure(context.get('input_data'), extract_config)
             logger.info("coder.iterator_configured")
 
             # Process changes using iterator
             results = []
             for change in self.iterator:
-                logger.debug("coder.extracted_change", change=json.dumps(change, indent=2))
+                logger.debug("coder.extracted_change", 
+                           change=json.dumps(change, indent=2))
 
                 if not isinstance(change, dict):
-                    logger.warning("coder.invalid_change_format", 
-                                change_type=type(change).__name__)
+                    logger.warning("coder.invalid_change_format",
+                                 change_type=type(change).__name__)
                     continue
 
                 # Validate minimum required fields
                 required_fields = ['file_path', 'type']
                 if not all(field in change for field in required_fields):
                     logger.warning("coder.missing_required_fields",
-                                change=change,
-                                required=required_fields)
+                                 change=change,
+                                 required=required_fields)
                     continue
 
                 # Process the change
                 logger.info("coder.processing_change",
-                        file_path=change.get('file_path'),
-                        change_type=change.get('type'))
+                          file_path=change.get('file_path'),
+                          change_type=change.get('type'))
 
                 result = self.asset_manager.process_action(change)
                 
                 logger.info("coder.change_result",
-                        success=result.success,
-                        file_path=str(result.path),
-                        error=result.error if not result.success else None)
+                          success=result.success,
+                          file_path=str(result.path),
+                          error=result.error if not result.success else None)
 
                 changes.append(result)
-                # Store complete result information
                 results.append({
                     "file": str(result.path),
                     "type": change.get('type'),
@@ -118,10 +126,9 @@ class Coder(BaseAgent):
             metrics["successful_changes"] = sum(1 for c in changes if c.success)
 
             logger.info("coder.process_complete",
-                    success=success,
-                    total_changes=len(changes),
-                    successful_changes=metrics["successful_changes"],
-                    metrics=metrics)
+                       success=success,
+                       total_changes=len(changes),
+                       successful_changes=metrics["successful_changes"])
 
             return CoderResult(
                 success=success,
