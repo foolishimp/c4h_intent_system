@@ -13,50 +13,33 @@ logger = structlog.get_logger()
 
 def locate_config(config: Dict[str, Any], target_name: str) -> Dict[str, Any]:
     """
-    Locate configuration for a specific target in a nested dictionary.
-    Searches common paths and returns first match.
-    
-    Search order:
-    1. Direct key match at root
-    2. Under llm_config.agents.[name]
-    3. Under agents.[name]
-    4. Under [name]_config
+    Locate configuration using strict hierarchical path.
+    Primary path is always llm_config.agents.[name]
     
     Args:
-        config: Configuration dictionary to search
-        target_name: Name of target to find (e.g. "semantic_merge")
-    
+        config: Configuration dictionary
+        target_name: Name of target agent/component
+        
     Returns:
         Located config dictionary or empty dict if not found
     """
     try:
-        # Common config paths to search
-        search_paths = [
-            [target_name],  # Direct key
-            ['llm_config', 'agents', target_name],  # Standard agent path
-            ['agents', target_name],  # Alternative agent path
-            [f'{target_name}_config']  # Config suffix path
-        ]
-        
-        for path in search_paths:
-            current = config
-            try:
-                for key in path:
-                    current = current[key]
-                logger.debug("config.located", 
+        # Use standard hierarchical path
+        if 'llm_config' in config:
+            agents_config = config['llm_config'].get('agents', {})
+            if target_name in agents_config:
+                agent_config = agents_config[target_name]
+                logger.debug("config.located_in_hierarchy", 
                            target=target_name,
-                           path=path,
-                           found_keys=list(current.keys()) if isinstance(current, dict) else None)
-                return current
-            except (KeyError, TypeError):
-                continue
-                
-        # If we get here, no config found
-        logger.warning("config.not_found", 
+                           path=['llm_config', 'agents', target_name],
+                           found_keys=list(agent_config.keys()))
+                return agent_config
+
+        logger.warning("config.not_found_in_hierarchy",
                       target=target_name,
-                      searched_paths=search_paths)
+                      searched_path=['llm_config', 'agents', target_name])
         return {}
-        
+
     except Exception as e:
         logger.error("config.locate_failed",
                     target=target_name,
@@ -65,66 +48,59 @@ def locate_config(config: Dict[str, Any], target_name: str) -> Dict[str, Any]:
 
 def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]:
     """
-    Deep merge dictionaries with clear precedence rules and logging.
+    Deep merge dictionaries preserving hierarchical structure.
     
     Rules:
-    1. Override values take precedence over base values
-    2. Dictionaries are merged recursively
-    3. Lists from override replace lists from base
-    4. None values in override delete keys from base
-    5. Path objects are converted to strings for consistency
+    1. Preserve llm_config.agents hierarchy
+    2. Override values take precedence
+    3. Dictionaries merged recursively
+    4. Lists from override replace lists from base
+    5. None values in override delete keys from base
+    6. Runtime values merged into agent configs
     
     Args:
         base: Base configuration dictionary
         override: Override configuration dictionary
-    
+        
     Returns:
         Merged configuration dictionary
     """
     result = deepcopy(base)
     
     try:
-        for key, value in override.items():
-            # Log each override attempt at debug level
-            logger.debug(
-                "config.merge.processing_key",
-                key=key,
-                override_type=type(value).__name__,
-                base_type=type(result.get(key)).__name__ if key in result else None
-            )
+        # Handle root level merge
+        if 'llm_config' in result or 'llm_config' in override:
+            # Identify system vs runtime keys
+            system_keys = {'providers', 'llm_config', 'project', 'backup', 'logging'}
+            runtime_keys = {k for k in override.keys() if k not in system_keys}
             
-            # None deletes keys
+            # Map runtime values to agent configs if llm_config exists
+            if runtime_keys and 'llm_config' in result:
+                agent_configs = result['llm_config'].get('agents', {})
+                for agent_name, agent_config in agent_configs.items():
+                    # Copy runtime values that aren't overridden
+                    for key in runtime_keys:
+                        if key not in agent_config:
+                            logger.debug("config.merge.runtime_value",
+                                       agent=agent_name,
+                                       key=key,
+                                       value=override[key])
+                            agent_config[key] = deepcopy(override[key])
+
+        for key, value in override.items():
             if value is None:
-                if key in result:
-                    logger.debug("config.merge.deleting_key", key=key)
-                    result.pop(key, None)
+                result.pop(key, None)
                 continue
                 
-            # Key not in base, just set it
             if key not in result:
-                logger.debug("config.merge.adding_new_key", key=key)
                 result[key] = deepcopy(value)
                 continue
                 
-            # Handle different types
             if isinstance(value, collections.abc.Mapping):
-                # Recursive merge for dictionaries
-                logger.debug("config.merge.recursive_merge", key=key)
                 result[key] = deep_merge(result[key], value)
             elif isinstance(value, Path):
-                # Convert paths to strings
-                logger.debug("config.merge.converting_path", key=key)
                 result[key] = str(value)
-            elif isinstance(value, list):
-                # Lists replace rather than merge
-                logger.debug("config.merge.replacing_list", key=key)
-                result[key] = deepcopy(value)
             else:
-                # Simple values replace
-                logger.debug("config.merge.replacing_value", 
-                           key=key,
-                           old_value=result[key],
-                           new_value=value)
                 result[key] = deepcopy(value)
             
         return result
@@ -132,7 +108,6 @@ def deep_merge(base: Dict[str, Any], override: Dict[str, Any]) -> Dict[str, Any]
     except Exception as e:
         logger.error("config.merge.failed", 
                     error=str(e),
-                    error_type=type(e).__name__,
                     keys_processed=list(override.keys()))
         raise
 
