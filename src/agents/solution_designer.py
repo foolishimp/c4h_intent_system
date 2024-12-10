@@ -29,8 +29,6 @@ class SolutionDesigner(BaseAgent):
         """Get agent name for config lookup - required by BaseAgent"""
         return "solution_designer"
 
-    # From class SolutionDesigner in src/agents/solution_designer.py
-
     def _format_request(self, context: Dict[str, Any]) -> str:
         """Format request using configured prompt template"""
         try:
@@ -70,8 +68,6 @@ class SolutionDesigner(BaseAgent):
         except Exception as e:
             logger.error("solution_designer.format_error", error=str(e))
             return str(context)
-
-    # From class SolutionDesigner in src/agents/solution_designer.py
 
     def process(self, context: Dict[str, Any]) -> AgentResponse:
         """Process solution design request"""

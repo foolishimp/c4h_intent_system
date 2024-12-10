@@ -1,14 +1,26 @@
 """
-Menu handlers with proper display integration.
+Menu handlers for the refactoring workflow management system.
+Handles user interaction and menu choices in the console interface.
 Path: src/cli/menu_handlers.py
 """
 
+from typing import Dict, Any, TYPE_CHECKING
+import structlog
+from pathlib import Path
+import readchar
 from rich.console import Console
-from cli.displays.discovery_display import DiscoveryDisplay
+from rich.panel import Panel
 from cli.displays.solution_display import SolutionDisplay
+from cli.displays.discovery_display import DiscoveryDisplay
 from cli.displays.impl_display import ImplementationDisplay
 from cli.displays.validation_display import ValidationDisplay
 from cli.displays.workflow_display import WorkflowDisplay
+
+# Use TYPE_CHECKING for forward references to avoid circular imports
+if TYPE_CHECKING:
+    from cli.console_menu import ConsoleMenu
+
+logger = structlog.get_logger()
 
 class MenuHandlers:
     """Handles menu interactions"""
@@ -24,6 +36,58 @@ class MenuHandlers:
             'assurance': ValidationDisplay(self.console),
             'workflow': WorkflowDisplay(self.console)
         }
+
+    async def handle_menu_choice(self, choice: str) -> None:
+        """Handle menu selection"""
+        try:
+            match choice:
+                case 'path':
+                    await self._handle_set_path()
+                case 'intent':
+                    await self._handle_set_intent()
+                case 'next':
+                    await self._handle_step()
+                case 'view_discovery' | 'view_solution' | \
+                     'view_implementation' | 'view_validation':
+                    await self._handle_view_data(choice.replace('view_', ''))
+                case 'reset':
+                    await self._handle_reset()
+                case _:
+                    logger.warning("menu.unknown_choice", choice=choice)
+                    
+        except Exception as e:
+            logger.error("menu.handler_failed", choice=choice, error=str(e))
+            self.menu.show_error(str(e))
+
+    async def _handle_set_path(self) -> None:
+        """Handle setting project path"""
+        self.console.print("\nEnter project path (or press Enter to cancel):")
+        path_str = input("> ").strip()
+        
+        if not path_str:
+            return
+            
+        try:
+            path = Path(path_str)
+            if not path.exists():
+                raise ValueError(f"Path does not exist: {path}")
+            self.menu.project_path = path
+            logger.info("menu.path_set", path=str(path))
+        except Exception as e:
+            logger.error("menu.path_error", error=str(e))
+            self.menu.show_error(f"Invalid path: {str(e)}")
+
+    async def _handle_set_intent(self) -> None:
+        """Handle setting intent description"""
+        self.console.print("\nEnter intent description (or press Enter to cancel):")
+        description = input("> ").strip()
+        
+        if not description:
+            return
+            
+        self.menu.intent_description = description
+        self.menu.intent_context = {'description': description}
+        logger.info("menu.intent_set", description=description)
 
     async def _handle_step(self) -> None:
         """Handle executing next workflow step"""
@@ -50,7 +114,7 @@ class MenuHandlers:
                 stage_display = self.displays.get(current_stage)
                 if stage_display:
                     stage_display.display_data(result['data'])
-                
+                    
             # Show status and wait
             if result.get('status') == 'error':
                 self.menu.show_error(result.get('error'))
@@ -108,6 +172,25 @@ class MenuHandlers:
                 # Fallback to simple display
                 self.console.print(Panel(str(data), title=f"{stage.title()} Data"))
 
+            # Wait for user to continue
+            self.console.print("\nPress any key to continue...")
+            _ = readchar.readchar()
+
         except Exception as e:
             logger.error("menu.view_error", stage=stage, error=str(e))
             self.menu.show_error(f"Error viewing {stage} data: {str(e)}")
+
+    async def _handle_reset(self) -> None:
+        """Reset workflow state"""
+        try:
+            # Reset workflow state
+            self.menu._initialize_workflow_state()
+            self.console.print("[green]Workflow reset successfully[/]")
+            logger.info("menu.workflow_reset")
+            
+            self.console.print("\nPress any key to continue...")
+            _ = readchar.readchar()
+            
+        except Exception as e:
+            logger.error("menu.reset_error", error=str(e))
+            self.menu.show_error(str(e))
