@@ -1,0 +1,9 @@
+project:
+  default_path: "tests/test_projects/project1"  # Path to your project
+  workspace_root: "workspaces"
+
+runtime:
+  max_iterations: 3
+  intent:
+    description: "Add logging to every functon including changing all print to logging"  # Your refactoring intent
+    scope: ["*.py"]  # Files to include

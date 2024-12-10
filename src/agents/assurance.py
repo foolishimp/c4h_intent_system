@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import tempfile
 import shutil
 import os
-
+from config import locate_config
 from .base import BaseAgent, LLMProvider, AgentResponse
 from skills.semantic_extract import SemanticExtract, ExtractResult
 
@@ -27,35 +27,24 @@ class ValidationResult:
 class AssuranceAgent(BaseAgent):
     """Agent responsible for executing and validating test cases and validation scripts"""
     
-    def __init__(self,
-                 provider: LLMProvider = LLMProvider.ANTHROPIC,
-                 model: Optional[str] = None,
-                 workspace_root: Optional[Path] = None,
-                 temperature: float = 0,
-                 config: Optional[Dict[str, Any]] = None):
+    """Agent responsible for executing and validating test cases and validation scripts"""
+    
+    def __init__(self, config: Dict[str, Any] = None):
         """Initialize assurance agent with semantic tools.
         
         Args:
-            provider: LLM provider to use
-            model: Specific model to use
-            workspace_root: Optional workspace directory
-            temperature: Model temperature
             config: Configuration dictionary
         """
-        super().__init__(
-            provider=provider,
-            model=model,
-            temperature=temperature,
-            config=config
-        )
+        super().__init__(config=config)
         
-        # Optional workspace for persistent storage
-        if workspace_root:
-            self.workspace_root = workspace_root
-        else:
-            self.workspace_root = Path(tempfile.mkdtemp(prefix="validation_")).resolve()
-            
+        # Get agent-specific config
+        assurance_config = locate_config(self.config or {}, self._get_agent_name())
+        
+        # Initialize workspace path from config
+        workspace_root = Path(self.config.get('project', {}).get('workspace_root', 'workspaces'))
+        self.workspace_root = workspace_root / "validation"
         self.workspace_root.mkdir(parents=True, exist_ok=True)
+            
         logger.info("workspace.created", path=str(self.workspace_root))
         
     def _get_agent_name(self) -> str:

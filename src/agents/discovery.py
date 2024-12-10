@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 from datetime import datetime
 from dataclasses import dataclass, field
-from .base import BaseAgent, LLMProvider, AgentResponse
+from .base import BaseAgent, AgentResponse
+from config import locate_config
 
 logger = structlog.get_logger()
 
@@ -27,24 +28,22 @@ class DiscoveryResult:
 class DiscoveryAgent(BaseAgent):
     """Agent responsible for project discovery using tartxt"""
     
-    def __init__(self,
-                 provider: LLMProvider = LLMProvider.ANTHROPIC,
-                 model: Optional[str] = None,
-                 workspace_root: Optional[Path] = None,
-                 **kwargs):
+    def __init__(self, config: Dict[str, Any] = None):
         """Initialize discovery agent."""
-        super().__init__(
-            provider=provider,
-            model=model,
-            temperature=kwargs.get('temperature', 0),
-            config=kwargs.get('config')
-        )
+        super().__init__(config=config)
         
-        self.workspace_root = workspace_root
-        if workspace_root:
-            self.workspace_root.mkdir(parents=True, exist_ok=True)
+        # Get agent-specific config
+        discovery_config = locate_config(self.config or {}, self._get_agent_name())
+        
+        # Get workspace path from config
+        workspace_root = self.config.get('project', {}).get('workspace_root', 'workspaces')
+        self.workspace_root = Path(workspace_root)
+        self.workspace_root.mkdir(parents=True, exist_ok=True)
+        
+        logger.info("discovery.initialized",
+                   workspace_root=str(self.workspace_root))
 
-    def _get_agent_name(self) -> str:  # Fixed signature to match abstract method
+    def _get_agent_name(self) -> str:
         """Get agent name for config lookup."""
         return "discovery"
 
@@ -130,7 +129,6 @@ class DiscoveryAgent(BaseAgent):
             # Run discovery
             result = self._run_tartxt(str(project_path))
             
-            # Convert DiscoveryResult to AgentResponse
             return AgentResponse(
                 success=result.success,
                 data={

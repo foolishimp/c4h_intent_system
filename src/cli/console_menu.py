@@ -18,231 +18,130 @@ from rich.padding import Padding
 from rich.align import Align
 
 from agents.intent_agent import IntentAgent
+from models.workflow_state import WorkflowState  # Added this import
 from cli.displays.workflow_display import WorkflowDisplay
 from cli.menu_handlers import MenuHandlers
 from cli.base_menu import BaseMenu, MenuItem
-from config import SystemConfig
 
 logger = structlog.get_logger()
 
 class ConsoleMenu(BaseMenu):
     """Interactive console menu interface with status tracking and shortcuts"""
     
-    def __init__(self, workspace_path: Path, config: SystemConfig):
-        """Initialize console menu with configuration."""
+    def __init__(self, workspace_path: Path, config: Dict[str, Any]):
+        super().__init__(workspace_path, config)
         self.console = Console()
         self.display = WorkflowDisplay(self.console)
         self.handlers = MenuHandlers(self)
         self.workspace_path = workspace_path
         self.config = config
         
-        # Initialize from system config
-        self.intent_agent = IntentAgent(config=self.config, max_iterations=3)
+        # Extract project config
+        project_config = config.get('project', {})
+        self.project_path = Path(project_config.get('default_path')) if project_config.get('default_path') else None
+
+        # Extract runtime config
+        runtime_config = config.get('runtime', {})
+        intent_config = runtime_config.get('intent', {})
         
-        runtime_config = config.get_runtime_config()
-        self.project_path = None
-        self.intent_description = None
-        self.intent_context = {}
+        # Set intent details
+        if isinstance(intent_config, dict):
+            self.intent_description = intent_config.get('description')
+            self.intent_context = intent_config
+        elif isinstance(intent_config, str):
+            self.intent_description = intent_config
+            self.intent_context = {'description': intent_config}
+        else:
+            self.intent_description = None
+            self.intent_context = {}
+
+        # Initialize intent agent with complete config
+        self.intent_agent = IntentAgent(
+            config=self.config,
+            max_iterations=runtime_config.get('max_iterations', 3)
+        )
+
+        # Initialize workflow state
+        self._initialize_workflow_state()
         
-        if runtime_config:
-            if 'project_path' in runtime_config:
-                self.project_path = Path(runtime_config['project_path'])
-            
-            intent_config = runtime_config.get('intent', {})
-            if isinstance(intent_config, dict):
-                self.intent_description = intent_config.get('description')
-                self.intent_context = intent_config
-            elif isinstance(intent_config, str):
-                self.intent_description = intent_config
-                self.intent_context = {'description': intent_config}
-                
         logger.info("console_menu.initialized",
                     workspace=str(workspace_path),
-                    has_config=bool(config),
                     project_path=str(self.project_path) if self.project_path else None,
-                    intent_description=self.intent_description)
+                    intent_description=self.intent_description,
+                    runtime_config=runtime_config)
+
+    def _initialize_workflow_state(self) -> None:
+        if not hasattr(self.intent_agent, 'current_state') or not self.intent_agent.current_state:
+            # Use actual values from config for state
+            self.intent_agent.current_state = WorkflowState(
+                intent_description=self.intent_context,
+                project_path=str(self.project_path) if self.project_path else "",
+                max_iterations=self.intent_agent.max_iterations
+            )
 
     def get_menu_items(self) -> List[MenuItem]:
         """Get menu items with shortcuts"""
         return [
             MenuItem("Set Project Path", "path", "p"),
-            MenuItem("Set Intent Description", "intent", "i"),
-            MenuItem("Execute Next Step", "next", "n"),
-            MenuItem("View Discovery Data", "view_discovery", "d"),
-            MenuItem("View Solution Design", "view_solution", "s"),
+            MenuItem("Set Intent", "intent", "i"),
+            MenuItem("Next Step", "next", "n"),
+            MenuItem("View Discovery", "view_discovery", "d"),
+            MenuItem("View Solution", "view_solution", "s"),
             MenuItem("View Implementation", "view_implementation", "m"),
             MenuItem("View Validation", "view_validation", "v"),
             MenuItem("Reset Workflow", "reset", "r"),
             MenuItem("Quit", "quit", "q")
         ]
 
-    def show_menu_items(self, items: List[MenuItem], current: int) -> None:
-        """Display menu items with current selection and shortcuts, left-justified"""
-        table = Table(box=None, show_header=False, show_edge=False, padding=(0, 2))
-        
-        for i, item in enumerate(items):
-            # Create row style based on selection
-            style = "bold cyan" if i == current else ""
-            prefix = "→ " if i == current else "  "
-            
-            # Format shortcut if present
-            shortcut_text = f" ({item.shortcut})" if item.shortcut else ""
-            
-            # Build menu text with consistent formatting
-            menu_text = Text.assemble(
-                (prefix, style),
-                (item.display, style),
-                (shortcut_text, "dim " + style if style else "dim")
-            )
-            
-            table.add_row(menu_text)
-        
-        # Print table directly without centering
-        self.console.print(table)
-
-    def show_configuration(self) -> None:
-        """Display current configuration status"""
-        config_text = Table(show_header=False, box=None, padding=(0, 1))
-        config_text.add_row(
-            Text("Project Path:", style="bold"),
-            Text(str(self.project_path or "Not set"), 
-                style="green" if self.project_path else "red")
-        )
-        config_text.add_row(
-            Text("Intent Description:", style="bold"),
-            Text(self.intent_description or "Not set",
-                style="green" if self.intent_description else "red")
-        )
-        
-        panel = Panel(
-            Padding(config_text, (1, 2)),
-            title="Current Configuration",
-            border_style="blue",
-            box=ROUNDED
-        )
-        self.console.print(panel)
-
-    def show_header(self) -> None:
-        """Show application header with styling"""
-        title = Text("Refactoring Workflow Manager", justify="center")
-        border = Text("═" * 40, style="blue")
-        header = Table.grid(padding=(0, 2))
-        header.add_row(Align.center(border))
-        header.add_row(Align.center(title, style="bold cyan"))
-        header.add_row(Align.center(border))
-        self.console.print()
-
-    def show_error(self, error: str) -> None:
-        """Display error message with formatting"""
-        self.console.print(Panel(
-            Text(error, style="red"),
-            title="Error",
-            border_style="red bold",
-            box=ROUNDED
-        ))
+    def _display_workflow_status(self) -> None:
+        """Display workflow status safely"""
+        try:
+            if hasattr(self.intent_agent, 'current_state') and self.intent_agent.current_state:
+                self.display.show_workflow_state(self.intent_agent.current_state.to_dict())
+            else:
+                # Show empty/initial state
+                self.display.show_workflow_state({
+                    "status": "not_started",
+                    "current_stage": None,
+                    "error": None
+                })
+        except Exception as e:
+            logger.error("workflow_display.error", error=str(e))
+            self.console.print("[yellow]Unable to display workflow status[/]")
 
     async def main_menu(self) -> None:
-        """Display and handle main menu with keyboard navigation"""
-        items = self.get_menu_items()
-        self.register_shortcuts(items)
-        current = 0
+        """Display and handle main menu"""
+        self.register_shortcuts(self.get_menu_items())
         
-        while True:
-            try:
+        try:
+            while True:
                 self.clear_screen()
                 self.show_header()
-                self.show_configuration()
                 
-                # Always show workflow state
-                self.display.show_workflow_state(self.workflow_data)
+                # Show current configuration
+                self.console.print("\n[cyan]Current Configuration:[/]")
+                self.console.print(f"Project Path: {self.project_path or 'Not set'}")
+                self.console.print(f"Intent: {self.intent_description or 'Not set'}")
                 
-                self.show_menu_items(items, current)
+                # Show workflow status safely
+                self._display_workflow_status()
                 
-                # Left-align navigation help
-                self.console.print("\n[cyan]Navigation:[/] Use ↑↓ to move, Enter to select, or press shortcut key")
+                # Show menu items
+                self.console.print("\n[cyan]Menu Options:[/]")
+                self.show_menu_items(self.get_menu_items())
                 
-                # Get keyboard input
-                key = readchar.readkey()
+                # Get user input
+                key = readchar.readchar().lower()
+                choice = self.get_shortcut(key)
                 
-                if key == readchar.key.ENTER:
-                    choice = items[current].value
-                elif key == readchar.key.UP:
-                    current = (current - 1) % len(items)
-                    continue
-                elif key == readchar.key.DOWN:
-                    current = (current + 1) % len(items)
-                    continue
-                else:
-                    # Check for shortcut key
-                    choice = self.get_shortcut(key)
-                    if not choice:
-                        continue
-
-                if choice == 'quit':
+                if choice == "quit":
                     break
                     
-                await self.handlers.handle_menu_choice(choice)
-                await self._pause()
-                
-            except Exception as e:
-                self.show_error(str(e))
-                logger.error("menu.error", error=str(e))
-                await self._pause()
+                if choice:
+                    await self.handlers.handle_menu_choice(choice)
 
-    async def _step_workflow(self) -> Optional[Dict[str, Any]]:
-        """Execute next workflow step via intent agent"""
-        try:
-            if not self.project_path:
-                raise ValueError("Project path must be set before executing workflow")
-            if not self.intent_description:
-                raise ValueError("Intent description must be set before executing workflow")
-
-            # Show progress indicator
-            with self.console.status("[yellow]Executing workflow step...[/]", spinner="dots"):
-                result = await self.intent_agent.process(
-                    self.project_path,
-                    self.intent_context
-                )
-
-            # Update workflow data with proper structure
-            workflow_data = result.get("workflow_data", {})
-            self.workflow_data = {
-                'current_stage': workflow_data.get("current_stage"),
-                'discovery_data': workflow_data.get("discovery_data", {}),
-                'solution_data': workflow_data.get("solution_data", {}),
-                'implementation_data': workflow_data.get("implementation_data", {}),
-                'validation_data': workflow_data.get("validation_data", {}),
-                'error': workflow_data.get("error")
-            }
-
-            if result.get("status") == "error":
-                self.show_error(result.get("error", "Unknown error"))
-            else:
-                self.console.print("\n[green]✓ Step completed successfully[/]")
-
-            return result
-
+        except KeyboardInterrupt:
+            self.console.print("\n[yellow]Operation cancelled[/]")
         except Exception as e:
-            logger.error("workflow.step_failed", error=str(e))
+            logger.error("menu.error", error=str(e))
             self.show_error(str(e))
-            return {
-                "status": "error",
-                "error": str(e)
-            }
-
-    async def _pause(self) -> None:
-        """Pause for user input"""
-        self.console.print("\n[cyan]Press any key to continue...[/]")
-        readchar.readkey()
-
-    def reset_workflow(self) -> None:
-        """Reset the workflow state with proper structure"""
-        self.workflow_data = {
-            'current_stage': None,
-            'discovery_data': {},
-            'solution_data': {},
-            'implementation_data': {},
-            'validation_data': {}
-        }
-        self.intent_agent = IntentAgent(config=self.config, max_iterations=3)
-        self.console.print("[green]Workflow reset successfully[/]")
