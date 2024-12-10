@@ -132,53 +132,107 @@ class MenuHandlers:
             logger.error("menu.step_error", error=str(e))
             self.menu.show_error(f"Error executing step: {str(e)}")
 
+    """
+    Menu handlers for viewing workflow data.
+    Path: src/cli/menu_handlers.py
+    """
+
     async def _handle_view_data(self, stage: str) -> None:
-        """Handle viewing stage data"""
+        """Handle viewing stage data with proper error handling and logging.
+        
+        Args:
+            stage: The workflow stage to display data for ('discovery', 'solution', etc.)
+        """
         try:
-            # Get stage data from workflow state
+            logger.info(f"menu.view_data_requested", stage=stage)
+            
+            # Check workflow state
             if not self.menu.intent_agent.current_state:
+                logger.warning("menu.no_workflow_state")
                 self.console.print("[yellow]No workflow state available yet[/]")
+                self.console.print("\nPress any key to continue...")
+                _ = readchar.readchar()
                 return
 
+            # Map stage to data key
             stage_map = {
                 'discovery': 'discovery_data',
                 'solution': 'solution_design_data',
-                'implementation': 'implementation_data',
+                'implementation': 'implementation_data', 
                 'validation': 'validation_data'
             }
 
             data_key = stage_map.get(stage)
             if not data_key:
+                logger.error("menu.invalid_stage", stage=stage)
                 self.console.print(f"[yellow]Unknown stage: {stage}[/]")
+                self.console.print("\nPress any key to continue...")
+                _ = readchar.readchar()
                 return
 
+            # Get stage data
             data = getattr(self.menu.intent_agent.current_state, data_key, None)
+            logger.debug("menu.stage_data_retrieved", 
+                        stage=stage,
+                        has_data=bool(data),
+                        data_type=type(data).__name__ if data else None)
+
             if not data:
+                logger.warning("menu.no_stage_data", stage=stage)
                 self.console.print(f"[yellow]No {stage} data available yet[/]")
+                self.console.print("\nPress any key to continue...")
+                _ = readchar.readchar()
                 return
 
-            # Use appropriate display handler
-            display_key = {
-                'discovery': 'discovery',
-                'solution': 'solution_design',
-                'implementation': 'coder',
-                'validation': 'assurance'
-            }[stage]
+            try:
+                # Print header before clearing screen
+                self.console.print(f"\n[cyan]Displaying {stage.title()} Data[/]")
+                
+                # Clear screen after header
+                self.console.clear()
+                
+                # Use appropriate display handler
+                display_key = {
+                    'discovery': 'discovery',
+                    'solution': 'solution_design', 
+                    'implementation': 'coder',
+                    'validation': 'assurance'
+                }[stage]
 
-            display = self.displays.get(display_key)
-            if display:
-                display.display_data(data)
-            else:
-                # Fallback to simple display
-                self.console.print(Panel(str(data), title=f"{stage.title()} Data"))
+                display = self.displays.get(display_key)
+                if display:
+                    logger.debug("menu.using_display_handler", 
+                            display_type=display.__class__.__name__)
+                    display.display_data(data)
+                else:
+                    # Fallback to simple display
+                    logger.warning("menu.no_display_handler", 
+                                stage=stage,
+                                falling_back=True)
+                    self.console.print(Panel(str(data), title=f"{stage.title()} Data"))
 
-            # Wait for user to continue
-            self.console.print("\nPress any key to continue...")
-            _ = readchar.readchar()
+                # Add pause before returning to menu
+                self.console.print("\nPress any key to return to menu...")
+                _ = readchar.readchar()
+
+            except Exception as e:
+                logger.error("menu.display_error", 
+                            stage=stage,
+                            error=str(e),
+                            error_type=type(e).__name__)
+                self.console.print(f"[red]Error displaying {stage} data: {str(e)}[/]")
+                self.console.print("\nPress any key to continue...")
+                _ = readchar.readchar()
 
         except Exception as e:
-            logger.error("menu.view_error", stage=stage, error=str(e))
+            logger.error("menu.view_data_failed", 
+                        stage=stage,
+                        error=str(e),
+                        error_type=type(e).__name__)
             self.menu.show_error(f"Error viewing {stage} data: {str(e)}")
+            self.console.print("\nPress any key to continue...")
+        _ = readchar.readchar()
+
 
     async def _handle_reset(self) -> None:
         """Reset workflow state"""

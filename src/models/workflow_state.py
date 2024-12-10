@@ -118,13 +118,16 @@ class WorkflowState:
         """Set data for a specific stage"""
         setattr(self, f"{stage.value}_data", data)
 
+    # In src/models/workflow_state.py
+
     async def update_agent_state(self, agent: str, result: AgentResponse) -> None:
         """Update agent state with status from agent"""
         try:
+            # Create stage data preserving raw output
             stage_data = StageData(
                 status="completed" if result.success else "failed",
-                raw_output=result.data.get("raw_output", ""),
-                files=result.data.get("files", {}),
+                raw_output=result.data.get("raw_output", ""),  # Ensure we get raw_output
+                files=result.data.get("files", {}),  # Keep files from discovery
                 timestamp=datetime.utcnow().isoformat(),
                 error=result.error,
                 metrics=result.data.get("metrics", {})

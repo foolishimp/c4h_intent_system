@@ -6,6 +6,7 @@ Path: src/agents/solution_designer.py
 from typing import Dict, Any, Optional
 import structlog
 from datetime import datetime
+import asyncio
 import json
 from .base import BaseAgent, LLMProvider, AgentResponse
 from config import locate_config
@@ -68,22 +69,21 @@ class SolutionDesigner(BaseAgent):
         except Exception as e:
             logger.error("solution_designer.format_error", error=str(e))
             return str(context)
-
+        
     def process(self, context: Dict[str, Any]) -> AgentResponse:
         """Process solution design request"""
         try:
-            # Try direct access first, then check config structure
             discovery_data = None
             raw_output = None
             
-            # Check for top-level input_data
             if 'input_data' in context:
                 discovery_data = context['input_data'].get('discovery_data', {})
-                raw_output = discovery_data.get('raw_output')
-                
-            # If not found, check direct discovery_data
-            if not raw_output and 'discovery_data' in context:
+            elif 'discovery_data' in context:
                 discovery_data = context['discovery_data']
+
+            if hasattr(discovery_data, 'raw_output'):
+                raw_output = discovery_data.raw_output
+            elif isinstance(discovery_data, dict):
                 raw_output = discovery_data.get('raw_output')
 
             logger.info("solution_designer.process_start", 
@@ -91,16 +91,15 @@ class SolutionDesigner(BaseAgent):
                     has_context=bool(context))
 
             if not raw_output:
-                logger.error("solution_designer.missing_discovery",
-                            context_keys=list(context.keys()))
                 return AgentResponse(
                     success=False,
                     data={},
                     error="Missing discovery data - cannot analyze code"
                 )
 
-            # Use BaseAgent's process method with full context
-            response = super().process(context)
+            # Create event loop if needed and run async process
+            loop = asyncio.get_event_loop()
+            response = loop.run_until_complete(self._process_async(context))
             
             logger.info("solution_designer.process_complete",
                     success=response.success,
