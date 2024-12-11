@@ -18,7 +18,7 @@ from rich.padding import Padding
 from rich.align import Align
 
 from agents.intent_agent import IntentAgent
-from models.workflow_state import WorkflowState  # Added this import
+from models.workflow_state import WorkflowState
 from cli.displays.workflow_display import WorkflowDisplay
 from cli.menu_handlers import MenuHandlers
 from cli.base_menu import BaseMenu, MenuItem
@@ -72,7 +72,6 @@ class ConsoleMenu(BaseMenu):
 
     def _initialize_workflow_state(self) -> None:
         if not hasattr(self.intent_agent, 'current_state') or not self.intent_agent.current_state:
-            # Use actual values from config for state
             self.intent_agent.current_state = WorkflowState(
                 intent_description=self.intent_context,
                 project_path=str(self.project_path) if self.project_path else "",
@@ -109,8 +108,8 @@ class ConsoleMenu(BaseMenu):
             logger.error("workflow_display.error", error=str(e))
             self.console.print("[yellow]Unable to display workflow status[/]")
 
-    async def main_menu(self) -> None:
-        """Display and handle main menu"""
+    def main_menu(self) -> None:
+        """Display and handle main menu - now synchronous"""
         self.register_shortcuts(self.get_menu_items())
         
         try:
@@ -138,7 +137,7 @@ class ConsoleMenu(BaseMenu):
                     break
                     
                 if choice:
-                    await self.handlers.handle_menu_choice(choice)
+                    self.handlers.handle_menu_choice(choice)
 
         except KeyboardInterrupt:
             self.console.print("\n[yellow]Operation cancelled[/]")

@@ -23,84 +23,81 @@ class IntentAgent:
     """Orchestrates the intent workflow."""
     
     def __init__(self, config: Dict[str, Any], max_iterations: int = 3):
-            """Initialize intent agent with configuration."""
-            self.max_iterations = max_iterations
-            self.config = config
+        """Initialize intent agent with configuration."""
+        self.max_iterations = max_iterations
+        self.config = config
+        
+        try:
+            # Initialize all agents with complete system config
+            self.discovery = DiscoveryAgent(config=config)
+            self.solution_designer = SolutionDesigner(config=config)
+            self.coder = Coder(config=config)
+            self.assurance = AssuranceAgent(config=config)
             
-            try:
-                # Initialize all agents with complete system config
-                self.discovery = DiscoveryAgent(config=config)
-                self.solution_designer = SolutionDesigner(config=config)
-                self.coder = Coder(config=config)
-                self.assurance = AssuranceAgent(config=config)
-                
-                self.current_state: Optional[WorkflowState] = None
-                self.backup_dir: Optional[Path] = None
+            self.current_state: Optional[WorkflowState] = None
+            self.backup_dir: Optional[Path] = None
 
-                logger.info("intent_agent.initialized", 
-                        max_iterations=max_iterations,
-                        discovery=bool(self.discovery),
-                        designer=bool(self.solution_designer),
-                        coder=bool(self.coder),
-                        assurance=bool(self.assurance))
-                        
-            except Exception as e:
-                logger.error("intent_agent.initialization_failed",
-                            error=str(e),
-                            config_keys=list(config.keys()) if config else None)
-                raise ValueError(f"Failed to initialize intent agent: {str(e)}")
-    
+            logger.info("intent_agent.initialized", 
+                    max_iterations=max_iterations,
+                    discovery=bool(self.discovery),
+                    designer=bool(self.solution_designer),
+                    coder=bool(self.coder),
+                    assurance=bool(self.assurance))
+                    
+        except Exception as e:
+            logger.error("intent_agent.initialization_failed",
+                        error=str(e),
+                        config_keys=list(config.keys()) if config else None)
+            raise ValueError(f"Failed to initialize intent agent: {str(e)}")
+
     def get_current_agent(self) -> Optional[str]:
         """Get current agent from workflow state"""
         if self.current_state:
             return self.current_state.get_current_agent()
         return None
 
-    async def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
-        """Process an intent through the complete workflow"""
-        try:
-            if not self.current_state:
-                self.current_state = WorkflowState(
-                    intent_description=intent_desc,
-                    project_path=str(project_path),
-                    max_iterations=self.max_iterations
-                )
+    def process(self, project_path: Path, intent_desc: Dict[str, Any]) -> Dict[str, Any]:
+            """Process an intent through the complete workflow"""
+            try:
+                logger.info("intent.process.start", 
+                        project_path=str(project_path),
+                        intent_desc=intent_desc)
 
-            if not self.backup_dir and project_path:
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                backup_root = Path(self.config.get('backup', {}).get('path', 'workspaces/backups'))
-                self.backup_dir = backup_root / f"backup_{timestamp}"
-                self.backup_dir.parent.mkdir(parents=True, exist_ok=True)
+                if not self.current_state:
+                    logger.info("intent.process.initializing_state")
+                    self.current_state = WorkflowState(
+                        intent_description=intent_desc,
+                        project_path=str(project_path),
+                        max_iterations=self.max_iterations
+                    )
 
-                if project_path.exists():
-                    if project_path.is_file():
-                        shutil.copy2(project_path, self.backup_dir / project_path.name)
-                    else:
-                        shutil.copytree(project_path, self.backup_dir / project_path.name)
-                    logger.info("intent.backup_created", backup_path=str(self.backup_dir))
-                    self.current_state.backup_path = self.backup_dir
+                current_agent = self.current_state.get_current_agent()
+                logger.info("intent.process.current_agent", agent=current_agent)
 
-            logger.info("intent.process_started", 
-                    project_path=str(project_path))
+                if not current_agent:
+                    logger.info("intent.process.no_current_agent")
+                    return self._create_result_response()
 
-            current_agent = self.current_state.get_current_agent()
-            if not current_agent:
+                result = self._execute_agent(current_agent)
+                logger.info("intent.process.agent_executed", 
+                        agent=current_agent,
+                        success=result.get("success", False))
+                
+                if not result.get("success", False):
+                    logger.error("intent.process.agent_failed", 
+                            error=result.get("error", "Unknown error"))
+                    self._handle_error(result.get("error", "Unknown error"))
+                    return self._create_error_response(result.get("error", "Unknown error"))
+
                 return self._create_result_response()
 
-            result = await self._execute_agent(current_agent)
-            
-            if not result.get("success", False):
-                await self._handle_error(result.get("error", "Unknown error"))
-                return self._create_error_response(result.get("error", "Unknown error"))
+            except Exception as e:
+                logger.error("intent.process.failed", error=str(e), exc_info=True)
+                if self.current_state:
+                    self.current_state.error = str(e)
+                return self._create_error_response(str(e))
 
-            return self._create_result_response()
-
-        except Exception as e:
-            logger.error("intent.process_failed", error=str(e))
-            self.current_state.error = str(e)
-            return self._create_error_response(str(e))
-
-    async def _execute_discovery(self) -> Dict[str, Any]:
+    def _execute_discovery(self) -> Dict[str, Any]:
         """Execute discovery stage"""
         if not self.current_state or not self.current_state.intent.project_path:
             return {
@@ -108,18 +105,18 @@ class IntentAgent:
                 "error": "No project path specified"
             }
 
-        result = await self.discovery.process({
+        result = self.discovery.process({
             "project_path": self.current_state.intent.project_path
         })
 
-        await self.current_state.update_agent_state("discovery", result)
+        self.current_state.update_agent_state("discovery", result)
 
         return {
             "success": result.success,
             "error": result.error
         }
 
-    async def _execute_solution_design(self) -> Dict[str, Any]:
+    def _execute_solution_design(self) -> Dict[str, Any]:
         """Execute solution design stage"""
         if not self.current_state or not self.current_state.discovery_data:
             return {
@@ -128,13 +125,22 @@ class IntentAgent:
             }
 
         try:
-            result = self.solution_designer.process({
-                "intent": self.current_state.intent.description,
-                "discovery_data": self.current_state.discovery_data,
+            # Properly format discovery data and intent for solution designer
+            formatted_input = {
+                "input_data": {
+                    "discovery_data": self.current_state.discovery_data.__dict__,
+                    "intent": self.current_state.intent.description
+                },
                 "iteration": self.current_state.iteration
-            })
+            }
 
-            await self.current_state.update_agent_state("solution_design", result)
+            logger.debug("solution_design.input_prepared", 
+                        discovery_data=formatted_input["input_data"]["discovery_data"],
+                        intent=formatted_input["input_data"]["intent"])
+
+            result = self.solution_designer.process(formatted_input)
+
+            self.current_state.update_agent_state("solution_design", result)
 
             return {
                 "success": result.success,
@@ -148,7 +154,7 @@ class IntentAgent:
                 "error": str(e)
             }
 
-    async def _execute_code_changes(self) -> Dict[str, Any]:
+    def _execute_code_changes(self) -> Dict[str, Any]:
         """Execute code changes stage"""
         if not self.current_state or not self.current_state.solution_design_data:
             return {
@@ -168,7 +174,7 @@ class IntentAgent:
                 'input_data': input_data
             })
             
-            await self.current_state.update_agent_state("coder", result)
+            self.current_state.update_agent_state("coder", result)
             
             return {
                 "success": result.success,
@@ -182,7 +188,7 @@ class IntentAgent:
                 "error": str(e)
             }
     
-    async def _execute_assurance(self) -> Dict[str, Any]:
+    def _execute_assurance(self) -> Dict[str, Any]:
         """Execute assurance stage"""
         if not self.current_state or not self.current_state.implementation_data:
             return {
@@ -190,31 +196,31 @@ class IntentAgent:
                 "error": "Implementation required for assurance"
             }
 
-        result = await self.assurance.process({
+        result = self.assurance.process({
             "changes": self.current_state.implementation_data.get("changes", []),
             "intent": self.current_state.intent.description
         })
 
-        await self.current_state.update_agent_state("assurance", result)
+        self.current_state.update_agent_state("assurance", result)
 
         return {
             "success": result.success,
             "error": result.error
         }
 
-    async def _execute_agent(self, agent_type: str) -> Dict[str, Any]:
+    def _execute_agent(self, agent_type: str) -> Dict[str, Any]:
         """Execute specific agent"""
         try:
             result = None
             
             if agent_type == "discovery":
-                result = await self._execute_discovery()
+                result = self._execute_discovery()
             elif agent_type == "solution_design":
-                result = await self._execute_solution_design()
+                result = self._execute_solution_design()
             elif agent_type == "coder":
-                result = await self._execute_code_changes()
+                result = self._execute_code_changes()
             elif agent_type == "assurance":
-                result = await self._execute_assurance()
+                result = self._execute_assurance()
             
             if result:
                 logger.info("workflow.agent_transition",
@@ -233,7 +239,7 @@ class IntentAgent:
             logger.error("agent.execution_failed", error=str(e), agent=agent_type)
             return {"success": False, "error": str(e)}
 
-    async def _handle_error(self, error: str) -> None:
+    def _handle_error(self, error: str) -> None:
         """Handle workflow error with backup restoration"""
         try:
             if self.backup_dir and self.current_state:

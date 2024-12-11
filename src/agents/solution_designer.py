@@ -71,7 +71,7 @@ class SolutionDesigner(BaseAgent):
             return str(context)
         
     def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process solution design request"""
+        """Process solution design request synchronously"""
         try:
             discovery_data = None
             raw_output = None
@@ -97,9 +97,8 @@ class SolutionDesigner(BaseAgent):
                     error="Missing discovery data - cannot analyze code"
                 )
 
-            # Create event loop if needed and run async process
-            loop = asyncio.get_event_loop()
-            response = loop.run_until_complete(self._process_async(context))
+            # Use parent's synchronous process method
+            response = super().process(context)
             
             logger.info("solution_designer.process_complete",
                     success=response.success,

@@ -1,10 +1,10 @@
 """
-Base menu functionality for the refactoring workflow management system.
-Provides core menu capabilities and shortcut key handling.
+Base menu functionality for the refactoring workflow system.
+Path: src/cli/base_menu.py
 """
 
 from rich.console import Console
-from typing import Optional, Dict, Any, List, Tuple
+from typing import Optional, Dict, Any, List
 import structlog
 from pathlib import Path
 import readchar
@@ -66,3 +66,7 @@ class BaseMenu:
     def clear_screen(self) -> None:
         """Clear the terminal screen"""
         self.console.clear()
+
+    def main_menu(self) -> None:
+        """Base menu implementation - now synchronous"""
+        pass

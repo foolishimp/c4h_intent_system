@@ -24,7 +24,7 @@ logger = structlog.get_logger()
 
 class MenuHandlers:
     """Handles menu interactions"""
-
+    
     def __init__(self, menu: 'ConsoleMenu'):
         self.menu = menu
         self.console = menu.console
@@ -37,21 +37,21 @@ class MenuHandlers:
             'workflow': WorkflowDisplay(self.console)
         }
 
-    async def handle_menu_choice(self, choice: str) -> None:
+    def handle_menu_choice(self, choice: str) -> None:
         """Handle menu selection"""
         try:
             match choice:
                 case 'path':
-                    await self._handle_set_path()
+                    self._handle_set_path()
                 case 'intent':
-                    await self._handle_set_intent()
+                    self._handle_set_intent()
                 case 'next':
-                    await self._handle_step()
+                    self._handle_step()
                 case 'view_discovery' | 'view_solution' | \
                      'view_implementation' | 'view_validation':
-                    await self._handle_view_data(choice.replace('view_', ''))
+                    self._handle_view_data(choice.replace('view_', ''))
                 case 'reset':
-                    await self._handle_reset()
+                    self._handle_reset()
                 case _:
                     logger.warning("menu.unknown_choice", choice=choice)
                     
@@ -59,23 +59,59 @@ class MenuHandlers:
             logger.error("menu.handler_failed", choice=choice, error=str(e))
             self.menu.show_error(str(e))
 
-    async def _handle_set_path(self) -> None:
-        """Handle setting project path"""
-        self.console.print("\nEnter project path (or press Enter to cancel):")
-        path_str = input("> ").strip()
-        
-        if not path_str:
-            return
-            
-        try:
-            path = Path(path_str)
-            if not path.exists():
-                raise ValueError(f"Path does not exist: {path}")
-            self.menu.project_path = path
-            logger.info("menu.path_set", path=str(path))
-        except Exception as e:
-            logger.error("menu.path_error", error=str(e))
-            self.menu.show_error(f"Invalid path: {str(e)}")
+    def _handle_step(self) -> None:
+            """Handle executing next workflow step synchronously"""
+            try:
+                logger.info("menu.handle_step.start")
+                
+                if not self.menu.project_path or not self.menu.intent_description:
+                    self.menu.show_error("Project path and intent must be set before proceeding")
+                    return
+
+                # Get current stage
+                current_stage = self.menu.intent_agent.get_current_agent()
+                logger.info("menu.handle_step.current_stage", stage=current_stage)
+                
+                self.console.print(f"\n[cyan]Executing {current_stage}...[/]")
+
+                # Execute step synchronously with explicit project path handling
+                result = self.menu.intent_agent.process(
+                    project_path=Path(self.menu.project_path),
+                    intent_desc={
+                        "description": self.menu.intent_description,
+                        "scope": ["*.py"]
+                    }
+                )
+                
+                logger.info("menu.handle_step.result", 
+                        result_status=result.get('status'),
+                        has_workflow_data=bool(result.get('workflow_data')))
+
+                # Show results using appropriate display handler
+                if result.get('status') == 'success' and result.get('workflow_data'):
+                    stage_display = self.displays.get(current_stage)
+                    if stage_display:
+                        stage_data = result['workflow_data'].get(f"{current_stage}_data")
+                        if stage_data:
+                            stage_display.display_data(stage_data)
+                        
+                # Show status and wait
+                if result.get('status') == 'error':
+                    self.menu.show_error(result.get('error'))
+                else:
+                    self.console.print("\n[green]Step completed successfully[/]")
+                
+                self.console.print("\nPress any key to continue...")
+                _ = readchar.readchar()
+                    
+                logger.info("menu.step_completed", 
+                        status=result.get('status'),
+                        stage=current_stage)
+
+            except Exception as e:
+                logger.error("menu.step_error", error=str(e), exc_info=True)
+                self.menu.show_error(f"Error executing step: {str(e)}")
+
 
     async def _handle_set_intent(self) -> None:
         """Handle setting intent description"""
