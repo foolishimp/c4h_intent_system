@@ -14,8 +14,6 @@ from rich.table import Table
 from rich.text import Text
 from rich.style import Style
 from rich.box import ROUNDED
-from rich.padding import Padding
-from rich.align import Align
 
 from agents.intent_agent import IntentAgent
 from models.workflow_state import WorkflowState
@@ -70,14 +68,6 @@ class ConsoleMenu(BaseMenu):
                     intent_description=self.intent_description,
                     runtime_config=runtime_config)
 
-    def _initialize_workflow_state(self) -> None:
-        if not hasattr(self.intent_agent, 'current_state') or not self.intent_agent.current_state:
-            self.intent_agent.current_state = WorkflowState(
-                intent_description=self.intent_context,
-                project_path=str(self.project_path) if self.project_path else "",
-                max_iterations=self.intent_agent.max_iterations
-            )
-
     def get_menu_items(self) -> List[MenuItem]:
         """Get menu items with shortcuts"""
         return [
@@ -92,24 +82,18 @@ class ConsoleMenu(BaseMenu):
             MenuItem("Quit", "quit", "q")
         ]
 
-    def _display_workflow_status(self) -> None:
-        """Display workflow status safely"""
-        try:
-            if hasattr(self.intent_agent, 'current_state') and self.intent_agent.current_state:
-                self.display.show_workflow_state(self.intent_agent.current_state.to_dict())
-            else:
-                # Show empty/initial state
-                self.display.show_workflow_state({
-                    "status": "not_started",
-                    "current_stage": None,
-                    "error": None
-                })
-        except Exception as e:
-            logger.error("workflow_display.error", error=str(e))
-            self.console.print("[yellow]Unable to display workflow status[/]")
+    def _initialize_workflow_state(self) -> None:
+        """Initialize or reset workflow state"""
+        if not hasattr(self.intent_agent, 'current_state') or not self.intent_agent.current_state:
+            self.intent_agent.current_state = WorkflowState(
+                intent_description=self.intent_context,
+                project_path=str(self.project_path) if self.project_path else "",
+                max_iterations=self.intent_agent.max_iterations
+            )
+            logger.info("workflow.state_initialized")
 
     def main_menu(self) -> None:
-        """Display and handle main menu - now synchronous"""
+        """Display and handle main menu"""
         self.register_shortcuts(self.get_menu_items())
         
         try:
@@ -144,3 +128,18 @@ class ConsoleMenu(BaseMenu):
         except Exception as e:
             logger.error("menu.error", error=str(e))
             self.show_error(str(e))
+
+    def _display_workflow_status(self) -> None:
+        """Display workflow status safely"""
+        try:
+            if hasattr(self.intent_agent, 'current_state') and self.intent_agent.current_state:
+                self.display.show_workflow_state(self.intent_agent.current_state.to_dict())
+            else:
+                self.display.show_workflow_state({
+                    "status": "not_started",
+                    "current_stage": None,
+                    "error": None
+                })
+        except Exception as e:
+            logger.error("workflow_display.error", error=str(e))
+            self.console.print("[yellow]Unable to display workflow status[/]")

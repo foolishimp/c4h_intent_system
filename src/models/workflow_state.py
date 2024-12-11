@@ -42,6 +42,18 @@ class StageData:
     error: Optional[str] = None
     metrics: Dict[str, Any] = field(default_factory=dict)
 
+    def update_from_response(self, response: AgentResponse) -> None:
+        """Update stage data from agent response"""
+        self.status = "completed" if response.success else "failed"
+        self.error = response.error
+        self.timestamp = datetime.utcnow().isoformat()
+        
+        # Extract data based on response type
+        data = response.data or {}
+        self.raw_output = data.get("raw_output", "")
+        self.files = data.get("files", {})
+        self.metrics = data.get("metrics", {})
+
 @dataclass 
 class WorkflowState:
     """Current state of the intent workflow"""
@@ -118,42 +130,39 @@ class WorkflowState:
         """Set data for a specific stage"""
         setattr(self, f"{stage.value}_data", data)
 
-    # In src/models/workflow_state.py
-
-    async def update_agent_state(self, agent: str, result: AgentResponse) -> None:
-        """Update agent state with status from agent"""
+    def update_agent_state(self, agent: str, result: AgentResponse) -> None:
+        """Update agent state with status from agent - now synchronous"""
         try:
-            # Create stage data preserving raw output
-            stage_data = StageData(
-                status="completed" if result.success else "failed",
-                raw_output=result.data.get("raw_output", ""),  # Ensure we get raw_output
-                files=result.data.get("files", {}),  # Keep files from discovery
-                timestamp=datetime.utcnow().isoformat(),
-                error=result.error,
-                metrics=result.data.get("metrics", {})
-            )
-            
-            # Map agent to stage and store data
+            # Map agent to stage
             try:
                 stage = WorkflowStage(agent)
+                stage_data = self.get_stage_data(stage)
+                
+                # Update stage data
+                stage_data.update_from_response(result)
                 self.set_stage_data(stage, stage_data)
+                
+                logger.info(f"workflow.{agent}_state_updated",
+                        status=stage_data.status,
+                        has_error=bool(stage_data.error))
+
             except ValueError:
                 logger.error("workflow.invalid_agent", agent=agent)
                 return
 
-            logger.info(f"workflow.{agent}_state_update",
-                    status=stage_data.status,
-                    has_error=bool(stage_data.error))
-
+            # Update workflow state
             self.action_history.append(agent)
             self.last_action = agent
 
             # Check if workflow is complete
             if self.get_current_agent() is None:
                 self.completed_at = datetime.utcnow()
+                logger.info("workflow.completed", 
+                          duration=self.duration)
 
         except Exception as e:
             logger.error(f"workflow.{agent}_update_failed", error=str(e))
+            raise
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow state to dictionary"""
