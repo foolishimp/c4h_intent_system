@@ -195,7 +195,16 @@ class IntentAgent:
                         discovery_data=formatted_input["input_data"]["discovery_data"],
                         intent=formatted_input["input_data"]["intent"])
 
+            # Get result and ensure it's not a coroutine
             result = self.solution_designer.process(formatted_input)
+            if hasattr(result, '_asyncio_future_blocking'):
+                # This indicates it's a coroutine that needs to be awaited
+                return {
+                    "success": False,
+                    "error": "Async result received - expected sync"
+                }
+
+            # Update state with the concrete result
             self.current_state.update_agent_state("solution_design", result)
 
             return {
@@ -210,8 +219,6 @@ class IntentAgent:
                 "error": str(e)
             }
 
-        # ... Implementation of _execute_code_changes and _execute_assurance remains similar,
-        # but with synchronous state updates ...
     def _execute_code_changes(self) -> Dict[str, Any]:
         """Execute code changes stage"""
         if not self.current_state or not self.current_state.solution_design_data:

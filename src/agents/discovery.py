@@ -107,8 +107,8 @@ class DiscoveryAgent(BaseAgent):
                 error=str(e)
             )
 
-    async def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process a project discovery request."""
+    def process(self, context: Dict[str, Any]) -> AgentResponse:
+        """Process a project discovery request - now synchronous."""
         try:
             project_path = context.get("project_path")
             if not project_path:
