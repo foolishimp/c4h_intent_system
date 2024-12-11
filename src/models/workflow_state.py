@@ -11,7 +11,7 @@ import structlog
 from enum import Enum
 
 from .intent import Intent, IntentStatus, AgentState
-from agents.base import AgentResponse
+from agents.base import AgentResponse  # Added missing import
 
 logger = structlog.get_logger()
 
@@ -19,8 +19,8 @@ class WorkflowStage(str, Enum):
     """Stages in the workflow process"""
     DISCOVERY = "discovery"
     SOLUTION_DESIGN = "solution_design"
-    IMPLEMENTATION = "coder"
-    VALIDATION = "assurance"
+    CODER = "coder"  # Changed from IMPLEMENTATION to match agent name
+    ASSURANCE = "assurance"
     
     @classmethod
     def get_ordered_stages(cls) -> List['WorkflowStage']:
@@ -28,8 +28,8 @@ class WorkflowStage(str, Enum):
         return [
             cls.DISCOVERY,
             cls.SOLUTION_DESIGN,
-            cls.IMPLEMENTATION,
-            cls.VALIDATION
+            cls.CODER,  # Updated to match agent name
+            cls.ASSURANCE
         ]
 
 @dataclass
@@ -63,8 +63,8 @@ class WorkflowState:
     max_iterations: int = 3
     discovery_data: Optional[StageData] = None
     solution_design_data: Optional[StageData] = None  
-    implementation_data: Optional[StageData] = None
-    validation_data: Optional[StageData] = None
+    coder_data: Optional[StageData] = None  # Changed from implementation_data
+    assurance_data: Optional[StageData] = None  # Changed from validation_data
     error: Optional[str] = None
     last_action: Optional[str] = None
     action_history: List[str] = field(default_factory=list)
@@ -84,10 +84,10 @@ class WorkflowState:
             self.discovery_data = StageData()
         if not self.solution_design_data:
             self.solution_design_data = StageData()
-        if not self.implementation_data:
-            self.implementation_data = StageData()
-        if not self.validation_data:
-            self.validation_data = StageData()
+        if not self.coder_data:  # Updated field name
+            self.coder_data = StageData()
+        if not self.assurance_data:  # Updated field name
+            self.assurance_data = StageData()
 
     @property
     def has_error(self) -> bool:

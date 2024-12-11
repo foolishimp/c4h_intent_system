@@ -4,7 +4,6 @@ Handles command line arguments and initializes workflow components.
 Path: src/main.py
 """
 
-import asyncio
 import sys
 from pathlib import Path
 import argparse
@@ -59,8 +58,8 @@ def load_configuration(config_path: Optional[Path] = None) -> Dict[str, Any]:
         print(f"\nConfiguration error: {str(e)}")
         sys.exit(1)
 
-async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
-    """Process a refactoring request either interactively or directly"""
+def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
+    """Process a refactoring request synchronously"""
     try:
         # Load complete config first
         config = load_configuration(cli_config.config_path)
@@ -74,7 +73,7 @@ async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
         
         if cli_config.intent:
             intent_context['description'] = cli_config.intent
-        
+
         # Interactive mode uses ConsoleMenu
         if cli_config.interactive:
             workspace_dir = Path(config.get('project', {}).get('workspace_root', 'workspaces')) / "current"
@@ -91,7 +90,8 @@ async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
             # Store complete context
             menu.intent_context = intent_context
                 
-            await menu.main_menu()
+            # Call synchronous main_menu directly
+            menu.main_menu()
             return {"status": "completed"}
             
         # Direct mode requires project path and intent
@@ -100,15 +100,16 @@ async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
                 "status": "error",
                 "error": "Project path and intent description required in non-interactive mode"
             }
-        
+            
         # Initialize intent agent with complete config
         agent = IntentAgent(
-            config=config,  # Pass complete config instead of individual params
+            config=config,
             max_iterations=cli_config.max_iterations
         )
         
         # Process with project path and intent context
-        return await agent.process(
+        # Use BaseAgent's process() which handles async internally
+        return agent.process(
             project_path=cli_config.project_path,
             intent_desc=intent_context
         )
@@ -120,7 +121,7 @@ async def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
             "error": str(e)
         }
 
-def main():
+def main() -> None:
     """CLI entry point"""
     parser = argparse.ArgumentParser(
         description="AI-powered code refactoring tool"
@@ -153,7 +154,8 @@ def main():
             config_path=args.config
         )
         
-        result = asyncio.run(process_refactoring(cli_config))
+        # Run synchronously since menu is sync
+        result = process_refactoring(cli_config)
         
         if result["status"] == "error":
             print(f"\nError: {result['error']}")

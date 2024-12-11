@@ -174,14 +174,9 @@ class IntentAgent:
             "error": result.error
         }
     
-    """
-    Intent agent implementation for coordinating the refactoring workflow.
-    Changes focused on solution design stage.
-    Path: src/agents/intent_agent.py
-    """
 
     def _execute_solution_design(self) -> Dict[str, Any]:
-        """Execute solution design stage"""
+        """Execute solution design stage with proper sync/async handling"""
         if not self.current_state or not self.current_state.discovery_data:
             return {
                 "success": False,
@@ -198,12 +193,12 @@ class IntentAgent:
             }
 
             logger.debug("solution_design.input_prepared", 
-                        discovery_data=formatted_input["input_data"]["discovery_data"],
-                        intent=formatted_input["input_data"]["intent"])
+                    discovery_data=formatted_input["input_data"]["discovery_data"],
+                    intent=formatted_input["input_data"]["intent"])
 
-            # Get result using synchronous interface
+            # Use synchronous process interface
             result = self.solution_designer.process(formatted_input)
-
+            
             # Update state with result
             self.current_state.update_agent_state("solution_design", result)
 

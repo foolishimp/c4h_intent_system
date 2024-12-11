@@ -20,13 +20,16 @@ class WorkflowDisplay:
     
     def __init__(self, console: Console):
         self.console = console
+        # Updated agent names to match WorkflowState
         self.agents = ["discovery", "solution_design", "coder", "assurance"]
+        # Updated display names to be more user-friendly
         self.agent_names = {
             "discovery": "Discovery",
             "solution_design": "Solution Design",
-            "coder": "Code Implementation",
-            "assurance": "Validation"
+            "coder": "Code Implementation",  # Kept friendly name but updated key
+            "assurance": "Validation"  # Kept friendly name but updated key
         }
+
 
     def show_configuration(self, workspace: Any) -> None:
         """Display current configuration"""
@@ -85,15 +88,19 @@ class WorkflowDisplay:
     def _get_agent_state(self, state: Dict[str, Any], agent: str) -> Dict[str, Any]:
         """Get state for specific agent with safe defaults"""
         try:
-            # Map agent names to their data keys
+            # Updated mapping to match WorkflowState fields
             agent_data_map = {
                 "discovery": "discovery_data",
-                "solution_design": "solution_data",
-                "coder": "implementation_data",
-                "assurance": "validation_data"
+                "solution_design": "solution_design_data",
+                "coder": "coder_data",  # Updated from implementation_data
+                "assurance": "assurance_data"  # Updated from validation_data
             }
             
             data_key = agent_data_map.get(agent)
+            if not data_key:
+                logger.warning("workflow_display.unknown_agent", agent=agent)
+                return {}
+                
             agent_data = state.get(data_key) or {}
             
             return {
@@ -103,6 +110,9 @@ class WorkflowDisplay:
                 "error": agent_data.get("error")
             }
         except Exception as e:
+            logger.error("workflow_display.state_error", 
+                        agent=agent, 
+                        error=str(e))
             return {
                 "status": "error",
                 "last_action": "-",
