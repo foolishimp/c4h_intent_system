@@ -1,14 +1,13 @@
 """
-Solution designer implementation following BaseAgent design principles.
+Solution designer implementation focused on synchronous operation.
 Path: src/agents/solution_designer.py
 """
 
 from typing import Dict, Any, Optional
 import structlog
 from datetime import datetime
-import asyncio
 import json
-from .base import BaseAgent, LLMProvider, AgentResponse
+from .base import BaseAgent, AgentResponse
 from config import locate_config
 
 logger = structlog.get_logger()
@@ -17,7 +16,7 @@ class SolutionDesigner(BaseAgent):
     """Designs specific code modifications based on intent and discovery analysis."""
     
     def __init__(self, config: Dict[str, Any] = None):
-        """Initialize designer with proper configuration."""
+        """Initialize designer with configuration."""
         super().__init__(config=config)
         
         # Extract config using locate_config pattern
@@ -27,7 +26,7 @@ class SolutionDesigner(BaseAgent):
                    config_keys=list(solution_config.keys()) if solution_config else None)
 
     def _get_agent_name(self) -> str:
-        """Get agent name for config lookup - required by BaseAgent"""
+        """Get agent name for config lookup"""
         return "solution_designer"
 
     def _format_request(self, context: Dict[str, Any]) -> str:
@@ -35,11 +34,10 @@ class SolutionDesigner(BaseAgent):
         try:
             template = self._get_prompt('solution')
             
-            # Extract with fallbacks for different structures
+            # Extract discovery data and intent with safe fallbacks
             raw_output = None
             intent_desc = None
             
-            # Try input_data structure first
             if 'input_data' in context:
                 input_data = context['input_data']
                 discovery_data = input_data.get('discovery_data', {})
@@ -47,7 +45,7 @@ class SolutionDesigner(BaseAgent):
                 intent = input_data.get('intent', {})
                 intent_desc = intent.get('description', '')
             
-            # Fallback to direct access
+            # Direct access fallbacks
             if not raw_output and 'discovery_data' in context:
                 raw_output = context['discovery_data'].get('raw_output', '')
             if not intent_desc and 'intent' in context:
@@ -69,32 +67,16 @@ class SolutionDesigner(BaseAgent):
         except Exception as e:
             logger.error("solution_designer.format_error", error=str(e))
             return str(context)
-        
+
     def process(self, context: Dict[str, Any]) -> AgentResponse:
         """Process solution design request synchronously"""
         try:
-            discovery_data = None
-            raw_output = None
-            
-            if 'input_data' in context:
-                discovery_data = context['input_data'].get('discovery_data', {})
-            elif 'discovery_data' in context:
-                discovery_data = context['discovery_data']
-
-            if hasattr(discovery_data, 'raw_output'):
-                raw_output = discovery_data.raw_output
-            elif isinstance(discovery_data, dict):
-                raw_output = discovery_data.get('raw_output')
-
-            logger.info("solution_designer.process_start", 
-                    has_discovery=bool(raw_output),
-                    has_context=bool(context))
-
-            if not raw_output:
+            # Validate required inputs
+            if not self._validate_input(context):
                 return AgentResponse(
                     success=False,
                     data={},
-                    error="Missing discovery data - cannot analyze code"
+                    error="Missing required discovery data or intent"
                 )
 
             # Use parent's synchronous process method
@@ -109,6 +91,27 @@ class SolutionDesigner(BaseAgent):
         except Exception as e:
             logger.error("solution_designer.process_failed", error=str(e))
             return AgentResponse(success=False, data={}, error=str(e))
+
+    def _validate_input(self, context: Dict[str, Any]) -> bool:
+        """Validate required input data is present"""
+        discovery_data = None
+        raw_output = None
+            
+        if 'input_data' in context:
+            discovery_data = context['input_data'].get('discovery_data', {})
+        elif 'discovery_data' in context:
+            discovery_data = context['discovery_data']
+
+        if hasattr(discovery_data, 'raw_output'):
+            raw_output = discovery_data.raw_output
+        elif isinstance(discovery_data, dict):
+            raw_output = discovery_data.get('raw_output')
+
+        logger.info("solution_designer.validate_input", 
+                has_discovery=bool(raw_output),
+                has_context=bool(context))
+
+        return bool(raw_output)
 
     def _process_llm_response(self, content: str, raw_response: Any) -> Dict[str, Any]:
         """Process LLM response into standard format"""

@@ -173,6 +173,12 @@ class IntentAgent:
             "success": result.success,
             "error": result.error
         }
+    
+    """
+    Intent agent implementation for coordinating the refactoring workflow.
+    Changes focused on solution design stage.
+    Path: src/agents/intent_agent.py
+    """
 
     def _execute_solution_design(self) -> Dict[str, Any]:
         """Execute solution design stage"""
@@ -195,16 +201,10 @@ class IntentAgent:
                         discovery_data=formatted_input["input_data"]["discovery_data"],
                         intent=formatted_input["input_data"]["intent"])
 
-            # Get result and ensure it's not a coroutine
+            # Get result using synchronous interface
             result = self.solution_designer.process(formatted_input)
-            if hasattr(result, '_asyncio_future_blocking'):
-                # This indicates it's a coroutine that needs to be awaited
-                return {
-                    "success": False,
-                    "error": "Async result received - expected sync"
-                }
 
-            # Update state with the concrete result
+            # Update state with result
             self.current_state.update_agent_state("solution_design", result)
 
             return {
