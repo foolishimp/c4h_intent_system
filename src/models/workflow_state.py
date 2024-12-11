@@ -163,7 +163,7 @@ class WorkflowState:
         except Exception as e:
             logger.error(f"workflow.{agent}_update_failed", error=str(e))
             raise
-
+    
     def to_dict(self) -> Dict[str, Any]:
         """Convert workflow state to dictionary"""
         return {
@@ -178,9 +178,10 @@ class WorkflowState:
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "duration": self.duration,
+            # Fixed field names to match class attributes
             "discovery_data": self.discovery_data.__dict__,
-            "solution_data": self.solution_design_data.__dict__,
-            "implementation_data": self.implementation_data.__dict__,
-            "validation_data": self.validation_data.__dict__,
+            "solution_design_data": self.solution_design_data.__dict__,
+            "coder_data": self.coder_data.__dict__,
+            "assurance_data": self.assurance_data.__dict__,
             "backup_path": str(self.backup_path) if self.backup_path else None
         }

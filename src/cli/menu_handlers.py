@@ -27,13 +27,12 @@ class MenuHandlers:
     def __init__(self, menu: 'ConsoleMenu'):
         self.menu = menu
         self.console = menu.console
-        # Initialize display handlers
+        # Initialize display handlers with updated names
         self.displays = {
             'discovery': DiscoveryDisplay(self.console),
             'solution_design': SolutionDisplay(self.console),
-            'coder': ImplementationDisplay(self.console),
-            'assurance': ValidationDisplay(self.console),
-            'workflow': WorkflowDisplay(self.console)
+            'coder': ImplementationDisplay(self.console),  # Updated key
+            'assurance': ValidationDisplay(self.console)   # Updated key
         }
 
     def handle_menu_choice(self, choice: str) -> None:
@@ -159,12 +158,12 @@ class MenuHandlers:
                 _ = readchar.readchar()
                 return
 
-            # Map stage to data key
+            # Map view options to state data fields
             stage_map = {
                 'discovery': 'discovery_data',
                 'solution': 'solution_design_data',
-                'implementation': 'implementation_data', 
-                'validation': 'validation_data'
+                'implementation': 'coder_data',  # Updated mapping
+                'validation': 'assurance_data'   # Updated mapping
             }
 
             data_key = stage_map.get(stage)
@@ -172,7 +171,7 @@ class MenuHandlers:
                 self.console.print(f"[yellow]Unknown stage: {stage}[/]")
                 return
 
-            # Get stage data
+            # Get stage data using updated field names
             data = getattr(self.menu.intent_agent.current_state, data_key, None)
             
             if not data:
@@ -181,9 +180,16 @@ class MenuHandlers:
                 _ = readchar.readchar()
                 return
 
-            # Clear screen and show data
+            # Clear screen and show data using correct display handler
             self.console.clear()
-            stage_display = self.displays.get(stage_map[stage].replace('_data', ''))
+            # Map stage to display handler keys
+            display_map = {
+                'discovery': 'discovery',
+                'solution': 'solution_design',
+                'implementation': 'coder',  # Updated mapping
+                'validation': 'assurance'   # Updated mapping
+            }
+            stage_display = self.displays.get(display_map[stage])
             if stage_display:
                 stage_display.display_data(data)
             else:

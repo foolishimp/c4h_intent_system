@@ -27,7 +27,7 @@ class ImplementationDisplay(BaseDisplay):
         table.add_column("Status", justify="right")
         table.add_column("Count", justify="right")
         
-        success_count = sum(1 for c in changes if c.get('status') == 'success')
+        success_count = sum(1 for c in changes if c.get('success', False))
         failed_count = len(changes) - success_count
         
         table.add_row("[green]Success[/]", str(success_count))
@@ -38,21 +38,24 @@ class ImplementationDisplay(BaseDisplay):
     def _show_detailed_changes(self, changes: List[Dict[str, Any]]) -> None:
         """Display detailed change information"""
         for i, change in enumerate(changes, 1):
-            status_color = "green" if change.get('status') == 'success' else "red"
+            status_color = "green" if change.get('success', False) else "red"
             
             panel_content = [
-                f"[bold]File:[/] {change.get('file_path')}",
-                f"[bold]Status:[/] [{status_color}]{change.get('status')}[/]"
+                f"[bold]File:[/] {change.get('file_path', 'Unknown')}",
+                f"[bold]Status:[/] [{status_color}]{change.get('status', 'Unknown')}[/]"
             ]
             
+            # Restore action display - important for showing change type
+            if 'action' in change:
+                panel_content.append(f"[bold]Action:[/] {change.get('action')}")
+            elif 'type' in change:  # Fallback to type if action not present
+                panel_content.append(f"[bold]Action:[/] {change.get('type')}")
+                
             if 'backup_path' in change:
                 panel_content.append(f"[bold]Backup:[/] {change.get('backup_path')}")
                 
             if 'error' in change:
                 panel_content.append(f"[red]Error: {change.get('error')}[/]")
-            
-            if 'action' in change:
-                panel_content.append(f"[bold]Action:[/] {change.get('action')}")
             
             self.console.print(Panel(
                 "\n".join(panel_content),
