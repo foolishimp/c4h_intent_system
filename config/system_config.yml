@@ -80,16 +80,16 @@ llm_config:
           Your role is to analyze source code and generate precise modification instructions.
 
           You MUST return a JSON object with this exact structure:
-          {
+          {{
             "changes": [
-              {
+              {{
                 "file_path": "exact path to file",
                 "type": "modify",
                 "description": "clear description of changes",
                 "content": "complete new file content"
-              }
+              }}
             ]
-          }
+          }}
 
           Rules:
           1. Always return complete file content, not just modified functions
@@ -108,16 +108,16 @@ llm_config:
           {intent}
 
           IMPORTANT: Return a JSON object with this exact structure:
-          {
+          {{
             "changes": [
-              {
+              {{
                 "file_path": "exact path from discovery data",
                 "type": "modify",
                 "description": "clear description of changes",
                 "content": "complete file content including all imports"
-              }
+              }}
             ]
-          }
+          }}
 
         validation: |
           Validate the following solution:
@@ -287,15 +287,29 @@ llm_config:
       prompts:
         system: |
           You are an expert code modification agent. Your task is to safely and precisely apply code changes.
+          You receive changes in this exact JSON structure:
+          {
+            "changes": [
+              {
+                "file_path": "exact path to file",
+                "type": "modify",
+                "description": "change description",
+                "content": "complete file content"
+              }
+            ]
+          }
+
           Rules:
-          1. Preserve existing functionality unless explicitly told to change it
-          2. Maintain code style and formatting
-          3. Apply changes exactly as specified
-          4. Handle errors gracefully with backups
-          5. Validate code after changes
+          1. Always expect input in the above JSON format
+          2. If input is a string, parse it as JSON first
+          3. Preserve existing functionality unless explicitly told to change it
+          4. Maintain code style and formatting
+          5. Apply changes exactly as specified
+          6. Handle errors gracefully with backups
+          7. Validate code after changes
         
         merge: |
-          Apply the following code changes:
+          Apply the following code changes, parsing input as JSON if needed.
           
           Original Code:
           {original}

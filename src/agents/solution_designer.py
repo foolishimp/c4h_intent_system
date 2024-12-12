@@ -20,49 +20,63 @@ class SolutionDesigner(BaseAgent):
         super().__init__(config=config)
         
         # Extract config using locate_config pattern
-        solution_config = locate_config(self.config or {}, self._get_agent_name())
+        self.solution_config = locate_config(self.config or {}, self._get_agent_name())
         
         logger.info("solution_designer.initialized", 
-                   config_keys=list(solution_config.keys()) if solution_config else None)
+                   config_keys=list(self.solution_config.keys()) if self.solution_config else None)
 
     def _get_agent_name(self) -> str:
         """Get agent name for config lookup"""
         return "solution_designer"
 
-    def _format_request(self, context: Dict[str, Any]) -> str:
-        """Format request using configured prompt template"""
+    def _extract_context_data(self, context: Dict[str, Any]) -> Dict[str, Any]:
+        """Extract consistent data whether from nested or flat context"""
         try:
-            template = self._get_prompt('solution')
-            
-            # Extract discovery data and intent with safe fallbacks
-            raw_output = None
-            intent_desc = None
-            
             if 'input_data' in context:
                 input_data = context['input_data']
                 discovery_data = input_data.get('discovery_data', {})
                 raw_output = discovery_data.get('raw_output', '')
                 intent = input_data.get('intent', {})
-                intent_desc = intent.get('description', '')
-            
-            # Direct access fallbacks
-            if not raw_output and 'discovery_data' in context:
-                raw_output = context['discovery_data'].get('raw_output', '')
-            if not intent_desc and 'intent' in context:
-                intent_desc = context['intent'].get('description', '')
-            
-            iteration = context.get('iteration', 0)
+                intent_desc = intent.get('description', '') if isinstance(intent, dict) else str(intent)
+            else:
+                discovery_data = context.get('discovery_data', {})
+                raw_output = discovery_data.get('raw_output', '')
+                intent = context.get('intent', {})
+                intent_desc = intent.get('description', '') if isinstance(intent, dict) else str(intent)
+
+            return {
+                'source_code': raw_output,
+                'intent': intent_desc,
+                'iteration': context.get('iteration', 0)
+            }
+
+        except Exception as e:
+            logger.error("solution_designer.context_extraction_failed", error=str(e))
+            return {}
+
+    def _format_request(self, context: Dict[str, Any]) -> str:
+        """Format request using configured prompt template"""
+        try:
+            # Extract data consistently
+            data = self._extract_context_data(context)
             
             logger.debug("solution_designer.format_request",
-                        intent=intent_desc,
-                        has_discovery=bool(raw_output),
-                        iteration=iteration)
+                        intent=data.get('intent'),
+                        has_discovery=bool(data.get('source_code')),
+                        iteration=data.get('iteration'))
             
-            return template.format(
-                intent=intent_desc,
-                source_code=raw_output,
-                iteration=iteration
-            )
+            # First try template formatting
+            try:
+                template = self._get_prompt('solution')
+                return template.format(**data)
+            except Exception as template_error:
+                logger.warning("solution_designer.template_format_failed", 
+                             error=str(template_error))
+                
+                # Fall back to JSON format for testharness compatibility
+                if isinstance(context.get('input_data'), dict):
+                    return json.dumps(context['input_data'])
+                return str(context)
 
         except Exception as e:
             logger.error("solution_designer.format_error", error=str(e))

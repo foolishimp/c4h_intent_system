@@ -224,12 +224,15 @@ class IntentAgent:
 
         try:
             solution_data = self.current_state.solution_design_data
-            raw_output = solution_data.get('raw_output')
+            raw_output = solution_data.raw_output
+
+            # Extract actual content from ModelResponse if needed
             input_data = raw_output.choices[0].message.content if hasattr(raw_output, 'choices') else raw_output
 
             logger.info("code_changes.starting", 
-                    input_type=str(type(input_data)))
+                    input_type=type(input_data).__name__)
 
+            # Pass the content directly to coder
             result = self.coder.process({
                 'input_data': input_data
             })
