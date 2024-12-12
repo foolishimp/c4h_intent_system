@@ -308,6 +308,13 @@ class BaseAgent:
             logger.debug("agent.processing_response",
                         content_length=len(content) if content else 0,
                         response_type=type(raw_response).__name__)
+            
+            # Add raw response logging
+            logger.info("llm.raw_response",
+                    content=content,
+                    response=str(raw_response),
+                    model=self.model,
+                    provider=str(self.provider))
 
         return {
             "response": content,

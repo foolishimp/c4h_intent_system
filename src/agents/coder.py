@@ -90,13 +90,6 @@ class Coder(BaseAgent):
                 if not input_data:
                     raise ValueError("No input data provided")
 
-            # Convert to list if single item
-            input_items = [input_data] if isinstance(input_data, dict) else input_data
-
-            logger.debug("coder.input_prepared",
-                        data_type=type(input_items).__name__,
-                        items_count=len(input_items))
-
             # Configure iterator with extraction settings
             extract_config = ExtractConfig(
                 instruction="""Extract all code change actions from the input.
@@ -106,7 +99,7 @@ class Coder(BaseAgent):
             )
             
             # Configure iterator with prepared data
-            self.iterator.configure(input_items, extract_config)
+            self.iterator.configure(input_data, extract_config)
             logger.info("coder.iterator_configured")
 
             # Process each change using iterator
@@ -117,15 +110,6 @@ class Coder(BaseAgent):
                 if not isinstance(change, dict):
                     logger.warning("coder.invalid_change_format",
                                 change_type=type(change).__name__)
-                    continue
-
-                # Validate minimum required fields
-                required_fields = ['file_path', 'type']
-                if not all(field in change for field in required_fields):
-                    logger.warning("coder.missing_required_fields",
-                                change=change,
-                                required=required_fields)
-                    self.operation_metrics.error_count += 1
                     continue
 
                 # Process the change
@@ -150,65 +134,34 @@ class Coder(BaseAgent):
 
                 changes.append(result)
 
-            # Calculate overall success and metrics
-            success = self.operation_metrics.successful_changes > 0
-            self.operation_metrics.end_time = datetime.utcnow().isoformat()
-            self.operation_metrics.processing_time = (
-                datetime.fromisoformat(self.operation_metrics.end_time) -
-                datetime.fromisoformat(self.operation_metrics.start_time)
-            ).total_seconds()
+            # Calculate overall success
+            success = any(result.success for result in changes)
 
-            if not success:
-                logger.error("coder.all_changes_failed",
-                        total_changes=self.operation_metrics.total_changes,
-                        error_count=self.operation_metrics.error_count)
-
-            # Update base metrics
-            self._update_metrics(
-                self.operation_metrics.processing_time,
-                success,
-                None if success else "All changes failed"
-            )
-
+            # Return response with all results 
             return AgentResponse(
                 success=success,
                 data={
                     "changes": [
                         {
                             "file": str(result.path),
-                            "type": change.get('type'),
-                            "description": change.get('description'),
                             "success": result.success,
                             "error": result.error,
                             "backup": str(result.backup_path) if result.backup_path else None
                         }
-                        for result, change in zip(changes, input_items)
+                        for result in changes
                     ],
-                    "metrics": self.operation_metrics.__dict__,
-                    "raw_output": context.get('raw_output', '')
+                    "metrics": self.operation_metrics.__dict__
                 },
-                error=None if success else "All changes failed"
+                error=None if success else "No changes were successful"
             )
 
         except Exception as e:
             logger.error("coder.process_failed", error=str(e))
-            self.operation_metrics.end_time = datetime.utcnow().isoformat()
-            self.operation_metrics.error_count += 1
-            
-            # Update base metrics
-            self._update_metrics(
-                (datetime.fromisoformat(self.operation_metrics.end_time) -
-                datetime.fromisoformat(self.operation_metrics.start_time)).total_seconds(),
-                False,
-                str(e)
-            )
-            
             return AgentResponse(
                 success=False,
                 data={
                     "changes": [],
-                    "metrics": self.operation_metrics.__dict__,
-                    "raw_output": context.get('raw_output', '')
+                    "metrics": self.operation_metrics.__dict__
                 },
                 error=str(e)
             )

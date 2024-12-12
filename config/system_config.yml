@@ -55,8 +55,8 @@ providers:
     env_var: "GEMINI_API_KEY"
 
 llm_config:
-  default_provider: "openai"
-  default_model: "gpt-4o-mini"
+  default_provider: "anthropic"
+  default_model: "claude-3-opus-20240229"
   agents:
     discovery:
       default_provider: "anthropic"
@@ -73,6 +73,7 @@ llm_config:
 
     solution_designer:
       provider: "anthropic"
+      model: "claude-3-opus-20240229"
       temperature: 0
       prompts:
         system: |
@@ -132,7 +133,8 @@ llm_config:
           5. Content includes complete files
 
     semantic_extract:
-      provider: "openai"
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
       temperature: 0
       prompts:
         system: |
@@ -166,7 +168,8 @@ llm_config:
           Do not add any processing or validation beyond what is specifically requested.
 
     semantic_fast_extractor:
-      provider: "openai"
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
       temperature: 0
       prompts:
         system: |
@@ -204,8 +207,8 @@ llm_config:
           CRITICAL: Return raw JSON only. Do not wrap in code blocks or markdown.
 
     semantic_slow_extractor:
-      provider: "openai"
-      model: "gpt-4o"
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
       temperature: 0
       prompts:
         system: |
@@ -245,7 +248,8 @@ llm_config:
           5. Keep changes in order of appearance
 
     semantic_merge:
-      provider: "openai"
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
       temperature: 0
       merge_config:
         style: "smart"
@@ -253,13 +257,16 @@ llm_config:
         allow_partial: false
       prompts:
         system: |
-          You are a precise code merger. When given code changes:
+          You are a precise expert merger. When given merge requirements:
 
-          For existing files with original code:
-          1. Preserve all functionality unless explicitly changed
-          2. Maintain code style and formatting
-          3. Handle conflicts intelligently
-          4. Never lose or corrupt code
+          For existing files with original code or content:
+          1. Locate original code or content from either 'original' or 'original_code' ' or some term that means original content) parameter
+          2. Locate changes from either 'changes' or 'content' parameter
+          3. Preserve all functionality unless explicitly changed
+          4. Maintain code & content style and formatting
+          5. Handle conflicts intelligently
+          6. Never lose or corrupt code
+          7. If no original code found, treat changes as new content
 
           For new files or content without original code:
           1. Use the provided content exactly as given
@@ -268,21 +275,26 @@ llm_config:
           4. Return content as-is
 
         merge: |
-          Process the following code merge:
+          Process the following code merge, handling variations in parameter names.
           
-          Original Code:
+          Original Code (look for either 'original' or 'original_code' or some term that means original code):
           {original}
           
-          Changes to Apply:
+          Changes to Apply (look for either 'changes' or 'content'):
           {changes}
           
           Merge Style: {style}
           Preserve Formatting: {preserve_formatting}
           
-          Return ONLY the final merged code, no explanations or markup.
+          CRITICAL:
+          1. Return ONLY the final merged data
+          2. No explanations or markup
+          3. If original data not found, return changes as-is
+          4. Never return "No code provided" - use available content
 
     coder:
-      provider: "openai"
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
       temperature: 0
       prompts:
         system: |
