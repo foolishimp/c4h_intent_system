@@ -1,5 +1,5 @@
 project:
-  default_path: "tests/test_projects/project1"  # Path to your project
+  default_path: "tests/test_projects"  # Path to your project
   workspace_root: "workspaces"
 
 runtime:
