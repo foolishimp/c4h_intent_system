@@ -48,4 +48,3 @@ instruction: |
   }
 
 format: "json"
-merge_method: "smart"

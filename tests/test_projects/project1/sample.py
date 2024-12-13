@@ -1,1 +1,1 @@
-No code provided to merge.
+No content provided to merge or return.

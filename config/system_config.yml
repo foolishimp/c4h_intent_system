@@ -252,7 +252,6 @@ llm_config:
       model: "claude-3-opus-20240229"
       temperature: 0
       merge_config:
-        style: "smart"
         preserve_formatting: true
         allow_partial: false
       prompts:
@@ -260,8 +259,8 @@ llm_config:
           You are a precise expert merger. When given merge requirements:
 
           For existing files with original code or content:
-          1. Locate original code or content from either 'original' or 'original_code' ' or some term that means original content) parameter
-          2. Locate changes from either 'changes' or 'content' parameter
+          1. You will receive original content and a modification action
+          2. The action contains new content and description of changes
           3. Preserve all functionality unless explicitly changed
           4. Maintain code & content style and formatting
           5. Handle conflicts intelligently
@@ -283,7 +282,6 @@ llm_config:
           Changes to Apply (look for either 'changes' or 'content'):
           {changes}
           
-          Merge Style: {style}
           Preserve Formatting: {preserve_formatting}
           
           CRITICAL:
