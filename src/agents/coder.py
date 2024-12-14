@@ -1,5 +1,5 @@
 """
-Primary coder agent implementation for processing code changes.
+Primary coder agent implementation using semantic extraction.
 Path: src/agents/coder.py
 """
 
@@ -7,7 +7,6 @@ from typing import Dict, Any, List, Optional
 from dataclasses import dataclass
 import structlog
 from datetime import datetime
-import json
 from pathlib import Path
 
 from agents.base import BaseAgent, AgentResponse
@@ -59,65 +58,36 @@ class Coder(BaseAgent):
         self.operation_metrics = CoderMetrics()
         
         logger.info("coder.initialized",
-                   backup_path=str(backup_path),
-                   config=json.dumps(coder_config, indent=2) if coder_config else None)
+                   backup_path=str(backup_path))
 
     def _get_agent_name(self) -> str:
-        """Get agent name for config lookup"""
         return "coder"
 
-    """
-    Primary coder agent implementation for processing code changes.
-    Path: src/agents/coder.py
-    """
-
     def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process code changes using semantic iterator"""
-        logger.info("coder.process_start", context=json.dumps(context, indent=2))
+        """Process code changes using semantic extraction"""
+        logger.info("coder.process_start", context_keys=list(context.keys()))
         self.operation_metrics = CoderMetrics(
             start_time=datetime.utcnow().isoformat()
         )
         changes: List[AssetResult] = []
 
         try:
-            # Handle different input formats:
-            # 1. Direct content in context
-            # 2. Nested in input_data
-            if all(k in context for k in ['content', 'file_path', 'type']):
-                input_data = context
-            else:
-                input_data = context.get('input_data')
-                if not input_data:
-                    raise ValueError("No input data provided")
-
-            # Configure iterator with extraction settings
-            extract_config = ExtractConfig(
-                instruction="""Extract all code change actions from the input.
-                            Look for file_path, type, content/diff, and description.
-                            Handle any input format including raw LLM responses.""",
-                format="json"
+            # Configure iterator with raw context - let LLM handle interpretation
+            self.iterator.configure(
+                context,
+                ExtractConfig(
+                    instruction=self._get_prompt('system'),
+                    format="json"
+                )
             )
             
-            # Configure iterator with prepared data
-            self.iterator.configure(input_data, extract_config)
-            logger.info("coder.iterator_configured")
-
-            # Process each change using iterator
-            for change in self.iterator:
-                logger.debug("coder.extracted_change", 
-                        change=json.dumps(change, indent=2))
-
-                if not isinstance(change, dict):
-                    logger.warning("coder.invalid_change_format",
-                                change_type=type(change).__name__)
+            # Process each action extracted by LLM
+            for action in self.iterator:
+                if not action:
                     continue
 
-                # Process the change
-                logger.info("coder.processing_change",
-                        file_path=change.get('file_path'),
-                        change_type=change.get('type'))
-
-                result = self.asset_manager.process_action(change)
+                # Process the action
+                result = self.asset_manager.process_action(action)
                 
                 # Update metrics
                 self.operation_metrics.total_changes += 1
@@ -127,17 +97,17 @@ class Coder(BaseAgent):
                     self.operation_metrics.failed_changes += 1
                     self.operation_metrics.error_count += 1
 
-                logger.info("coder.change_result",
+                logger.info("coder.action_result",
                         success=result.success,
                         file_path=str(result.path),
                         error=result.error if not result.success else None)
 
                 changes.append(result)
 
-            # Calculate overall success
-            success = any(result.success for result in changes)
+            success = bool(changes) and any(result.success for result in changes)
+            
+            self.operation_metrics.end_time = datetime.utcnow().isoformat()
 
-            # Return response with all results 
             return AgentResponse(
                 success=success,
                 data={

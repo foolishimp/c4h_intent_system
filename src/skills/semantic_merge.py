@@ -43,35 +43,23 @@ class SemanticMerge(BaseAgent):
         """Format merge request using config template"""
         merge_template = self._get_prompt('merge')
         
-        # Extract content from context or action
-        original_content = context.get('original') or context.get('original_code', '')
-        
-        # Extract the action
-        action = context.get('action', {})
-        changes = action.get('content', '')
-        description = action.get('description', '')
-        
-        logger.debug("semantic_merge.format_request",
-            original_length=len(original_content),
-            changes_length=len(changes),
-            description=description,
-            preserve_formatting=self.preserve_formatting
-        )
-        
         return merge_template.format(
-            original=original_content,
-            changes=changes,
-            description=description,
+            original=context.get('original_code', ''),
+            changes=context.get('changes', ''),
             preserve_formatting=str(self.preserve_formatting).lower()
         )
 
-    def merge(self, original: str, action: Dict[str, Any]) -> MergeResult:
+    def merge(self, original: str, changes: str) -> MergeResult:
         """Process a merge operation"""
         try:
+            logger.debug("semantic_merge.format_request",
+                        original_length=len(original),
+                        changes_length=len(changes),
+                        preserve_formatting=self.preserve_formatting)
+                        
             result = self.process({
-                'original': original,
-                'action': action,
-                'preserve_formatting': self.preserve_formatting
+                'original_code': original,
+                'changes': changes
             })
 
             if not result.success:
@@ -99,3 +87,13 @@ class SemanticMerge(BaseAgent):
                 content="",
                 error=str(e)
             )
+
+    def _process_response(self, content: str, raw_response: Any) -> Dict[str, Any]:
+        """Process LLM response into standard format"""
+        logger.debug("merge.processing_response", 
+                    content_length=len(content) if content else 0)
+
+        return {
+            "response": content,
+            "raw_output": raw_response 
+        }

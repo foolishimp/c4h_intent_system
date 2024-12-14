@@ -43,7 +43,7 @@ test_output/
 
 # Environment variables
 .env
-tests/test_project
+tests/test_projects
 backup_txt/
 .cache/
 .DS_Store/
@@ -53,3 +53,7 @@ tests/.DS_Store
 *.txt
 !requirements.txt
 *.old
+tests/test_projects/project1/sample.py
+tests/test_projects/project2/main.py
+tests/test_projects/project2/utils.py
+tests/test_projects/project3/test_java.java
