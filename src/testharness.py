@@ -3,7 +3,7 @@ Generic test harness for running agent classes with configuration.
 Path: src/testharness.py
 """
 
-from typing import List, Dict, Any, Optional, Type
+from typing import List, Dict, Any, Optional
 import structlog
 from enum import Enum
 import logging.config
@@ -11,12 +11,12 @@ from dataclasses import dataclass
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
-import json
+
 from pathlib import Path
 import argparse
 import yaml  # Add this import
 
-from agents.base import BaseAgent, LLMProvider, LogDetail
+from agents.base import BaseAgent, LogDetail
 from agents.coder import Coder
 from skills.semantic_iterator import SemanticIterator
 from skills.shared.types import ExtractConfig
