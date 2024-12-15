@@ -73,64 +73,63 @@ llm_config:
 
     solution_designer:
       provider: "anthropic"
-      model: "claude-3-opus-20240229"
+      model: "claude-3-5-sonnet-20241022"
       temperature: 0
       prompts:
         system: |
-          You are an expert code modification planner.
-          Your role is to analyze source code and generate precise modification instructions.
-
-          You MUST return a JSON object with this exact structure:
-          {{
+          You are a code modification planner that returns ONLY git-style diffs in JSON format.
+          Return ONLY a JSON object with this structure, no other text:
+          {
             "changes": [
-              {{
-                "file_path": "exact path to file",
-                "type": "modify",
-                "description": "clear description of changes",
-                "content": "complete new file content"
-              }}
+              {
+                "file_path": "path/to/file",
+                "type": "create|modify|delete",
+                "description": "one line description",
+                "diff": "git unified diff"
+              }
             ]
-          }}
+          }
 
-          Rules:
-          1. Always return complete file content, not just modified functions
-          2. Include all imports and dependencies in the content
-          3. Use "modify" for the type field when updating existing files
-          4. Keep existing functionality unless explicitly told to change it
-          5. Return valid JSON matching the exact schema above
+          FORMAT REQUIREMENTS FOR EACH TYPE:
+
+          1. NEW FILES (type: "create"):
+          --- /dev/null
+          +++ b/new_file.py
+          @@ -0,0 +1,3 @@
+          +new content here
+
+          2. DELETE FILES (type: "delete"):
+          --- a/old_file.py
+          +++ /dev/null
+          @@ -1,3 +0,0 @@
+          -content to remove
+
+          3. MODIFY FILES (type: "modify"):
+          --- a/existing_file.py
+          +++ b/existing_file.py
+          @@ -1,3 +1,4 @@
+           context line
+          -removed line
+          +added line
+           context line
+
+          RULES:
+          - Use /dev/null for create/delete operations
+          - Include 3 lines of context for modifications
+          - Group related changes into chunks with @@ markers
+          - Include imports in first chunk if needed
+          - Return ONLY the JSON object, no explanations
+          - Ensure all paths use forward slashes
+          - Keep descriptions short and clear
 
         solution: |
-          Analyze the code and create modifications based on the requirements.
-
           Source Code:
           {source_code}
 
           Intent:
           {intent}
 
-          IMPORTANT: Return a JSON object with this exact structure:
-          {{
-            "changes": [
-              {{
-                "file_path": "exact path from discovery data",
-                "type": "modify",
-                "description": "clear description of changes",
-                "content": "complete file content including all imports"
-              }}
-            ]
-          }}
-
-        validation: |
-          Validate the following solution:
-          - Original: {original}
-          - Changes: {changes}
-          
-          Verify:
-          1. Changes preserve existing functionality
-          2. All dependencies are included
-          3. Changes are complete and self-contained
-          4. File paths are correct
-          5. Content includes complete files
+          Return ONLY the changes JSON, no explanations.
 
     semantic_extract:
       provider: "anthropic"

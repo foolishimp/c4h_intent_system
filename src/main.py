@@ -154,6 +154,13 @@ def main() -> None:
             config_path=args.config
         )
         
+        # Log startup information
+        logger.info("startup", 
+                    args=vars(args),
+                    cli_config=vars(cli_config),
+                    main_path=str(Path(__file__).resolve()),
+                    cwd=str(Path.cwd()))
+        
         # Run synchronously since menu is sync
         result = process_refactoring(cli_config)
         

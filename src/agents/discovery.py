@@ -3,7 +3,7 @@ Discovery agent implementation.
 Path: src/agents/discovery.py
 """
 
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
 import structlog
 import subprocess
 import sys
@@ -14,6 +14,14 @@ from .base import BaseAgent, AgentResponse
 from config import locate_config
 
 logger = structlog.get_logger()
+
+@dataclass
+class TartxtConfig:
+    """Configuration for tartxt discovery"""
+    input_paths: List[str] = field(default_factory=list)
+    exclusions: List[str] = field(default_factory=list)
+    output_type: str = "stdout"
+    output_file: Optional[str] = None
 
 @dataclass
 class DiscoveryResult:
@@ -40,8 +48,12 @@ class DiscoveryAgent(BaseAgent):
         self.workspace_root = Path(workspace_root)
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         
+        # Get tartxt config
+        self.tartxt_config = TartxtConfig(**discovery_config.get('tartxt_config', {}))
+        
         logger.info("discovery.initialized",
-                   workspace_root=str(self.workspace_root))
+                   workspace_root=str(self.workspace_root),
+                   tartxt_config=self.tartxt_config)
 
     def _get_agent_name(self) -> str:
         """Get agent name for config lookup."""
@@ -71,9 +83,23 @@ class DiscoveryAgent(BaseAgent):
     def _run_tartxt(self, project_path: str) -> DiscoveryResult:
         """Run tartxt discovery on project"""
         try:
-            # Run tartxt with stdout capture
+            # Build tartxt command
+            cmd = [sys.executable, "src/skills/tartxt.py"]
+            
+            for path in self.tartxt_config.input_paths:
+                cmd.extend(['-i', str(Path(project_path) / path)])
+                
+            for exclude in self.tartxt_config.exclusions:
+                cmd.extend(['-x', exclude])
+                
+            if self.tartxt_config.output_type == "file":
+                cmd.extend(['-f', self.tartxt_config.output_file])
+            else:
+                cmd.append('-o')
+
+            # Run tartxt with stdout capture  
             result = subprocess.run(
-                [sys.executable, "src/skills/tartxt.py", "-o", str(project_path)],
+                cmd,
                 capture_output=True,
                 text=True,
                 check=True
