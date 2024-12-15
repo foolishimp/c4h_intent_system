@@ -8,7 +8,7 @@ from dataclasses import dataclass
 import structlog
 from datetime import datetime
 from pathlib import Path
-
+import json
 from agents.base import BaseAgent, AgentResponse
 from skills.semantic_merge import SemanticMerge
 from skills.semantic_iterator import SemanticIterator
@@ -66,72 +66,55 @@ class Coder(BaseAgent):
     def process(self, context: Dict[str, Any]) -> AgentResponse:
         """Process code changes using semantic extraction"""
         logger.info("coder.process_start", context_keys=list(context.keys()))
-        self.operation_metrics = CoderMetrics(
-            start_time=datetime.utcnow().isoformat()
-        )
-        changes: List[AssetResult] = []
+        logger.debug("coder.input_data", data=context.get('input_data'))
 
         try:
-            # Configure iterator with raw context - let LLM handle interpretation
-            self.iterator.configure(
-                context,
-                ExtractConfig(
-                    instruction=self._get_prompt('system'),
-                    format="json"
-                )
-            )
-            
-            # Process each action extracted by LLM
-            for action in self.iterator:
-                if not action:
-                    continue
-
-                # Process the action
-                result = self.asset_manager.process_action(action)
+            # Parse input - could be string or dict
+            if isinstance(context.get('input_data'), str):
+                data = json.loads(context['input_data'])
+            else:
+                data = context.get('input_data', {})
                 
-                # Update metrics
-                self.operation_metrics.total_changes += 1
-                if result.success:
-                    self.operation_metrics.successful_changes += 1
-                else:
-                    self.operation_metrics.failed_changes += 1
-                    self.operation_metrics.error_count += 1
-
-                logger.info("coder.action_result",
-                        success=result.success,
-                        file_path=str(result.path),
-                        error=result.error if not result.success else None)
-
-                changes.append(result)
-
-            success = bool(changes) and any(result.success for result in changes)
+            # Get the array of changes
+            changes = data.get('changes', [])
+            logger.debug("coder.processing_changes", count=len(changes))
             
-            self.operation_metrics.end_time = datetime.utcnow().isoformat()
+            # Track results
+            results = []
+            
+            # Process each change in the array
+            for change in changes:
+                logger.debug("coder.processing_change", change=change)
+                result = self.asset_manager.process_action(change)
+                
+                if result.success:
+                    logger.info("coder.change_applied",
+                            file=str(result.path))
+                else:
+                    logger.error("coder.change_failed", 
+                            file=str(result.path),
+                            error=result.error)
+                
+                results.append(result)
 
+            success = bool(results) and any(r.success for r in results)
+            
             return AgentResponse(
                 success=success,
                 data={
                     "changes": [
                         {
-                            "file": str(result.path),
-                            "success": result.success,
-                            "error": result.error,
-                            "backup": str(result.backup_path) if result.backup_path else None
+                            "file": str(r.path),
+                            "success": r.success,
+                            "error": r.error,
+                            "backup": str(r.backup_path) if r.backup_path else None
                         }
-                        for result in changes
+                        for r in results
                     ],
-                    "metrics": self.operation_metrics.__dict__
                 },
                 error=None if success else "No changes were successful"
             )
 
         except Exception as e:
             logger.error("coder.process_failed", error=str(e))
-            return AgentResponse(
-                success=False,
-                data={
-                    "changes": [],
-                    "metrics": self.operation_metrics.__dict__
-                },
-                error=str(e)
-            )
+            return AgentResponse(success=False, data={}, error=str(e))

@@ -255,39 +255,37 @@ llm_config:
         allow_partial: false
       prompts:
         system: |
-          You are a precise expert merger. When given merge requirements:
-
-          For existing files with original code or content:
-          1. You will receive original content and a modification action
-          2. The action contains new content and description of changes
-          3. Preserve all functionality unless explicitly changed
-          4. Maintain code & content style and formatting
-          5. Handle conflicts intelligently
-          6. Never lose or corrupt code
-          7. If no original code found, treat changes as new content
-
-          For new files or content without original code:
-          1. Use the provided content exactly as given
-          2. Keep all formatting and structure
-          3. Apply no additional changes
-          4. Return content as-is
+          You are a precise code merger that transforms git-style diffs into complete file contents.
+          
+          When given an original file and a diff:
+          1. Parse the diff carefully
+          2. Apply changes to the original code
+          3. Return the COMPLETE modified file content
+          4. Preserve original formatting and structure
+          5. Maintain all existing functionality
+          6. Return ONLY the file content, no additional text or explanations
 
         merge: |
-          Process the following code merge, handling variations in parameter names.
-          
-          Original Code (look for either 'original' or 'original_code' or some term that means original code):
+          You will receive a git-style unified diff representing code changes.
+          Your task is to apply these changes and return the COMPLETE new file content.
+
+          REQUIREMENTS:
+          1. Original Code Context:
           {original}
-          
-          Changes to Apply (look for either 'changes' or 'content'):
-          {changes}
-          
-          Preserve Formatting: {preserve_formatting}
-          
-          CRITICAL:
-          1. Return ONLY the final merged data
-          2. No explanations or markup
-          3. If original data not found, return changes as-is
-          4. Never return "No code provided" - use available content
+
+          2. Diff Patch to Apply:
+          {diff}
+
+          3. Preservation Rules:
+          - Keep original code structure intact
+          - Apply all modifications from the diff
+          - Maintain existing imports and docstrings
+          - Preserve original functionality
+
+          CRITICAL OUTPUT INSTRUCTIONS:
+          - Return ONLY the complete modified file content
+          - Do NOT include any diff markers, explanations, or additional text
+          - Ensure the returned content is a valid, runnable file
 
     coder:
       provider: "anthropic"

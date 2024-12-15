@@ -4,7 +4,7 @@ Path: src/skills/asset_manager.py
 """
 
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Union, List
 from dataclasses import dataclass
 import structlog
 import shutil
@@ -37,11 +37,24 @@ class AssetManager:
         # Get asset manager specific config
         asset_config = locate_config(self.config, "asset_manager")
         
+        # Get project root from config
+        self.project_root = Path(self.config.get('project', {}).get('default_path', '.')).resolve()
+        
         # Override instance settings with config if provided
         self.backup_enabled = asset_config.get('backup_enabled', backup_enabled)
-        self.backup_dir = backup_dir or Path(asset_config.get('backup_dir', 'workspaces/backups'))
         
-        if self.backup_dir:
+        # Handle backup directory with absolute paths
+        if backup_dir:
+            self.backup_dir = Path(backup_dir).resolve()
+        else:
+            backup_path = asset_config.get('backup_dir', 'workspaces/backups')
+            if Path(backup_path).is_absolute():
+                self.backup_dir = Path(backup_path)
+            else:
+                self.backup_dir = self.project_root / backup_path
+        
+        # Ensure backup directory exists
+        if self.backup_enabled:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
             
         # Create semantic merger with config if not provided
@@ -49,117 +62,118 @@ class AssetManager:
 
         logger.info("asset_manager.initialized",
                    backup_enabled=self.backup_enabled,
-                   backup_dir=str(self.backup_dir))
+                   backup_dir=str(self.backup_dir),
+                   project_root=str(self.project_root))
+
+    def _get_absolute_path(self, path: Union[str, Path]) -> Path:
+        """Convert path to absolute path relative to project root"""
+        path = Path(path)
+        if path.is_absolute():
+            return path
+        return (self.project_root / path).resolve()
+
+    def _get_relative_path(self, path: Union[str, Path], base: Optional[Path] = None) -> Path:
+        """Get path relative to base (defaults to project root)"""
+        path = Path(path)
+        base = base or self.project_root
+        
+        try:
+            return path.relative_to(base)
+        except ValueError:
+            # If path is not relative to base, return original
+            return path
 
     def _get_next_backup_path(self, path: Path) -> Path:
-        """Generate unique backup path with timestamp"""
+        """Generate unique backup path preserving directory structure"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        if self.backup_dir:
-            return self.backup_dir / f"{path.name}_{timestamp}"
-        return path.with_suffix(f".{timestamp}.bak")
+        
+        # Get path relative to project root
+        rel_path = self._get_relative_path(path)
+        
+        # Create backup path preserving directory structure
+        backup_path = self.backup_dir / rel_path.parent / f"{rel_path.stem}_{timestamp}{rel_path.suffix}"
+        
+        logger.debug("asset_manager.backup_path_generated",
+                    original=str(path),
+                    relative=str(rel_path),
+                    backup=str(backup_path))
+                    
+        return backup_path
 
     def process_action(self, action: Dict[str, Any]) -> AssetResult:
         """Process a single asset action using state matrix logic"""
         try:
-            # Extract file path and validate
-            file_path = action.get('file_path')
-            if not file_path:
-                raise ValueError("No file path provided in action")
+            # Extract file path using common keys
+            file_path = None
+            if isinstance(action, dict):
+                for key in ['file_path', 'path', 'file', 'filename']:
+                    if key in action and action[key]:
+                        file_path = str(action[key])
+                        break
             
-            path = Path(file_path)
-            logger.debug("asset.processing", path=str(path), action_type=action.get('type'))
+            if not file_path:
+                raise ValueError("No file path found in action")
+            
+            # Convert to absolute path
+            path = self._get_absolute_path(file_path)
+            logger.debug("asset.processing", 
+                        path=str(path),
+                        relative=str(self._get_relative_path(path)),
+                        action_type=action.get('type'))
 
             # Determine states
             file_exists = path.exists()
-            merge_required = (
-                action.get('type') == 'modify' or 
-                action.get('changes') is not None or
-                action.get('diff') is not None
-            )
             
             # Create backup if enabled and file exists
             backup_path = None
             if self.backup_enabled and file_exists:
                 backup_path = self._get_next_backup_path(path)
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, backup_path)
-                logger.info("asset.backup_created", path=str(backup_path))
+                logger.info("asset.backup_created", 
+                          original=str(path),
+                          backup=str(backup_path))
 
-            # Handle state matrix
-            if not merge_required:
-                logger.info("asset.no_merge_required", path=str(path))
-                return AssetResult(
-                    success=True,
-                    path=path,
-                    backup_path=backup_path,
-                    error=None
-                )
-                
-            # Ensure content is available for merge operations
-            content = action.get('content')
-            if not content and merge_required:
-                logger.error("asset.no_content_for_merge", path=str(path))
+            # Let semantic merge handle the content/diff/merge logic
+            merge_result = self.merger.process(action)
+            
+            if not merge_result.success:
                 return AssetResult(
                     success=False,
                     path=path,
-                    error="No content provided for merge operation"
+                    error=merge_result.error
+                )
+            
+            content = merge_result.data.get('response')
+            if not content:
+                return AssetResult(
+                    success=False,
+                    path=path, 
+                    error="No content after merge"
                 )
 
-            # Ensure parent directory exists for write operations
+            # Ensure parent directory exists
             path.parent.mkdir(parents=True, exist_ok=True)
 
-            try:
-                if file_exists:
-                    # Existing file + merge required = read & merge & write
-                    original = path.read_text()
-                    merge_result = self.merger.process({
-                        'original_code': original,
-                        'changes': content
-                    })
-                    
-                    if not merge_result.success:
-                        logger.error("asset.merge_failed", path=str(path), error=merge_result.error)
-                        return AssetResult(
-                            success=False,
-                            path=path,
-                            error=f"Merge failed: {merge_result.error}"
-                        )
-                        
-                    content_to_write = merge_result.data.get('response', '')
-                else:
-                    # No file + merge required = generate & write
-                    logger.info("asset.generating_new_file", path=str(path))
-                    content_to_write = content
+            # Write the final content
+            path.write_text(content)
+            logger.info("asset.write_success", 
+                       path=str(path),
+                       relative=str(self._get_relative_path(path)))
 
-                # Write the final content
-                path.write_text(content_to_write)
-                logger.info("asset.write_success", 
-                        path=str(path),
-                        exists=file_exists,
-                        merge_required=merge_required)
-
-                return AssetResult(
-                    success=True,
-                    path=path,
-                    backup_path=backup_path
-                )
-
-            except Exception as e:
-                logger.error("asset.operation_failed", 
-                            path=str(path),
-                            error=str(e),
-                            exists=file_exists,
-                            merge_required=merge_required)
-                return AssetResult(
-                    success=False,
-                    path=path,
-                    error=str(e)
-                )
+            return AssetResult(
+                success=True,
+                path=path,
+                backup_path=backup_path
+            )
 
         except Exception as e:
-            logger.error("asset.process_failed", error=str(e))
+            logger.error("asset.process_failed", 
+                        error=str(e),
+                        path=str(path) if 'path' in locals() else None)
             return AssetResult(
                 success=False,
-                path=Path(file_path) if 'file_path' in locals() else Path('.'),
+                path=path if 'path' in locals() else Path('.'),
                 error=str(e)
             )
 

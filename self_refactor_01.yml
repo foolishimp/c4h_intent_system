@@ -1,6 +1,6 @@
 # discovery_refactor_config.yml
 project:
-  default_path: "/Users/jim/src/apps/c4h_ai_built_coder/src"  # Absolute path to project
+  default_path: "/Users/jim/src/apps/c4h_ai_built_coderq"  # Absolute path to project
   workspace_root: "/Users/jim/src/apps/c4h_ai_built_coder/workspaces"
 
 runtime:
