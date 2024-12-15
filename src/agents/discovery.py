@@ -80,22 +80,41 @@ class DiscoveryAgent(BaseAgent):
                     
         return files
 
+    """
+    Discovery agent implementation with fixed path handling.
+    Path: src/agents/discovery.py
+    """
+
     def _run_tartxt(self, project_path: str) -> DiscoveryResult:
         """Run tartxt discovery on project"""
         try:
             # Build tartxt command
             cmd = [sys.executable, "src/skills/tartxt.py"]
             
-            for path in self.tartxt_config.input_paths:
-                cmd.extend(['-i', str(Path(project_path) / path)])
+            # Add exclusions first
+            exclusions = ','.join(self.tartxt_config.exclusions)
+            if exclusions:
+                cmd.extend(['-x', exclusions])
                 
-            for exclude in self.tartxt_config.exclusions:
-                cmd.extend(['-x', exclude])
-                
+            # Add output configuration
             if self.tartxt_config.output_type == "file":
                 cmd.extend(['-f', self.tartxt_config.output_file])
             else:
                 cmd.append('-o')
+
+            # Add input paths as direct arguments
+            paths_to_scan = []
+            for path in self.tartxt_config.input_paths:
+                resolved_path = str(Path(project_path) / path)
+                paths_to_scan.append(resolved_path)
+                
+            # Add paths as positional arguments
+            cmd.extend(paths_to_scan)
+
+            logger.debug("discovery.tartxt_command", 
+                        cmd=cmd,
+                        project_path=project_path,
+                        paths=paths_to_scan)
 
             # Run tartxt with stdout capture  
             result = subprocess.run(
@@ -132,7 +151,7 @@ class DiscoveryAgent(BaseAgent):
                 project_path=project_path,
                 error=str(e)
             )
-
+    
     def process(self, context: Dict[str, Any]) -> AgentResponse:
         """Process a project discovery request - now synchronous."""
         try:

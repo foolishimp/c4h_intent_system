@@ -1,9 +1,35 @@
+# Corrected c4h_config.yml
+# Only includes parameters that are actually implemented
+
 project:
-  default_path: "tests/test_projects"  # Path to your project
+  default_path: "."  # Root of the project
   workspace_root: "workspaces"
 
 runtime:
   max_iterations: 3
   intent:
-    description: "Add logging to every functon including changing all print to logging"  # Your refactoring intent
-    scope: ["*.py"]  # Files to include
+    description: "Add logging to every function including changing all print to logging"
+
+llm_config:
+  agents:
+    discovery:
+      tartxt_config:
+        input_paths: 
+          - "src"
+          - "tests"
+          - "config"
+        exclusions:
+          - "**/__pycache__/**"
+          - "**/.pytest_cache/**"
+          - "**/*.pyc"
+          - "**/.git/**"
+        output_type: "stdout"
+        output_file: null  # Only used if output_type is "file"
+
+backup:
+  enabled: true
+  path: "workspaces/backups"
+
+logging:
+  level: "INFO"
+  format: "structured"
