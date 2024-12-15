@@ -1,0 +1,29 @@
+# discovery_refactor_config.yml
+project:
+  default_path: "/Users/jim/src/apps/c4h_ai_built_coder/src"  # Absolute path to project
+  workspace_root: "/Users/jim/src/apps/c4h_ai_built_coder/workspaces"
+
+runtime:
+  max_iterations: 3
+  intent:
+    description: |
+      Enhance the discovery agent to support configurable tartxt options:
+      1. Add TartxtConfig dataclass for configuration
+      2. Add support for multiple input paths
+      3. Add support for exclusion patterns
+      4. Support different output types
+      5. Update the agent to use config tree properly using locate_config
+      The changes should preserve all existing functionality.
+    scope: ["src/agents/discovery.py"]  # Only modify discovery agent
+
+llm_config:
+  agents:
+    discovery:
+      tartxt:
+        paths: ["."]
+        exclusions: [
+          "**/__pycache__/**",
+          "**/.git/**",
+          "**/*.pyc"
+        ]
+        output_type: "embedded"
