@@ -1,5 +1,5 @@
 """
-Asset management with proper path resolution.
+Asset management with file system operations and backup management.
 Path: src/skills/asset_manager.py
 """
 
@@ -41,20 +41,14 @@ class AssetManager:
         project_root = self.config.get('project', {}).get('default_path', '.')
         self.project_root = Path(project_root).resolve()
         
-        # Override instance settings with config if provided
-        self.backup_enabled = asset_config.get('backup_enabled', backup_enabled)
-        
         # Handle backup directory with absolute paths
         if backup_dir:
             self.backup_dir = Path(backup_dir).resolve()
         else:
             backup_path = asset_config.get('backup_dir', 'workspaces/backups')
-            if Path(backup_path).is_absolute():
-                self.backup_dir = Path(backup_path)
-            else:
-                self.backup_dir = self.project_root / backup_path
+            self.backup_dir = Path(backup_path).resolve()
         
-        # Ensure backup directory exists
+        self.backup_enabled = asset_config.get('backup_enabled', backup_enabled)
         if self.backup_enabled:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
             
@@ -67,45 +61,45 @@ class AssetManager:
                    project_root=str(self.project_root))
 
     def _normalize_path(self, path: Union[str, Path]) -> Path:
-        """Normalize path handling to prevent duplicate nesting"""
-        path = Path(path)
+        """Normalize path to remove duplicates and extra slashes"""
+        # Convert to Path and resolve any .. or .
+        path = Path(str(path).replace('//', '/'))
         
-        # If path contains test_projects multiple times, normalize it
+        # If path contains duplicate segments, remove them
         parts = path.parts
-        if parts.count('test_projects') > 1:
-            # Find the last occurrence of test_projects and use everything after it
-            last_test_proj_idx = len(parts) - 1 - list(reversed(parts)).index('test_projects')
-            path = Path(*parts[last_test_proj_idx:])
+        if 'test_projects' in parts:
+            # Find the last occurrence of test_projects
+            idx = len(parts) - list(reversed(parts)).index('test_projects') - 1
+            path = Path(*parts[idx:])
             
         return path
 
     def _get_absolute_path(self, path: Union[str, Path]) -> Path:
         """Convert path to absolute path relative to project root"""
         path = self._normalize_path(path)
+        
         if path.is_absolute():
             return path
+        
         return (self.project_root / path).resolve()
 
-    def _get_relative_path(self, path: Union[str, Path], base: Optional[Path] = None) -> Path:
-        """Get path relative to base (defaults to project root)"""
-        path = self._normalize_path(Path(path))
-        base = base or self.project_root
-        
+    def _get_relative_path(self, path: Union[str, Path]) -> Path:
+        """Get path relative to project root"""
+        path = self._normalize_path(path)
         try:
-            return path.relative_to(base)
+            return path.relative_to(self.project_root)
         except ValueError:
-            # If path is not relative to base, return normalized path
             return path
 
     def _get_next_backup_path(self, path: Path) -> Path:
-        """Generate unique backup path preserving directory structure"""
+        """Generate backup path for specific file"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Get path relative to project root using normalized path
+        # Get normalized relative path
         rel_path = self._get_relative_path(path)
         
-        # Create backup path preserving directory structure
-        backup_path = self.backup_dir / rel_path.parent / f"{rel_path.stem}_{timestamp}{rel_path.suffix}"
+        # Create backup path maintaining only necessary structure
+        backup_path = self.backup_dir / timestamp / rel_path
         
         logger.debug("asset_manager.backup_path_generated",
                     original=str(path),
@@ -128,19 +122,16 @@ class AssetManager:
             if not file_path:
                 raise ValueError("No file path found in action")
             
-            # Convert to absolute path with normalization
+            # Convert to absolute path with proper resolution
             path = self._get_absolute_path(file_path)
             logger.debug("asset.processing", 
-                        path=str(path),
-                        relative=str(self._get_relative_path(path)),
-                        action_type=action.get('type'))
+                        input_path=file_path,
+                        resolved_path=str(path),
+                        project_root=str(self.project_root))
 
-            # Determine states
-            file_exists = path.exists()
-            
             # Create backup if enabled and file exists
             backup_path = None
-            if self.backup_enabled and file_exists:
+            if self.backup_enabled and path.exists():
                 backup_path = self._get_next_backup_path(path)
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(path, backup_path)
@@ -190,6 +181,7 @@ class AssetManager:
                 path=path if 'path' in locals() else Path('.'),
                 error=str(e)
             )
+
     def process(self, context: Dict[str, Any]) -> AgentResponse:
         """Process asset operations with standard agent interface"""
         try:
