@@ -16,14 +16,6 @@ from config import locate_config
 logger = structlog.get_logger()
 
 @dataclass
-class TartxtConfig:
-    """Configuration for tartxt discovery"""
-    input_paths: List[str] = field(default_factory=list)
-    exclusions: List[str] = field(default_factory=list)
-    output_type: str = "stdout"
-    output_file: Optional[str] = None
-
-@dataclass
 class DiscoveryResult:
     """Result of project discovery operation"""
     success: bool
@@ -49,7 +41,7 @@ class DiscoveryAgent(BaseAgent):
         self.workspace_root.mkdir(parents=True, exist_ok=True)
         
         # Get tartxt config
-        self.tartxt_config = TartxtConfig(**discovery_config.get('tartxt_config', {}))
+        self.tartxt_config = discovery_config.get('tartxt_config', {})
         
         logger.info("discovery.initialized",
                    workspace_root=str(self.workspace_root),
@@ -80,41 +72,55 @@ class DiscoveryAgent(BaseAgent):
                     
         return files
 
-    """
-    Discovery agent implementation with fixed path handling.
-    Path: src/agents/discovery.py
-    """
+    def _resolve_input_paths(self, project_path: Path) -> List[str]:
+        """Resolve input paths against project root"""
+        input_paths = self.tartxt_config.get('input_paths', [])
+        resolved_paths = []
+        
+        for path in input_paths:
+            # If path is absolute, use it directly
+            if Path(path).is_absolute():
+                resolved_paths.append(str(Path(path)))
+            else:
+                # Resolve relative path against project root
+                full_path = (project_path / path).resolve()
+                resolved_paths.append(str(full_path))
+                
+        logger.debug("discovery.resolved_paths",
+                    project_path=str(project_path),
+                    input_paths=input_paths,
+                    resolved_paths=resolved_paths)
+                    
+        return resolved_paths
 
     def _run_tartxt(self, project_path: str) -> DiscoveryResult:
-        """Run tartxt discovery on project"""
         try:
+            # Convert to Path and resolve
+            base_path = Path(project_path).resolve()
+            
+            # Get resolved input paths
+            input_paths = self._resolve_input_paths(base_path)
+            
             # Build tartxt command
             cmd = [sys.executable, "src/skills/tartxt.py"]
             
-            # Add exclusions first
-            exclusions = ','.join(self.tartxt_config.exclusions)
-            if exclusions:
-                cmd.extend(['-x', exclusions])
-                
-            # Add output configuration
-            if self.tartxt_config.output_type == "file":
-                cmd.extend(['-f', self.tartxt_config.output_file])
+            # Add exclusions
+            for exclude in self.tartxt_config.get('exclusions', []):
+                cmd.extend(['-x', exclude])
+            
+            # Add output options
+            if self.tartxt_config.get('output_type') == "file":
+                cmd.extend(['-f', self.tartxt_config.get('output_file', 'tartxt_output.txt')])
             else:
                 cmd.append('-o')
 
-            # Add input paths as direct arguments
-            paths_to_scan = []
-            for path in self.tartxt_config.input_paths:
-                resolved_path = str(Path(project_path) / path)
-                paths_to_scan.append(resolved_path)
-                
-            # Add paths as positional arguments
-            cmd.extend(paths_to_scan)
+            # Add input paths last
+            cmd.extend(input_paths)
 
-            logger.debug("discovery.tartxt_command", 
+            logger.debug("discovery.tartxt_command",
                         cmd=cmd,
-                        project_path=project_path,
-                        paths=paths_to_scan)
+                        paths=input_paths,
+                        project_path=str(base_path))
 
             # Run tartxt with stdout capture  
             result = subprocess.run(
@@ -128,7 +134,7 @@ class DiscoveryAgent(BaseAgent):
                 success=True,
                 files=self._parse_manifest(result.stdout),
                 raw_output=result.stdout,
-                project_path=project_path
+                project_path=str(base_path)
             )
 
         except subprocess.CalledProcessError as e:
@@ -139,22 +145,14 @@ class DiscoveryAgent(BaseAgent):
                 success=False,
                 files={},
                 raw_output=e.stderr,
-                project_path=project_path,
-                error=str(e)
-            )
-        except Exception as e:
-            logger.error("discovery.failed", error=str(e))
-            return DiscoveryResult(
-                success=False,
-                files={},
-                raw_output="",
-                project_path=project_path,
+                project_path=str(base_path),
                 error=str(e)
             )
     
     def process(self, context: Dict[str, Any]) -> AgentResponse:
-        """Process a project discovery request - now synchronous."""
+        """Process a project discovery request."""
         try:
+            # Get and validate project path
             project_path = context.get("project_path")
             if not project_path:
                 return AgentResponse(

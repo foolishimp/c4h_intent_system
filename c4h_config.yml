@@ -2,7 +2,7 @@
 # Only includes parameters that are actually implemented
 
 project:
-  default_path: "."  # Root of the project
+  default_path: "./tests/"  # Root of the project
   workspace_root: "workspaces"
 
 runtime:
@@ -15,9 +15,7 @@ llm_config:
     discovery:
       tartxt_config:
         input_paths: 
-          - "src"
-          - "tests"
-          - "config"
+          - "test_projects"
         exclusions:
           - "**/__pycache__/**"
           - "**/.pytest_cache/**"

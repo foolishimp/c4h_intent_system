@@ -64,6 +64,9 @@ def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
         # Load complete config first
         config = load_configuration(cli_config.config_path)
         
+        # Get default project path from config and resolve it
+        default_path = Path(config.get('project', {}).get('default_path', '.'))
+        
         # Build intent context
         intent_context = {
             'merge_strategy': cli_config.merge_strategy,
@@ -83,7 +86,12 @@ def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
             
             # Set values from config if provided
             if cli_config.project_path:
-                menu.project_path = cli_config.project_path
+                # Resolve project path against default path if relative
+                project_path = cli_config.project_path
+                if not project_path.is_absolute():
+                    project_path = (default_path / project_path).resolve()
+                menu.project_path = project_path
+                
             if cli_config.intent:
                 menu.intent_description = cli_config.intent
                 
@@ -100,6 +108,16 @@ def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
                 "status": "error",
                 "error": "Project path and intent description required in non-interactive mode"
             }
+        
+        # Resolve project path for direct mode
+        project_path = cli_config.project_path
+        if not project_path.is_absolute():
+            project_path = (default_path / project_path).resolve()
+            
+        logger.info("path.resolution",
+                   default_path=str(default_path),
+                   input_path=str(cli_config.project_path),
+                   resolved_path=str(project_path))
             
         # Initialize intent agent with complete config
         agent = IntentAgent(
@@ -107,10 +125,9 @@ def process_refactoring(cli_config: RefactoringConfig) -> Dict[str, Any]:
             max_iterations=cli_config.max_iterations
         )
         
-        # Process with project path and intent context
-        # Use BaseAgent's process() which handles async internally
+        # Process with resolved project path and intent context
         return agent.process(
-            project_path=cli_config.project_path,
+            project_path=project_path,
             intent_desc=intent_context
         )
             

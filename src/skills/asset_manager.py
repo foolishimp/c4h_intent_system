@@ -1,5 +1,5 @@
 """
-Asset management with file system operations and backup management.
+Asset management with proper path resolution.
 Path: src/skills/asset_manager.py
 """
 
@@ -37,8 +37,9 @@ class AssetManager:
         # Get asset manager specific config
         asset_config = locate_config(self.config, "asset_manager")
         
-        # Get project root from config
-        self.project_root = Path(self.config.get('project', {}).get('default_path', '.')).resolve()
+        # Get project root from config - use absolute path
+        project_root = self.config.get('project', {}).get('default_path', '.')
+        self.project_root = Path(project_root).resolve()
         
         # Override instance settings with config if provided
         self.backup_enabled = asset_config.get('backup_enabled', backup_enabled)
@@ -65,29 +66,42 @@ class AssetManager:
                    backup_dir=str(self.backup_dir),
                    project_root=str(self.project_root))
 
+    def _normalize_path(self, path: Union[str, Path]) -> Path:
+        """Normalize path handling to prevent duplicate nesting"""
+        path = Path(path)
+        
+        # If path contains test_projects multiple times, normalize it
+        parts = path.parts
+        if parts.count('test_projects') > 1:
+            # Find the last occurrence of test_projects and use everything after it
+            last_test_proj_idx = len(parts) - 1 - list(reversed(parts)).index('test_projects')
+            path = Path(*parts[last_test_proj_idx:])
+            
+        return path
+
     def _get_absolute_path(self, path: Union[str, Path]) -> Path:
         """Convert path to absolute path relative to project root"""
-        path = Path(path)
+        path = self._normalize_path(path)
         if path.is_absolute():
             return path
         return (self.project_root / path).resolve()
 
     def _get_relative_path(self, path: Union[str, Path], base: Optional[Path] = None) -> Path:
         """Get path relative to base (defaults to project root)"""
-        path = Path(path)
+        path = self._normalize_path(Path(path))
         base = base or self.project_root
         
         try:
             return path.relative_to(base)
         except ValueError:
-            # If path is not relative to base, return original
+            # If path is not relative to base, return normalized path
             return path
 
     def _get_next_backup_path(self, path: Path) -> Path:
         """Generate unique backup path preserving directory structure"""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         
-        # Get path relative to project root
+        # Get path relative to project root using normalized path
         rel_path = self._get_relative_path(path)
         
         # Create backup path preserving directory structure
@@ -114,7 +128,7 @@ class AssetManager:
             if not file_path:
                 raise ValueError("No file path found in action")
             
-            # Convert to absolute path
+            # Convert to absolute path with normalization
             path = self._get_absolute_path(file_path)
             logger.debug("asset.processing", 
                         path=str(path),
@@ -176,7 +190,6 @@ class AssetManager:
                 path=path if 'path' in locals() else Path('.'),
                 error=str(e)
             )
-
     def process(self, context: Dict[str, Any]) -> AgentResponse:
         """Process asset operations with standard agent interface"""
         try:
