@@ -35,8 +35,7 @@ class IntentAgent:
             self.assurance = AssuranceAgent(config=config)
             
             self.current_state: Optional[WorkflowState] = None
-            self.backup_dir: Optional[Path] = None
-
+            
             logger.info("intent_agent.initialized", 
                     max_iterations=max_iterations,
                     discovery=bool(self.discovery),
@@ -71,10 +70,6 @@ class IntentAgent:
                     max_iterations=self.max_iterations
                 )
 
-            # Setup backup if needed
-            if not self.backup_dir and project_path:
-                self._setup_backup(project_path)
-
             current_agent = self.current_state.get_current_agent()
             if not current_agent:
                 logger.info("intent.process.complete")
@@ -89,7 +84,6 @@ class IntentAgent:
                 logger.error("intent.process.agent_failed", 
                            agent=current_agent,
                            error=error_msg)
-                self._handle_error(error_msg)
                 return self._create_error_response(error_msg)
 
             logger.info("intent.process.agent_succeeded", 

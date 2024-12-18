@@ -63,14 +63,13 @@ class WorkflowState:
     max_iterations: int = 3
     discovery_data: Optional[StageData] = None
     solution_design_data: Optional[StageData] = None  
-    coder_data: Optional[StageData] = None  # Changed from implementation_data
-    assurance_data: Optional[StageData] = None  # Changed from validation_data
+    coder_data: Optional[StageData] = None
+    assurance_data: Optional[StageData] = None
     error: Optional[str] = None
     last_action: Optional[str] = None
     action_history: List[str] = field(default_factory=list)
     started_at: datetime = field(default_factory=datetime.utcnow)
     completed_at: Optional[datetime] = None
-    backup_path: Optional[Path] = None
 
     def __post_init__(self):
         """Initialize intent model and stage data"""
@@ -178,10 +177,8 @@ class WorkflowState:
             "started_at": self.started_at.isoformat(),
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "duration": self.duration,
-            # Fixed field names to match class attributes
-            "discovery_data": self.discovery_data.__dict__,
-            "solution_design_data": self.solution_design_data.__dict__,
-            "coder_data": self.coder_data.__dict__,
-            "assurance_data": self.assurance_data.__dict__,
-            "backup_path": str(self.backup_path) if self.backup_path else None
+            "discovery_data": self.discovery_data.__dict__ if self.discovery_data else None,
+            "solution_design_data": self.solution_design_data.__dict__ if self.solution_design_data else None,
+            "coder_data": self.coder_data.__dict__ if self.coder_data else None,
+            "assurance_data": self.assurance_data.__dict__ if self.assurance_data else None
         }

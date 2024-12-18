@@ -79,7 +79,7 @@ class WorkflowDisplay:
 
         except Exception as e:
             logger.error("workflow_display.error", error=str(e))
-            self.console.print(f"[red]Error displaying workflow state: {str(e)}[/]")
+            self.console.print("[red]Unable to display workflow status[/]")
 
     def _get_current_agent(self, state: Dict[str, Any]) -> Optional[str]:
         """Determine current active agent from state"""

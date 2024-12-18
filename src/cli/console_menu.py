@@ -38,11 +38,10 @@ class ConsoleMenu(BaseMenu):
         project_config = config.get('project', {})
         self.project_path = Path(project_config.get('default_path')) if project_config.get('default_path') else None
 
-        # Extract runtime config
+        # Extract intent config
         runtime_config = config.get('runtime', {})
         intent_config = runtime_config.get('intent', {})
         
-        # Set intent details
         if isinstance(intent_config, dict):
             self.intent_description = intent_config.get('description')
             self.intent_context = intent_config
