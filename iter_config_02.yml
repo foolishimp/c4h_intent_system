@@ -1,16 +1,26 @@
+# semantic_iter_test.yml
+
 llm_config:
   agents:
-    coder:
+    semantic_iterator:
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
+      temperature: 0
+      extractor_config:
+        mode: "slow"
+        allow_fallback: true
+
+    semantic_fast_extractor:
       provider: "anthropic"
       model: "claude-3-opus-20240229"
       temperature: 0
 
-    asset_manager:
-      paths:
-        project_root: "/Users/jim/src/apps/c4h_prefect_v1"
-        source: "/Users/jim/src/apps/c4h_prefect_v1" 
-        output: "/Users/jim/src/apps/c4h_prefect_v1"
+    semantic_slow_extractor:
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
+      temperature: 0
 
+# Same input_data as coder config
 input_data:
   changes: |
     {
@@ -36,5 +46,9 @@ input_data:
       ]
     }
 
-instruction: "Create the initial Prefect workflow structure"
+instruction: 
+  Extract each file change into its own item, 
+  preserving all fields including file_path, type, description and content
+  return every instance of a file change
+  return all of them in a json array
 format: "json"

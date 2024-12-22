@@ -253,44 +253,31 @@ class AgentTestHarness:
             logger.error("process_agent.failed", error=str(e))
             raise
 
-    def _format_output(self, output: Dict[str, Any]) -> str:
-        """Format output data with basic readability"""
-        if isinstance(output, dict):
-            lines = []
-            for key, value in output.items():
-                value_str = str(value).replace('\n', '\n    ')
-                lines.append(f"{key}:\n    {value_str}")
-            return '\n'.join(lines)
-        return str(output)
-
-    def _display_output(self, output: Dict[str, Any]):
+    def _display_output(self, output: Dict[str, Any]) -> None:
         """Display formatted output"""
-        print(self._format_output(output))
+        print("\n=== Results ===")
         
-    def display_results(self, results: Any) -> None:
-        """Display processing results"""
-        if not results:
-            self.console.print("[yellow]No results to display[/]")
-            return
-
-        if isinstance(results, list):
-            table = Table(title="Extracted Items")
-            
-            # Add columns based on first item if it's a dict
-            if results and isinstance(results[0], dict):
-                for key in results[0].keys():
-                    table.add_column(key.title())
-                
-                for item in results:
-                    table.add_row(*[str(v) for v in item.values()])
-            else:
-                table.add_column("Result")
-                for item in results:
-                    table.add_row(str(item))
+        if isinstance(output, dict) and 'results' in output:
+            for item in output['results']:
+                if isinstance(item, dict):
+                    # Print file info
+                    print(f"\nFile: {item.get('file_path', 'Unknown File')}")
+                    print(f"Type: {item.get('type', '')}")
+                    print(f"Description: {item.get('description', '')}")
                     
-            self.console.print(table)
+                    # Handle content with escaped newlines
+                    if 'content' in item:
+                        print("\nContent:")
+                        # Replace escaped newlines with actual newlines
+                        content = item['content'].replace('\\n', '\n').replace('\\t', '\t')
+                        # Remove any remaining escape sequences
+                        content = bytes(content, "utf-8").decode("unicode_escape")
+                        print(content)
+                    print("-" * 80)
+                else:
+                    print(str(item))
         else:
-            self.console.print(Panel(str(results)))
+            print(str(output))
 
 def main():
     parser = argparse.ArgumentParser(

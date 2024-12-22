@@ -111,6 +111,11 @@ class SlowExtractor(BaseAgent):
 
     def _get_agent_name(self) -> str:
         return "semantic_slow_extractor"
+    
+    """
+    Slow extraction mode with lazy LLM calls.
+    Path: src/skills/_semantic_slow.py
+    """
 
     def _format_request(self, context: Dict[str, Any]) -> str:
         """Format extraction request for slow mode using config template"""
@@ -121,7 +126,7 @@ class SlowExtractor(BaseAgent):
         extract_template = self._get_prompt('extract')
         position = context.get('position', 0)
         
-        # Add explicit completion marker to prompt
+        # Let LLM handle all content interpretation via the prompt
         return extract_template.format(
             ordinal=self._get_ordinal(position + 1),
             content=context.get('content', ''),

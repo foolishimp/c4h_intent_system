@@ -150,18 +150,34 @@ class SemanticIterator(BaseAgent):
             return item
         raise StopIteration
 
+    """
+    Semantic iterator with configurable extraction modes.
+    Path: src/skills/semantic_iterator.py
+    """
+
     def _next_slow(self):
         """Handle slow mode iteration"""
-        response = self._slow_extractor.process({
-            'content': self._content,
-            'config': self._extract_config,
-            'position': self._position
-        })
-        
-        if not response.success or 'NO_MORE_ITEMS' in str(response.data.get('response', '')):
-            logger.debug("slow_extraction.complete",
-                        position=self._position)
-            raise StopIteration
+        try:
+            response = self._slow_extractor.process({
+                'content': self._content,
+                'config': self._extract_config,
+                'position': self._position
+            })
             
-        self._position += 1
-        return response.data.get('response', '')
+            # Handle infrastructure level success/failure
+            if not response.success:
+                logger.debug("slow_extraction.complete", position=self._position)
+                raise StopIteration
+                
+            content = response.data.get('response', '')
+            
+            # Only check for completion signal - let LLM handle content validation
+            if 'NO_MORE_ITEMS' in str(content):
+                raise StopIteration
+                
+            self._position += 1
+            return content
+
+        except Exception as e:
+            logger.error("slow_extraction.failed", error=str(e))
+            raise StopIteration
