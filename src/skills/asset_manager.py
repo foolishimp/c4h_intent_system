@@ -12,6 +12,7 @@ from datetime import datetime
 from skills.semantic_merge import SemanticMerge
 from agents.base import AgentResponse
 from config import locate_config
+from agents.base import BaseAgent
 
 logger = structlog.get_logger()
 
@@ -23,65 +24,63 @@ class AssetResult:
     backup_path: Optional[Path] = None
     error: Optional[str] = None
 
-class AssetManager:
+class AssetManager(BaseAgent):
     """Manages asset operations with file system handling"""
     
-    def __init__(self, 
-                 backup_enabled: bool = True,
-                 backup_dir: Optional[Path] = None,
-                 merger: Optional[SemanticMerge] = None,
-                 config: Optional[Dict[str, Any]] = None):
+    def __init__(self, config: Dict[str, Any] = None, **kwargs):  # Add **kwargs to accept legacy params
         """Initialize asset manager with configuration"""
-        self.config = config or {}
+        super().__init__(config=config)
         
         # Get asset manager specific config
         asset_config = locate_config(self.config, "asset_manager")
+        paths = asset_config.get('paths', {})
         
-        # Get project root from config - use absolute path
-        project_root = self.config.get('project', {}).get('default_path', '.')
-        self.project_root = Path(project_root).resolve()
+        # Get paths from config
+        self.source_root = Path(paths.get('source', '.')).resolve()
+        self.output_root = Path(paths.get('output', paths.get('project_root', '.'))).resolve()
         
-        # Handle backup directory with absolute paths
-        if backup_dir:
-            self.backup_dir = Path(backup_dir).resolve()
-        else:
-            backup_path = asset_config.get('backup_dir', 'workspaces/backups')
-            self.backup_dir = Path(backup_path).resolve()
+        # Handle backup directory - relative to output path
+        backup_path = asset_config.get('backup_dir', 'workspaces/backups')
+        self.backup_dir = (self.output_root / backup_path).resolve()
         
-        self.backup_enabled = asset_config.get('backup_enabled', backup_enabled)
+        # Use config value, fall back to kwargs for backward compatibility
+        self.backup_enabled = asset_config.get('backup_enabled', kwargs.get('backup_enabled', True))
         if self.backup_enabled:
             self.backup_dir.mkdir(parents=True, exist_ok=True)
             
-        # Create semantic merger with config if not provided
-        self.merger = merger or SemanticMerge(config=self.config)
+        # Create semantic merger with config
+        self.merger = SemanticMerge(config=self.config)
 
         logger.info("asset_manager.initialized",
                    backup_enabled=self.backup_enabled,
                    backup_dir=str(self.backup_dir),
-                   project_root=str(self.project_root))
+                   source_root=str(self.source_root),
+                   output_root=str(self.output_root))
 
     def _normalize_path(self, path: Union[str, Path]) -> Path:
-        """Normalize path to remove duplicates and extra slashes"""
-        # Convert to Path and resolve any .. or .
+        """
+        Normalize an input path by:
+        1. Converting to Path object
+        2. Resolving all symlinks and relative segments (..)
+        3. Making it absolute relative to source/output root
+        """
         path = Path(str(path).replace('//', '/'))
         
-        # If path contains duplicate segments, remove them
-        parts = path.parts
-        if 'test_projects' in parts:
-            # Find the last occurrence of test_projects
-            idx = len(parts) - list(reversed(parts)).index('test_projects') - 1
-            path = Path(*parts[idx:])
+        if path.is_absolute():
+            return path
             
-        return path
+        # Try output path first since that's where we're writing
+        return (self.output_root / path).resolve()
 
     def _get_absolute_path(self, path: Union[str, Path]) -> Path:
-        """Convert path to absolute path relative to project root"""
-        path = self._normalize_path(path)
+        """Convert path to absolute output path"""
+        path = Path(str(path))
         
         if path.is_absolute():
             return path
         
-        return (self.project_root / path).resolve()
+        # Use output root for new paths
+        return (self.output_root / path).resolve()
 
     def _get_relative_path(self, path: Union[str, Path]) -> Path:
         """Get path relative to project root"""

@@ -79,7 +79,9 @@ class AgentTestHarness:
 
     def __init__(self, console: Optional[Console] = None):
         self.console = console or Console()
-
+        # Remove default project root assumption
+        self.project_root = None
+        
     def setup_logging(self, mode: LogMode) -> None:
         """Configure structured logging based on mode"""
         processors = [
@@ -123,45 +125,53 @@ class AgentTestHarness:
     def load_configs(self, test_config_path: str) -> Dict[str, Any]:
         """Load and merge configurations"""
         try:
-            # Find system config path
-            system_config_paths = [
-                Path("system_config.yml"),
-                Path.cwd() / "system_config.yml",
-                Path(__file__).parent.parent / "system_config.yml",
-                Path("config/system_config.yml"),
-                Path(__file__).parent.parent / "config" / "system_config.yml"
-            ]
+            system_config = self._load_system_config()
             
-            system_config_path = next(
-                (path for path in system_config_paths if path.exists()),
-                None
-            )
-            
-            if not system_config_path:
-                paths_tried = "\n  - ".join(str(p) for p in system_config_paths)
-                raise FileNotFoundError(f"System configuration not found. Tried:\n  - {paths_tried}")
-            
-            # Load system config using yaml
-            with open(system_config_path) as f:
-                system_config = yaml.safe_load(f)
-
             # Load test config using yaml
             with open(test_config_path) as f:
                 test_config = yaml.safe_load(f)
-            
+
+            # Get project paths from test config, not execution location
+            if 'project' in test_config:
+                project_config = test_config['project']
+                if 'source_path' in project_config:
+                    project_config['source_path'] = Path(project_config['source_path']).resolve()
+                if 'output_path' in project_config:
+                    project_config['output_path'] = Path(project_config['output_path']).resolve()
+                if 'default_path' in project_config:
+                    project_config['default_path'] = Path(project_config['default_path']).resolve()
+
             # Merge configs using deep_merge
             config = deep_merge(system_config, test_config)
             
-            logger.debug("testharness.config_loaded",
-                        system_path=str(system_config_path),
-                        test_path=test_config_path,
-                        merged_keys=list(config.keys()))
-            
             return config
-
         except Exception as e:
             logger.error("testharness.config_load_failed", error=str(e))
             raise
+
+    def _load_system_config(self) -> Dict[str, Any]:
+        """Load system configuration file"""
+        try:
+            # Find system config path
+            system_config_paths = [
+                Path("config/system_config.yml"),
+                Path("../config/system_config.yml"),
+                Path(__file__).parent.parent / "config" / "system_config.yml"
+            ]
+            
+            for path in system_config_paths:
+                if path.exists():
+                    logger.info("config.loading", path=str(path))
+                    with open(path) as f:
+                        return yaml.safe_load(f)
+                    
+            logger.warning("config.no_system_config_found", 
+                        paths=[str(p) for p in system_config_paths])
+            return {}
+
+        except Exception as e:
+            logger.error("config.load_failed", error=str(e))
+            return {}
 
     def create_agent(self, agent_type: str, config: Dict[str, Any]) -> BaseAgent:
         """Create agent instance based on type"""
@@ -169,18 +179,6 @@ class AgentTestHarness:
             raise ValueError(f"Unsupported agent type: {agent_type}")
                 
         agent_class = self.AGENT_TYPES[agent_type]
-        
-        # Special handling for AssetManager which isn't a BaseAgent
-        if agent_type == "asset_manager":
-            return agent_class(
-                backup_enabled=True,
-                backup_dir=Path("workspaces/backups"),
-                config=config
-            )
-        
-        # Get agent-specific config or empty dict if not found
-        agent_config = config.get('llm_config', {}).get('agents', {}).get(agent_type, {})
-        
         return agent_class(config=config)
 
     def process_agent(self, config: AgentConfig) -> None:

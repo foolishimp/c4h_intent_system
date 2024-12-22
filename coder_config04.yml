@@ -1,0 +1,317 @@
+llm_config:
+  agents:
+    coder:
+      provider: "anthropic"
+      model: "claude-3-opus-20240229"
+      temperature: 0
+
+    asset_manager:
+      paths:
+        project_root: "/Users/jim/src/apps/c4h_prefect_v1"
+        source: "/Users/jim/src/apps/c4h_prefect_v1" 
+        output: "/Users/jim/src/apps/c4h_prefect_v1"
+
+input_data:
+  changes:
+    - file_path: "prefect_agents/workflow/agent_wrapper.py"
+      type: "create"
+      description: "Create Prefect agent wrapper class"
+      content: |
+        """
+        Agent wrapper for Prefect integration.
+        """
+
+        from typing import Dict, Any, Type, Optional
+        from dataclasses import dataclass
+        from datetime import datetime
+        import structlog
+        from prefect import task, get_run_logger
+        from pathlib import Path
+
+        from agents.base import BaseAgent, AgentResponse
+        from models.workflow_state import WorkflowState, StageData
+
+        logger = structlog.get_logger()
+
+        @dataclass
+        class AgentTaskConfig:
+            """Configuration for agent task execution"""
+            agent_class: Type[BaseAgent]
+            config: Dict[str, Any]
+            requires_approval: bool = False
+            max_retries: int = 3
+
+        @task
+        def run_agent_task(
+            agent_config: AgentTaskConfig,
+            context: Dict[str, Any],
+            workflow_state: Optional[Dict[str, Any]] = None
+        ) -> Dict[str, Any]:
+            """
+            Prefect task wrapper for agent execution.
+            Maintains agent autonomy while providing orchestration.
+            """
+            prefect_logger = get_run_logger()
+            
+            try:
+                # Initialize agent with its config
+                agent = agent_config.agent_class(config=agent_config.config)
+                
+                # Add workflow state context if provided
+                if workflow_state:
+                    context["workflow_state"] = workflow_state
+                    
+                # Execute agent
+                result = agent.process(context)
+                
+                # Create stage data
+                stage_data = StageData(
+                    status="completed" if result.success else "failed",
+                    raw_output=result.data.get("raw_output", ""),
+                    files=result.data.get("files", {}),
+                    timestamp=datetime.utcnow().isoformat(),
+                    error=result.error,
+                    metrics=result.data.get("metrics", {})
+                )
+                
+                return {
+                    "success": result.success,
+                    "stage_data": stage_data.__dict__,
+                    "error": result.error,
+                    "result_data": result.data
+                }
+
+            except Exception as e:
+                logger.error("agent_task.failed", 
+                            agent=agent_config.agent_class.__name__,
+                            error=str(e))
+                # Return failure state
+                return {
+                    "success": False,
+                    "stage_data": StageData(
+                        status="failed",
+                        error=str(e),
+                        timestamp=datetime.utcnow().isoformat()
+                    ).__dict__,
+                    "error": str(e),
+                    "result_data": {}
+                }
+
+    - file_path: "prefect_agents/workflow/intent_flow.py"
+      type: "create"
+      description: "Create Prefect workflow orchestration"
+      content: |
+        """
+        Prefect workflow orchestration.
+        """
+
+        from prefect import flow
+        from typing import Dict, Any, Optional
+        import structlog
+        from pathlib import Path
+
+        from agents.discovery import DiscoveryAgent
+        from agents.solution_designer import SolutionDesigner
+        from agents.coder import Coder
+        from agents.assurance import AssuranceAgent
+        from models.workflow_state import WorkflowState, WorkflowStage
+        from workflow.agent_wrapper import AgentTaskConfig, run_agent_task
+
+        logger = structlog.get_logger()
+
+        @flow(name="intent_refactoring")
+        def run_intent_workflow(
+            project_path: Path,
+            intent_desc: Dict[str, Any],
+            config: Dict[str, Any],
+            max_iterations: int = 3
+        ) -> Dict[str, Any]:
+            """
+            Main workflow for intent-based refactoring.
+            Maintains existing functionality while using Prefect for orchestration.
+            """
+            try:
+                # Initialize workflow state
+                workflow_state = WorkflowState(
+                    intent_description=intent_desc,
+                    project_path=str(project_path),
+                    max_iterations=max_iterations
+                )
+
+                # Configure agents
+                discovery_config = AgentTaskConfig(
+                    agent_class=DiscoveryAgent,
+                    config=config
+                )
+                
+                solution_config = AgentTaskConfig(
+                    agent_class=SolutionDesigner,
+                    config=config
+                )
+                
+                coder_config = AgentTaskConfig(
+                    agent_class=Coder,
+                    config=config
+                )
+                
+                assurance_config = AgentTaskConfig(
+                    agent_class=AssuranceAgent,
+                    config=config
+                )
+
+                # Run discovery
+                discovery_result = run_agent_task(
+                    agent_config=discovery_config,
+                    context={"project_path": str(project_path)}
+                )
+                
+                if not discovery_result["success"]:
+                    return {
+                        "status": "error",
+                        "error": discovery_result["error"],
+                        "workflow_data": workflow_state.to_dict()
+                    }
+                    
+                # Update workflow state
+                workflow_state.discovery_data = discovery_result["stage_data"]
+                
+                # Run solution design
+                solution_result = run_agent_task(
+                    agent_config=solution_config,
+                    context={
+                        "input_data": {
+                            "discovery_data": discovery_result["result_data"],
+                            "intent": intent_desc
+                        },
+                        "iteration": workflow_state.iteration
+                    }
+                )
+                
+                if not solution_result["success"]:
+                    return {
+                        "status": "error",
+                        "error": solution_result["error"],
+                        "workflow_data": workflow_state.to_dict()
+                    }
+                    
+                workflow_state.solution_design_data = solution_result["stage_data"]
+                
+                # Run coder
+                coder_result = run_agent_task(
+                    agent_config=coder_config,
+                    context={
+                        "input_data": solution_result["result_data"]
+                    }
+                )
+                
+                if not coder_result["success"]:
+                    return {
+                        "status": "error",
+                        "error": coder_result["error"],
+                        "workflow_data": workflow_state.to_dict()
+                    }
+                    
+                workflow_state.coder_data = coder_result["stage_data"]
+                
+                # Run assurance
+                assurance_result = run_agent_task(
+                    agent_config=assurance_config,
+                    context={
+                        "changes": coder_result["result_data"].get("changes", []),
+                        "intent": intent_desc
+                    }
+                )
+                
+                workflow_state.assurance_data = assurance_result["stage_data"]
+                
+                return {
+                    "status": "success",
+                    "workflow_data": workflow_state.to_dict(),
+                    "error": None
+                }
+
+            except Exception as e:
+                logger.error("workflow.failed", error=str(e))
+                return {
+                    "status": "error",
+                    "error": str(e),
+                    "workflow_data": workflow_state.to_dict() if 'workflow_state' in locals() else {}
+                }
+
+    - file_path: "prefect_agents/service/intent_service.py"
+      type: "create"
+      description: "Create intent service interface"
+      content: |
+        """
+        Intent service interface for workflow management.
+        """
+
+        from typing import Dict, Any, Optional
+        from pathlib import Path
+        import structlog
+        from datetime import datetime
+
+        from workflow.intent_flow import run_intent_workflow
+        from config import load_config, load_with_app_config
+
+        logger = structlog.get_logger()
+
+        class IntentService:
+            """Service interface for intent-based refactoring workflows"""
+            
+            def __init__(self, config_path: Optional[Path] = None):
+                """Initialize service with configuration"""
+                try:
+                    # Load configuration using existing patterns
+                    system_path = Path("config/system_config.yml")
+                    if config_path:
+                        self.config = load_with_app_config(system_path, config_path)
+                    else:
+                        self.config = load_config(system_path)
+                        
+                    logger.info("intent_service.initialized",
+                               config_path=str(config_path) if config_path else None)
+                               
+                except Exception as e:
+                    logger.error("intent_service.init_failed", error=str(e))
+                    raise
+
+            def process_intent(
+                self,
+                project_path: Path,
+                intent_desc: Dict[str, Any],
+                max_iterations: int = 3
+            ) -> Dict[str, Any]:
+                """
+                Process refactoring intent through workflow.
+                Maintains compatibility with existing CLI interface.
+                """
+                try:
+                    logger.info("intent_service.processing",
+                               project_path=str(project_path),
+                               intent=intent_desc)
+                    
+                    # Execute workflow
+                    result = run_intent_workflow(
+                        project_path=project_path,
+                        intent_desc=intent_desc,
+                        config=self.config,
+                        max_iterations=max_iterations
+                    )
+                    
+                    logger.info("intent_service.completed",
+                               status=result.get("status"),
+                               error=result.get("error"))
+                               
+                    return result
+
+                except Exception as e:
+                    logger.error("intent_service.failed", error=str(e))
+                    return {
+                        "status": "error",
+                        "error": str(e),
+                        "workflow_data": {}
+                    }
+
+instruction: "Create the initial Prefect workflow structure"
+format: "json"
