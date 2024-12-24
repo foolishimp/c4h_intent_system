@@ -168,7 +168,7 @@ llm_config:
 
     semantic_fast_extractor:
       provider: "anthropic"
-      model: "claude-3-opus-20240229"
+      model:  "claude-3-5-sonnet-20241022"
       temperature: 0
       prompts:
         system: |
@@ -206,19 +206,22 @@ llm_config:
           CRITICAL: Return raw JSON only. Do not wrap in code blocks or markdown.
 
     semantic_slow_extractor:
-      provider: "anthropic"
-      model: "claude-3-opus-20240229"
+      provider: "openai"
+      model: "gpt-4o" 
       temperature: 0
       prompts:
         system: |
           You are a precise sequential extraction agent for code changes.
-          Your role is to extract one change action at a time, maintaining order.
+          Your role is to extract exactly one change at position N, or signal completion.
           Rules:
-          1. Extract exactly ONE change per request
-          2. Follow the extraction format exactly
-          3. Return only the next single change object
-          4. Signal NO_MORE_ITEMS when complete
-          5. Never include explanatory text
+          1. Extract ONLY the Nth change that hasn't been returned before
+          2. Return NO_MORE_ITEMS if:
+            - No more unprocessed changes exist
+            - Current position exceeds available changes
+            - Change at current position was previously returned
+          3. Each change MUST be unique - never return the same file_path twice
+          4. Follow exact format for single object response
+          5. Maintain strict sequential order of original changes
 
         extract: |
           Extract the {ordinal} code change action from the input.
@@ -228,7 +231,7 @@ llm_config:
           
           Extract as a single change action with:
           1. file_path: Path of the file to modify
-          2. type: One of "modify", "create", or "delete"
+          2. type: One of "modify", "create", or "delete"  
           3. content: The complete new content (if available)
           4. diff: Git-style diff (if content not available)
           5. description: Clear description of the change
@@ -240,11 +243,13 @@ llm_config:
           {format}
           
           CRITICAL RULES:
-          1. Extract ONLY the {ordinal} change
-          2. Return NO_MORE_ITEMS if no more changes exist
-          3. Return single change object, no array
-          4. No explanations or headers
-          5. Keep changes in order of appearance
+          1. Extract EXACTLY the {ordinal} change in sequence order
+          2. Return NO_MORE_ITEMS if:
+            - {ordinal} exceeds number of changes
+            - Change at {ordinal} was already returned in previous position
+          3. Never return same file_path more than once
+          4. Return single change object, not an array
+          5. No explanations or headers allowed
 
     semantic_merge:
       provider: "anthropic"

@@ -15,7 +15,7 @@ from rich.table import Table
 from pathlib import Path
 import argparse
 import yaml  # Add this import
-
+import json
 from agents.base import BaseAgent, LogDetail
 from agents.coder import Coder
 from skills.semantic_iterator import SemanticIterator
@@ -254,29 +254,63 @@ class AgentTestHarness:
             raise
 
     def _display_output(self, output: Dict[str, Any]) -> None:
-        """Display formatted output"""
-        print("\n=== Results ===")
+        """Display formatted output with robust type handling"""
+        print("\n=== Results ===\n")
         
-        if isinstance(output, dict) and 'results' in output:
-            for item in output['results']:
-                if isinstance(item, dict):
-                    # Print file info
-                    print(f"\nFile: {item.get('file_path', 'Unknown File')}")
-                    print(f"Type: {item.get('type', '')}")
-                    print(f"Description: {item.get('description', '')}")
+        def format_content(content: Any) -> str:
+            """Format content for display, trying to preserve JSON structure"""
+            try:
+                # If it's already a dict/list, format it
+                if isinstance(content, (dict, list)):
+                    return json.dumps(content, indent=2)
                     
-                    # Handle content with escaped newlines
-                    if 'content' in item:
-                        print("\nContent:")
-                        # Replace escaped newlines with actual newlines
-                        content = item['content'].replace('\\n', '\n').replace('\\t', '\t')
-                        # Remove any remaining escape sequences
-                        content = bytes(content, "utf-8").decode("unicode_escape")
-                        print(content)
-                    print("-" * 80)
-                else:
-                    print(str(item))
-        else:
+                if isinstance(content, str):
+                    # Try parsing as JSON first
+                    try:
+                        return json.dumps(json.loads(content), indent=2)
+                    except json.JSONDecodeError:
+                        # Try as Python literal
+                        try:
+                            import ast
+                            parsed = ast.literal_eval(content)
+                            if isinstance(parsed, (dict, list)):
+                                return json.dumps(parsed, indent=2)
+                        except (ValueError, SyntaxError):
+                            pass
+                    
+                    # If all parsing fails, at least handle escapes
+                    return content.replace('\\n', '\n').replace('\\t', '\t')
+                    
+                # Fallback for any other type
+                return str(content)
+                
+            except Exception as e:
+                logger.debug("display.format_failed", error=str(e))
+                return str(content)
+
+        try:
+            # Handle results list if present
+            if isinstance(output, dict) and 'results' in output:
+                for item in output['results']:
+                    if isinstance(item, dict):
+                        # Print file info with clear spacing
+                        for key in ['file_path', 'type', 'description']:
+                            if key in item:
+                                print(f"{key.replace('_', ' ').title()}: {item[key]}\n")
+                        
+                        # Format and display content
+                        if 'content' in item:
+                            print("Content:")
+                            print(format_content(item['content']))
+                        print("-" * 80)
+                    else:
+                        print(format_content(item))
+            else:
+                # Format top-level output
+                print(format_content(output))
+                    
+        except Exception as e:
+            logger.error("display.output_failed", error=str(e))
             print(str(output))
 
 def main():

@@ -106,8 +106,28 @@ class SlowExtractor(BaseAgent):
         # Get our config section
         slow_cfg = locate_config(self.config or {}, self._get_agent_name())
         
+        # Validate template before completing initialization
+        try:
+            self._validate_prompt_template()
+        except Exception as e:
+            logger.error("slow_extractor.initialization_failed", 
+                        error=str(e),
+                        config=slow_cfg)
+            raise
+            
         logger.info("slow_extractor.initialized",
-                settings=slow_cfg)
+                   settings=slow_cfg)
+
+    def _validate_prompt_template(self) -> None:
+        """Validate that prompt template contains required ordinal placeholder"""
+        try:
+            template = self._get_prompt('extract')
+            if '{ordinal}' not in template:
+                raise ValueError("Slow extractor prompt template must contain {ordinal} placeholder")
+
+        except Exception as e:
+            logger.error("slow_extractor.template_validation_failed", error=str(e))
+            raise ValueError("Failed to validate slow extractor template") from e
 
     def _get_agent_name(self) -> str:
         return "semantic_slow_extractor"
@@ -123,14 +143,24 @@ class SlowExtractor(BaseAgent):
             logger.error("slow_extractor.missing_config")
             raise ValueError("Extract config required")
 
+        instruction = context['config'].instruction
+        if '{ordinal}' not in instruction:
+            logger.error("slow_extractor.invalid_instruction", 
+                        reason="Missing {ordinal} placeholder")
+            raise ValueError("Slow extractor instruction must contain {ordinal} placeholder")
+
         extract_template = self._get_prompt('extract')
         position = context.get('position', 0)
+        ordinal = self._get_ordinal(position + 1)
         
-        # Let LLM handle all content interpretation via the prompt
+        # First substitute ordinal in the instruction
+        instruction = instruction.format(ordinal=ordinal)
+        
+        # Then use the processed instruction in the main template
         return extract_template.format(
-            ordinal=self._get_ordinal(position + 1),
+            ordinal=ordinal,
             content=context.get('content', ''),
-            instruction=f"{context['config'].instruction}\nIf no more items exist, respond exactly with 'NO_MORE_ITEMS'",
+            instruction=f"{instruction}\nIf no more items exist, respond exactly with 'NO_MORE_ITEMS'",
             format=context['config'].format
         )
 

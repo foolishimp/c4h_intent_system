@@ -275,9 +275,21 @@ class BaseAgent:
                 logger.info("agent.processing",
                           context_keys=list(context.keys()) if context else None)
 
+            # Format request before sending
+            system_message = self._get_system_message()
+            user_message = self._format_request(context)
+            
+            # Log the complete prompt
+            logger.info("llm.prompt",
+                       agent=self._get_agent_name(),
+                       system_prompt=system_message,
+                       user_prompt=user_message,
+                       model=self.model,
+                       provider=str(self.provider))
+
             messages = [
-                {"role": "system", "content": self._get_system_message()},
-                {"role": "user", "content": self._format_request(context)}
+                {"role": "system", "content": system_message},
+                {"role": "user", "content": user_message}
             ]
             
             response = completion(

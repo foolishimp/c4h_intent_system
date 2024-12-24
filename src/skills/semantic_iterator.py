@@ -157,27 +157,31 @@ class SemanticIterator(BaseAgent):
 
     def _next_slow(self):
         """Handle slow mode iteration"""
-        try:
-            response = self._slow_extractor.process({
-                'content': self._content,
-                'config': self._extract_config,
-                'position': self._position
-            })
-            
-            # Handle infrastructure level success/failure
-            if not response.success:
-                logger.debug("slow_extraction.complete", position=self._position)
-                raise StopIteration
-                
-            content = response.data.get('response', '')
-            
-            # Only check for completion signal - let LLM handle content validation
-            if 'NO_MORE_ITEMS' in str(content):
-                raise StopIteration
-                
-            self._position += 1
-            return content
+        logger.debug("slow_iteration.starting", 
+                    current_position=self._position,
+                    has_content=bool(self._content))
+                    
+        response = self._slow_extractor.process({
+            'content': self._content,
+            'config': self._extract_config,
+            'position': self._position
+        })
+        
+        logger.debug("slow_iteration.response_received",
+                    position=self._position,
+                    success=response.success,
+                    has_response=bool(response.data.get('response')))
 
-        except Exception as e:
-            logger.error("slow_extraction.failed", error=str(e))
+        if 'NO_MORE_ITEMS' in str(response.data.get('response', '')):
+            logger.info("slow_iteration.completed", 
+                    final_position=self._position)
             raise StopIteration
+                
+        if response.success:
+            self._position += 1
+            logger.debug("slow_iteration.position_advanced",
+                        new_position=self._position,
+                        previous_position=self._position-1)
+            return response.data.get('response')
+                
+        raise StopIteration
