@@ -15,27 +15,16 @@ logger = structlog.get_logger()
 class SlowItemIterator:
     """Iterator for slow extraction results with lazy LLM calls"""
     
-    def __init__(self, config: Dict[str, Any] = None):
-        """Initialize with parent agent configuration"""
-        super().__init__(config=config)
-        
-        # Get provider settings from config - most specific to least
-        agent_cfg = config.get('llm_config', {}).get('agents', {}).get('semantic_slow_extractor', {})
-        provider_name = agent_cfg.get('provider', 
-                                    config.get('llm_config', {}).get('default_provider', 'anthropic'))
-        
-        # Build provider config chain
-        provider_cfg = config.get('providers', {}).get(provider_name, {})
-        
-        self.provider = LLMProvider(provider_name)
-        # Prefer agent specific settings over provider defaults
-        self.model = agent_cfg.get('model', provider_cfg.get('default_model', 'claude-3-opus-20240229'))
-        self.temperature = agent_cfg.get('temperature', 0)
-        
-        # Build model string based on provider
-        self.model_str = f"{self.provider.value}/{self.model}"
-        if self.provider == LLMProvider.OPENAI:
-            self.model_str = self.model  # OpenAI doesn't need prefix
+    def __init__(self, extractor: 'SlowExtractor', content: Any, config: ExtractConfig):
+        """Initialize iterator with extraction parameters"""
+        self._extractor = extractor
+        self._content = content
+        self._config = config
+        self._position = 0
+        self._exhausted = False
+        self._has_items = False
+        self._max_attempts = 100  # Safety limit
+        self._returned_items = set()  # Track returned items
 
     def __iter__(self):
         return self
@@ -72,13 +61,19 @@ class SlowItemIterator:
             # Parse response
             try:
                 if isinstance(response, str):
+                    # Handle potential markdown code blocks
+                    if response.startswith('```') and response.endswith('```'):
+                        response = response.split('```')[1]
+                        if response.startswith('json'):
+                            response = response[4:]
                     item = json.loads(response)
                 else:
                     item = response
             except json.JSONDecodeError as e:
                 logger.error("slow_extraction.parse_error", 
                            error=str(e),
-                           position=self._position)
+                           position=self._position,
+                           response=response)
                 self._exhausted = True
                 raise StopIteration
 
@@ -94,6 +89,7 @@ class SlowItemIterator:
             raise StopIteration
 
     def has_items(self) -> bool:
+        """Check if iterator has returned any items"""
         return self._has_items
 
 class SlowExtractor(BaseAgent):
@@ -106,36 +102,18 @@ class SlowExtractor(BaseAgent):
         # Get our config section
         slow_cfg = locate_config(self.config or {}, self._get_agent_name())
         
-        # Validate template before completing initialization
-        try:
-            self._validate_prompt_template()
-        except Exception as e:
-            logger.error("slow_extractor.initialization_failed", 
-                        error=str(e),
-                        config=slow_cfg)
-            raise
-            
+        # Validate template at initialization only
+        template = self._get_prompt('extract')
+        if '{ordinal}' not in template:
+            logger.error("slow_extractor.invalid_template", 
+                        reason="Missing {ordinal} placeholder")
+            raise ValueError("Slow extractor requires {ordinal} in prompt template")
+
         logger.info("slow_extractor.initialized",
                    settings=slow_cfg)
 
-    def _validate_prompt_template(self) -> None:
-        """Validate that prompt template contains required ordinal placeholder"""
-        try:
-            template = self._get_prompt('extract')
-            if '{ordinal}' not in template:
-                raise ValueError("Slow extractor prompt template must contain {ordinal} placeholder")
-
-        except Exception as e:
-            logger.error("slow_extractor.template_validation_failed", error=str(e))
-            raise ValueError("Failed to validate slow extractor template") from e
-
     def _get_agent_name(self) -> str:
         return "semantic_slow_extractor"
-    
-    """
-    Slow extraction mode with lazy LLM calls.
-    Path: src/skills/_semantic_slow.py
-    """
 
     def _format_request(self, context: Dict[str, Any]) -> str:
         """Format extraction request for slow mode using config template"""
@@ -143,18 +121,12 @@ class SlowExtractor(BaseAgent):
             logger.error("slow_extractor.missing_config")
             raise ValueError("Extract config required")
 
-        instruction = context['config'].instruction
-        if '{ordinal}' not in instruction:
-            logger.error("slow_extractor.invalid_instruction", 
-                        reason="Missing {ordinal} placeholder")
-            raise ValueError("Slow extractor instruction must contain {ordinal} placeholder")
-
         extract_template = self._get_prompt('extract')
         position = context.get('position', 0)
         ordinal = self._get_ordinal(position + 1)
         
         # First substitute ordinal in the instruction
-        instruction = instruction.format(ordinal=ordinal)
+        instruction = context['config'].instruction.format(ordinal=ordinal)
         
         # Then use the processed instruction in the main template
         return extract_template.format(

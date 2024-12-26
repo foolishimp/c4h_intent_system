@@ -5,7 +5,7 @@ llm_config:
     semantic_iterator:
       temperature: 0
       extractor_config:
-        mode: "fast"
+        mode: "slow"
         allow_fallback: false
 
 input_data: |
@@ -16,11 +16,21 @@ input_data: |
   The tiny Ruby-throated Hummingbird can hover and fly backwards.
 
 instruction: |
-  Return every bird mentioned in the input text, along with its color(s) and any other relevant information.
-  For each bird provide a JSON object with these fields:
-  - name: The bird's name
-  - colors: Array of colors mentioned
-  - features: Array of distinguishing features or behaviors mentioned
-  - location: Where it's found (if mentioned)
+  Return the bird at position {ordinal} from the input text, following these rules:
 
+  1. Count birds in order of mention in the text.
+  2. Return NO_MORE_ITEMS if {ordinal} is greater than the total number of birds.
+  3. For a valid position, return the bird's details as a JSON object with:
+    - name: Bird's name
+    - colors: Array of actual colors (e.g. red, blue, yellow)
+    - features: Array of traits and behaviors
+    - location: Where it's found (if mentioned)
+
+  For example, in:
+  "The red robin flies fast. A blue jay calls loudly."
+  Position 1 = red robin
+  Position 2 = blue jay
+  Position 3 = NO_MORE_ITEMS (exceeds total birds)
+
+  Format: Either a single JSON object for the bird, or exactly "NO_MORE_ITEMS"
 format: "json"

@@ -253,62 +253,70 @@ class AgentTestHarness:
             logger.error("process_agent.failed", error=str(e))
             raise
 
+    def format_llm_content(self, data: Any) -> str:
+        """Format LLM response content for display.
+        
+        Handles:
+        - ModelResponse objects
+        - Raw text
+        - Dictionary with nested content
+        - Escaped multiline strings
+        """
+        try:
+            # Handle ModelResponse objects
+            if hasattr(data, 'choices') and data.choices:
+                data = data.choices[0].message.content
+                
+            # Handle dictionary responses
+            if isinstance(data, dict):
+                # Look for common content fields
+                for key in ['content', 'response', 'text', 'result']:
+                    if key in data:
+                        data = data[key]
+                        break
+            
+            # Convert to string
+            content = str(data)
+            
+            # Handle escaped newlines and indentation
+            content = content.replace('\\n', '\n')
+            content = content.replace('\\t', '\t')
+            content = content.replace('\\"', '"')
+            
+            # Strip any markdown code block markers
+            if content.startswith('```') and content.endswith('```'):
+                content = '\n'.join(content.split('\n')[1:-1])
+                
+            return content
+            
+        except Exception as e:
+            logger.error("display.format_failed", error=str(e))
+            return str(data)
+
     def _display_output(self, output: Dict[str, Any]) -> None:
         """Display formatted output with robust type handling"""
         print("\n=== Results ===\n")
         
-        def format_content(content: Any) -> str:
-            """Format content for display, trying to preserve JSON structure"""
-            try:
-                # If it's already a dict/list, format it
-                if isinstance(content, (dict, list)):
-                    return json.dumps(content, indent=2)
-                    
-                if isinstance(content, str):
-                    # Try parsing as JSON first
-                    try:
-                        return json.dumps(json.loads(content), indent=2)
-                    except json.JSONDecodeError:
-                        # Try as Python literal
-                        try:
-                            import ast
-                            parsed = ast.literal_eval(content)
-                            if isinstance(parsed, (dict, list)):
-                                return json.dumps(parsed, indent=2)
-                        except (ValueError, SyntaxError):
-                            pass
-                    
-                    # If all parsing fails, at least handle escapes
-                    return content.replace('\\n', '\n').replace('\\t', '\t')
-                    
-                # Fallback for any other type
-                return str(content)
-                
-            except Exception as e:
-                logger.debug("display.format_failed", error=str(e))
-                return str(content)
-
         try:
-            # Handle results list if present
+            # For lists of results
             if isinstance(output, dict) and 'results' in output:
                 for item in output['results']:
+                    # Format each item's content
                     if isinstance(item, dict):
-                        # Print file info with clear spacing
                         for key in ['file_path', 'type', 'description']:
                             if key in item:
                                 print(f"{key.replace('_', ' ').title()}: {item[key]}\n")
                         
-                        # Format and display content
                         if 'content' in item:
                             print("Content:")
-                            print(format_content(item['content']))
+                            print(self.format_llm_content(item['content']))
                         print("-" * 80)
                     else:
-                        print(format_content(item))
+                        print(self.format_llm_content(item))
             else:
                 # Format top-level output
-                print(format_content(output))
-                    
+                print(self.format_llm_content(output))
+                        
         except Exception as e:
             logger.error("display.output_failed", error=str(e))
             print(str(output))
